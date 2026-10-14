@@ -3,6 +3,7 @@
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 #include "utils.h"
 
@@ -11,44 +12,123 @@ typedef void (*android_update_LD_LIBRARY_PATH_t)(char*);
 
 long shared_awt_surface;
 
+static void free_copied_rows(char **rows, int count) {
+	if (rows == NULL) {
+		return;
+	}
+	for (int i = 0; i < count; i++) {
+		free(rows[i]);
+	}
+	free(rows);
+}
+
+static char *copy_utf_chars(const char *src) {
+	size_t len;
+	char *copy;
+
+	if (src == NULL) {
+		return NULL;
+	}
+	len = strlen(src);
+	copy = (char *) malloc(len + 1);
+	if (copy == NULL) {
+		return NULL;
+	}
+	memcpy(copy, src, len + 1);
+	return copy;
+}
+
 char** convert_to_char_array(JNIEnv *env, jobjectArray jstringArray) {
-	int num_rows = (*env)->GetArrayLength(env, jstringArray);
-	char **cArray = (char **) malloc(num_rows * sizeof(char*));
-	jstring row;
-	
+	int num_rows;
+	char **cArray;
+
+	if (env == NULL || jstringArray == NULL) {
+		return NULL;
+	}
+	num_rows = (*env)->GetArrayLength(env, jstringArray);
+	if ((*env)->ExceptionCheck(env) || num_rows < 0) {
+		return NULL;
+	}
+	/* One extra NULL slot so free_char_array can release the copies without JNI. */
+	cArray = (char **) calloc((size_t) num_rows + 1, sizeof(char *));
+	if (cArray == NULL) {
+		return NULL;
+	}
+
 	for (int i = 0; i < num_rows; i++) {
-		row = (jstring) (*env)->GetObjectArrayElement(env, jstringArray, i);
-		cArray[i] = (char*)(*env)->GetStringUTFChars(env, row, 0);
+		jstring row = (jstring) (*env)->GetObjectArrayElement(env, jstringArray, i);
+		const char *utf;
+		char *copy;
+
+		if (row == NULL) {
+			free_copied_rows(cArray, i);
+			return NULL;
+		}
+		utf = (*env)->GetStringUTFChars(env, row, NULL);
+		if (utf == NULL) {
+			(*env)->DeleteLocalRef(env, row);
+			free_copied_rows(cArray, i);
+			return NULL;
+		}
+		copy = copy_utf_chars(utf);
+		(*env)->ReleaseStringUTFChars(env, row, utf);
 		(*env)->DeleteLocalRef(env, row);
-    }
-	
-    return cArray;
+		if (copy == NULL) {
+			free_copied_rows(cArray, i);
+			return NULL;
+		}
+		cArray[i] = copy;
+	}
+
+	return cArray;
 }
 
 jobjectArray convert_from_char_array(JNIEnv *env, char **charArray, int num_rows) {
-	jclass stringClass = (*env)->FindClass(env, "java/lang/String");
-	jobjectArray resultArr = (*env)->NewObjectArray(env, num_rows, stringClass, NULL);
+	jclass stringClass;
+	jobjectArray resultArr;
+
+	if (env == NULL || num_rows < 0 || (charArray == NULL && num_rows > 0)) {
+		return NULL;
+	}
+	stringClass = (*env)->FindClass(env, "java/lang/String");
+	if (stringClass == NULL) {
+		return NULL;
+	}
+	resultArr = (*env)->NewObjectArray(env, num_rows, stringClass, NULL);
 	(*env)->DeleteLocalRef(env, stringClass);
-	jstring row;
-	
+	if (resultArr == NULL) {
+		return NULL;
+	}
+
 	for (int i = 0; i < num_rows; i++) {
-		row = (jstring) (*env)->NewStringUTF(env, charArray[i]);
+		jstring row = (*env)->NewStringUTF(env, charArray[i]);
+		if (row == NULL) {
+			(*env)->DeleteLocalRef(env, resultArr);
+			return NULL;
+		}
 		(*env)->SetObjectArrayElement(env, resultArr, i, row);
 		(*env)->DeleteLocalRef(env, row);
-    }
+		if ((*env)->ExceptionCheck(env)) {
+			(*env)->DeleteLocalRef(env, resultArr);
+			return NULL;
+		}
+	}
 
 	return resultArr;
 }
 
 void free_char_array(JNIEnv *env, jobjectArray jstringArray, const char **charArray) {
-	int num_rows = (*env)->GetArrayLength(env, jstringArray);
-	jstring row;
-	
-	for (int i = 0; i < num_rows; i++) {
-		row = (jstring) (*env)->GetObjectArrayElement(env, jstringArray, i);
-		(*env)->ReleaseStringUTFChars(env, row, charArray[i]);
-		(*env)->DeleteLocalRef(env, row);
+	(void) env;
+	(void) jstringArray;
+
+	if (charArray == NULL) {
+		return;
 	}
+	/* Copies are independently owned and terminated by a NULL slot. */
+	for (const char **row = charArray; *row != NULL; row++) {
+		free((void *) *row);
+	}
+	free((void *) charArray);
 }
 
 jstring convertStringJVM(JNIEnv* srcEnv, JNIEnv* dstEnv, jstring srcStr) {
@@ -186,6 +266,9 @@ JNIEXPORT jint JNICALL Java_net_kdt_pojavlaunch_utils_JREUtils_executeBinary(JNI
 	if (exec_error_c != NULL) {
 		;
 		(*env)->ThrowNew(env, exception_cls, exec_error_c);
+		if (exec_binary_handle != NULL) {
+			dlclose(exec_binary_handle);
+		}
 		return -1;
 	}
 	
@@ -196,13 +279,24 @@ JNIEXPORT jint JNICALL Java_net_kdt_pojavlaunch_utils_JREUtils_executeBinary(JNI
 	if (exec_error_c != NULL) {
 		;
 		(*env)->ThrowNew(env, exception_cls, exec_error_c);
+		if (exec_binary_handle != NULL) {
+			dlclose(exec_binary_handle);
+		}
 		return -1;
 	}
 	
 	int cmd_argv = (*env)->GetArrayLength(env, cmdArgs);
 	char **cmd_args_c = convert_to_char_array(env, cmdArgs);
-	int result = Main_Function(cmd_argv, cmd_args_c);
-	free_char_array(env, cmdArgs, cmd_args_c);
+	int result;
+	if (cmd_args_c == NULL) {
+		fprintf(stderr, "executeBinary: failed to copy command arguments\n");
+		if (exec_binary_handle != NULL) {
+			dlclose(exec_binary_handle);
+		}
+		return -1;
+	}
+	result = Main_Function(cmd_argv, cmd_args_c);
+	free_char_array(env, cmdArgs, (const char **) cmd_args_c);
 	return result;
 }
 
@@ -232,3 +326,4 @@ JNIEXPORT jint JNICALL Java_net_kdt_pojavlaunch_utils_JREUtils_executeForkedBina
 	return status;
 }
 */
+
