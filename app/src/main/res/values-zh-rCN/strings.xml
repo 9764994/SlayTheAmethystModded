@@ -1,4 +1,16 @@
 <resources>
+    <string name="save_import_confirm">确认导入</string>
+    <string name="save_import_progress">进度</string>
+    <string name="save_import_history">历史</string>
+    <string name="save_import_active">进行中</string>
+    <string name="save_import_added">新增</string>
+    <string name="save_import_replaced">覆盖</string>
+    <string name="save_import_same">相同</string>
+    <string name="save_import_unlocks">卡牌 / 遗物</string>
+    <string name="save_import_select_group">全选或取消%1$s</string>
+    <string name="save_import_ascension">进阶 %1$s → %2$s</string>
+    <string name="save_import_apply">导入 · %1$d</string>
+    <string name="save_import_run_count">新增 %1$d / 覆盖 %2$d 局</string>
     <string name="settings_sling_break_web_preparing_title">正在准备 Web 依赖</string>
     <string name="settings_sling_break_web_preparing">正在准备 GeckoView 依赖…</string>
     <string name="settings_sling_break_web_downloading">正在下载 Web 依赖… %1$d%%</string>
@@ -1913,9 +1925,9 @@
     <string name="settings_import_saves">导入存档</string>
     <string name="settings_export_saves">导出存档</string>
     <string name="settings_save_export_source_dialog_title">选择导出存档来源</string>
-    <string name="settings_save_export_source_dialog_message">检测到 Steam 云存档，请选择要导出的存档。</string>
-    <string name="settings_save_export_source_cloud_action">Steam 云存档</string>
-    <string name="settings_save_export_source_independent_action">本地独立存档</string>
+    <string name="settings_save_export_source_dialog_message">选择你需要导出的存档槽位</string>
+    <string name="settings_save_export_source_cloud_action">云存档</string>
+    <string name="settings_save_export_source_independent_action">独立存档</string>
     <string name="settings_export_error_logs">导出错误日志</string>
     <string name="settings_system_game_mode_title">系统 Game Mode</string>
     <string name="settings_system_game_mode_acknowledge">我知道了</string>
@@ -1944,9 +1956,9 @@
     <string name="settings_save_imported">已导入 %1$d 个存档文件</string>
     <string name="settings_save_imported_with_backup">已导入 %1$d 个存档文件（备份：%2$s）</string>
     <string name="settings_save_import_target_dialog_title">选择存档导入目标</string>
-    <string name="settings_save_import_target_dialog_message">请选择将此压缩包导入到 Steam 云存档或独立存档。导入到云存档需要先登录 Steam。</string>
+    <string name="settings_save_import_target_dialog_message">选择你需要导入的存档槽位</string>
     <string name="settings_save_import_target_cloud_action">导入到 Steam 云存档</string>
-    <string name="settings_save_import_target_cloud_action_disabled">导入到 Steam 云存档（请先登录）</string>
+    <string name="settings_save_import_target_cloud_action_disabled">云存档（请先登录）</string>
     <string name="settings_save_import_target_independent_action">导入到独立存档</string>
     <string name="settings_save_imported_to_target">已将 %1$d 个存档文件导入到 %2$s</string>
     <string name="settings_save_imported_with_backup_to_target">已将 %1$d 个存档文件导入到 %2$s（备份：%3$s）</string>

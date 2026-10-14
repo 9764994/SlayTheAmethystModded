@@ -1,4 +1,16 @@
 <resources>
+    <string name="save_import_confirm">Confirm import</string>
+    <string name="save_import_progress">Progress</string>
+    <string name="save_import_history">History</string>
+    <string name="save_import_active">In progress</string>
+    <string name="save_import_added">New</string>
+    <string name="save_import_replaced">Replace</string>
+    <string name="save_import_same">Same</string>
+    <string name="save_import_unlocks">Cards / Relics</string>
+    <string name="save_import_select_group">Select / deselect %1$s</string>
+    <string name="save_import_ascension">Ascension %1$s → %2$s</string>
+    <string name="save_import_apply">Import · %1$d</string>
+    <string name="save_import_run_count">+%1$d / replace %2$d</string>
     <string name="settings_sling_break_web_preparing_title">Preparing web dependency</string>
     <string name="settings_sling_break_web_preparing">Preparing GeckoView dependency…</string>
     <string name="settings_sling_break_web_downloading">Downloading web dependency… %1$d%%</string>
@@ -1914,7 +1926,7 @@ Patch rule: keep Ori full-resolution glow/bloom rendering, but replace the blur 
     <string name="settings_import_saves">Import saves</string>
     <string name="settings_export_saves">Export saves</string>
     <string name="settings_save_export_source_dialog_title">Choose save source</string>
-    <string name="settings_save_export_source_dialog_message">Steam Cloud saves are available. Choose which save set to export.</string>
+    <string name="settings_save_export_source_dialog_message">Choose the save slot you want to export</string>
     <string name="settings_save_export_source_cloud_action">Steam Cloud saves</string>
     <string name="settings_save_export_source_independent_action">Independent local saves</string>
     <string name="settings_export_error_logs">Export error logs</string>
@@ -2138,9 +2150,9 @@ Patch rule: keep Ori full-resolution glow/bloom rendering, but replace the blur 
     <string name="settings_save_imported">Imported %1$d save files</string>
     <string name="settings_save_imported_with_backup">Imported %1$d save files (backup: %2$s)</string>
     <string name="settings_save_import_target_dialog_title">Choose save import target</string>
-    <string name="settings_save_import_target_dialog_message">Choose whether to import this archive into Steam Cloud saves or independent local saves. Steam Cloud saves require a Steam login.</string>
+    <string name="settings_save_import_target_dialog_message">Choose the save slot you want to import into</string>
     <string name="settings_save_import_target_cloud_action">Import to Steam Cloud saves</string>
-    <string name="settings_save_import_target_cloud_action_disabled">Import to Steam Cloud saves (log in first)</string>
+    <string name="settings_save_import_target_cloud_action_disabled">Steam Cloud saves (log in first)</string>
     <string name="settings_save_import_target_independent_action">Import to independent saves</string>
     <string name="settings_save_imported_to_target">Imported %1$d save files to %2$s</string>
     <string name="settings_save_imported_with_backup_to_target">Imported %1$d save files to %2$s (backup: %3$s)</string>

@@ -515,6 +515,8 @@ internal object SettingsFileService {
         host: Activity,
         uri: Uri,
         targetRoot: File = RuntimePaths.stsRoot(host),
+        candidatePrefix: String? = null,
+        selectedPaths: Set<String>? = null,
     ): SaveImportResult {
         val transactionParent = targetRoot.parentFile
             ?: throw IOException("Save root parent is unavailable: ${targetRoot.absolutePath}")
@@ -533,22 +535,25 @@ internal object SettingsFileService {
 
         try {
             copyUriToFile(host, uri, archiveFile)
-            val scanResult = scanSaveArchive(archiveFile)
-            if (scanResult.importableFiles <= 0) {
+            val candidates = SaveArchiveResolver.inspect(archiveFile)
+            if (candidates.isEmpty()) {
                 throw IOException("Archive did not contain importable save files")
             }
+            val matching = if (candidatePrefix == null) candidates else candidates.filter { it.prefix == candidatePrefix }
+            if (matching.size != 1) {
+                throw IOException("Archive contains multiple save groups; select one before importing: ${candidates.map { it.prefix }}")
+            }
+            val candidate = matching.single().let { resolved ->
+                if (selectedPaths == null) resolved else {
+                    if (!resolved.entries.map { it.target }.containsAll(selectedPaths)) throw IOException("Unknown save selection")
+                    resolved.copy(entries = resolved.entries.filter { it.target in selectedPaths })
+                }
+            }
+            if (candidate.entries.isEmpty()) throw IOException("No save files selected")
             if (!stagingRoot.mkdirs()) {
                 throw IOException("Failed to create save import staging directory: ${stagingRoot.absolutePath}")
             }
-            val extracted = extractSaveArchive(archiveFile, stagingRoot)
-            if (extracted.importableFiles <= 0 || extracted != scanResult) {
-                throw IOException(
-                    "Save archive changed while importing " +
-                        "(expected ${scanResult.importableFiles} files in " +
-                        "${scanResult.targetTopLevelDirs.sorted()}, extracted " +
-                        "${extracted.importableFiles} files in ${extracted.targetTopLevelDirs.sorted()})"
-                )
-            }
+            SaveArchiveResolver.extract(archiveFile, candidate, stagingRoot, candidate.entries.map { it.target }.toSet())
 
             val applyImport = {
                 SteamCloudSyncRepository.recoverLocal(host)
@@ -557,10 +562,10 @@ internal object SettingsFileService {
                     parent = File(RuntimePaths.storageRoot(host), "steam-cloud/transactions-v2"),
                     allowedRoot = RuntimePaths.storageRoot(host),
                     replacements = buildList {
-                        addAll(scanResult.targetTopLevelDirs.map { directoryName ->
+                        addAll(candidate.entries.map { entry ->
                             SteamCloudPathReplacement(
-                                stagedPath = File(stagingRoot, directoryName),
-                                targetPath = File(targetRoot, directoryName),
+                                stagedPath = File(stagingRoot, entry.target),
+                                targetPath = File(targetRoot, entry.target),
                             )
                         })
                         if (targetRoot.canonicalFile != RuntimePaths.stsRoot(host).canonicalFile) {
@@ -570,7 +575,7 @@ internal object SettingsFileService {
                         }
                     },
                 ) }
-                SaveImportResult(importedFiles = extracted.importableFiles, backupLabel = backupLabel)
+                SaveImportResult(importedFiles = candidate.entries.size, backupLabel = backupLabel)
             }
 
             return if (targetRoot.canonicalFile == RuntimePaths.stsRoot(host).canonicalFile) {

@@ -39,6 +39,22 @@ fun SettingsEffectsHandler(
 ) {
     val activity = requireNotNull(LocalActivity.current)
     val navigator = currentNavigator
+    viewModel.uiState.saveImportConfirmation?.let { state ->
+        SaveImportConfirmationDialog(
+            state = state,
+            busy = viewModel.uiState.busy,
+            onCandidate = { viewModel.selectSaveImportCandidate(activity, it) },
+            onConfirm = { viewModel.confirmSaveImport(activity, it) },
+            onDismiss = viewModel::dismissSaveImportConfirmation,
+        )
+    }
+    viewModel.uiState.saveSlotDialogState?.let { state ->
+        SaveSlotDialog(
+            state = state,
+            onConfirm = { mode -> viewModel.onSaveSlotSelected(activity, mode) },
+            onDismiss = viewModel::dismissSaveSlotDialog,
+        )
+    }
     val shareLogsChooserTitle = stringResource(R.string.settings_share_logs_chooser_title)
     val sharePerformanceLogsChooserTitle =
         stringResource(R.string.settings_share_performance_logs_chooser_title)

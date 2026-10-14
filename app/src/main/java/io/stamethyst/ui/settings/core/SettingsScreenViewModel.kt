@@ -16,10 +16,6 @@ import android.app.ActivityManager
 import android.os.Build
 import android.net.Uri
 import android.text.format.Formatter
-import android.view.View
-import android.view.ViewGroup
-import android.widget.ArrayAdapter
-import android.widget.CheckedTextView
 import android.widget.Toast
 import androidx.annotation.StringRes
 import androidx.appcompat.app.AlertDialog
@@ -194,9 +190,6 @@ private const val STEAM_CLOUD_BACKUP_DOWNLOAD_SUBDIR = "SlayTheAmethystBackup"
 
 private const val STEAM_CLOUD_PROFILE_BACKFILL_INTERVAL_MS = 6L * 60L * 60L * 1000L
 
-private const val CLOUD_SAVE_IMPORT_TARGET_INDEX = 0
-private const val INDEPENDENT_SAVE_IMPORT_TARGET_INDEX = 1
-private const val DISABLED_SAVE_IMPORT_TARGET_ALPHA = 0.38f
 
 private enum class QuickStartSteamImportMode {
     AUTHENTICATED,
@@ -309,6 +302,22 @@ class SettingsScreenViewModel : ViewModel() {
         val forceConfirmationVisible: Boolean = false,
     )
 
+    data class SaveSlotDialogState(
+        val importUri: Uri? = null,
+        val exportFileName: String? = null,
+        val cloudAvailable: Boolean,
+        val selectedMode: SteamCloudSaveMode,
+    )
+
+    data class SaveImportConfirmationState(
+        val archive: java.io.File,
+        val mode: SteamCloudSaveMode,
+        val targetRoot: java.io.File,
+        val candidates: List<io.stamethyst.ui.settings.files.SaveArchiveResolver.Candidate>,
+        val candidateIndex: Int,
+        val summary: io.stamethyst.ui.settings.files.SaveImportPreview.Summary,
+    )
+
     data class RendererBackendOptionState(
         val backend: RendererBackend,
         val available: Boolean,
@@ -316,6 +325,8 @@ class SettingsScreenViewModel : ViewModel() {
     )
 
     data class UiState(
+        val saveSlotDialogState: SaveSlotDialogState? = null,
+        val saveImportConfirmation: SaveImportConfirmationState? = null,
         val busy: Boolean = false,
         val busyOperation: UiBusyOperation = UiBusyOperation.NONE,
         val busyMessage: UiText? = null,
@@ -2940,33 +2951,31 @@ class SettingsScreenViewModel : ViewModel() {
         if (uiState.busy) {
             return
         }
-        val fileName = SettingsFileService.buildSaveExportFileName()
-        if (SteamCloudSaveProfileManager.profileHasRegularFiles(host, SteamCloudSaveMode.STEAM_CLOUD)) {
-            showSaveExportSourceDialog(host, fileName)
-        } else {
-            openSaveExportPicker(fileName, LauncherPreferences.readSteamCloudSaveMode(host))
-        }
+        uiState = uiState.copy(
+            saveSlotDialogState = SaveSlotDialogState(
+                exportFileName = SettingsFileService.buildSaveExportFileName(),
+                cloudAvailable = true,
+                selectedMode = LauncherPreferences.readSteamCloudSaveMode(host),
+            )
+        )
     }
 
-    private fun showSaveExportSourceDialog(host: Activity, fileName: String) {
-        if (host.isFinishing || host.isDestroyed) {
+    fun dismissSaveSlotDialog() {
+        uiState = uiState.copy(saveSlotDialogState = null)
+    }
+
+    fun onSaveSlotSelected(host: Activity, mode: SteamCloudSaveMode) {
+        val dialogState = uiState.saveSlotDialogState ?: return
+        if (uiState.busy || (mode == SteamCloudSaveMode.STEAM_CLOUD && !dialogState.cloudAvailable)) {
             return
         }
-        AlertDialog.Builder(host)
-            .setTitle(R.string.settings_save_export_source_dialog_title)
-            .setMessage(R.string.settings_save_export_source_dialog_message)
-            .setPositiveButton(R.string.settings_save_export_source_cloud_action) { _, _ ->
-                openSaveExportPicker(fileName, SteamCloudSaveMode.STEAM_CLOUD)
-            }
-            .setNegativeButton(R.string.settings_save_export_source_independent_action) { _, _ ->
-                openSaveExportPicker(fileName, SteamCloudSaveMode.INDEPENDENT)
-            }
-            .setNeutralButton(android.R.string.cancel, null)
-            .show()
-    }
-
-    private fun openSaveExportPicker(fileName: String, sourceMode: SteamCloudSaveMode) {
-        _effects.tryEmit(Effect.OpenExportSavesPicker(fileName, sourceMode))
+        dismissSaveSlotDialog()
+        dialogState.importUri?.let { uri ->
+            prepareSaveImport(host, uri, mode)
+        }
+        dialogState.exportFileName?.let { fileName ->
+            _effects.tryEmit(Effect.OpenExportSavesPicker(fileName, mode))
+        }
     }
 
     fun onExportLogsToFile() {
@@ -4752,78 +4761,21 @@ class SettingsScreenViewModel : ViewModel() {
         val cloudAvailable = runCatching {
             SteamCloudAuthStore.readSnapshot(host).isComplete
         }.getOrDefault(false)
-        val targetOptions = arrayOf(
-            host.getString(
-                if (cloudAvailable) {
-                    R.string.settings_save_import_target_cloud_action
-                } else {
-                    R.string.settings_save_import_target_cloud_action_disabled
-                }
-            ),
-            host.getString(R.string.settings_save_import_target_independent_action),
-        )
-        val targetAdapter = SaveImportTargetAdapter(
-            host = host,
-            cloudAvailable = cloudAvailable,
-            values = targetOptions,
-        )
-        val checkedTarget = if (
+        val selectedMode = if (
             cloudAvailable &&
             LauncherPreferences.readSteamCloudSaveMode(host) == SteamCloudSaveMode.STEAM_CLOUD
         ) {
-            CLOUD_SAVE_IMPORT_TARGET_INDEX
+            SteamCloudSaveMode.STEAM_CLOUD
         } else {
-            INDEPENDENT_SAVE_IMPORT_TARGET_INDEX
+            SteamCloudSaveMode.INDEPENDENT
         }
-        AlertDialog.Builder(host)
-            .setTitle(R.string.settings_save_import_target_dialog_title)
-            .setMessage(R.string.settings_save_import_target_dialog_message)
-            .setSingleChoiceItems(targetAdapter, checkedTarget) { dialog, which ->
-                val targetMode = when (which) {
-                    CLOUD_SAVE_IMPORT_TARGET_INDEX -> {
-                        if (!cloudAvailable) {
-                            return@setSingleChoiceItems
-                        }
-                        SteamCloudSaveMode.STEAM_CLOUD
-                    }
-
-                    INDEPENDENT_SAVE_IMPORT_TARGET_INDEX -> SteamCloudSaveMode.INDEPENDENT
-                    else -> return@setSingleChoiceItems
-                }
-                dialog.dismiss()
-                importSavesArchive(
-                    host = host,
-                    uri = uri,
-                    targetMode = targetMode,
-                    targetLabel = targetMode.displayName(host),
-                )
-            }
-            .setNegativeButton(android.R.string.cancel, null)
-            .show()
-    }
-
-    private class SaveImportTargetAdapter(
-        host: Activity,
-        private val cloudAvailable: Boolean,
-        values: Array<String>,
-    ) : ArrayAdapter<String>(
-        host,
-        android.R.layout.simple_list_item_single_choice,
-        android.R.id.text1,
-        values,
-    ) {
-        override fun isEnabled(position: Int): Boolean {
-            return cloudAvailable || position != CLOUD_SAVE_IMPORT_TARGET_INDEX
-        }
-
-        override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
-            val view = super.getView(position, convertView, parent)
-            val enabled = isEnabled(position)
-            view.isEnabled = enabled
-            view.alpha = if (enabled) 1f else DISABLED_SAVE_IMPORT_TARGET_ALPHA
-            (view as? CheckedTextView)?.isEnabled = enabled
-            return view
-        }
+        uiState = uiState.copy(
+            saveSlotDialogState = SaveSlotDialogState(
+                importUri = uri,
+                cloudAvailable = cloudAvailable,
+                selectedMode = selectedMode,
+            )
+        )
     }
 
     private fun importSavesArchive(
@@ -4831,6 +4783,11 @@ class SettingsScreenViewModel : ViewModel() {
         uri: Uri,
         targetMode: SteamCloudSaveMode,
         targetLabel: String,
+        candidatePrefix: String? = null,
+        selectedPaths: Set<String>? = null,
+        preparedArchive: java.io.File? = null,
+        expectedTargetRoot: java.io.File? = null,
+        expectedSummary: io.stamethyst.ui.settings.files.SaveImportPreview.Summary? = null,
     ) {
         setBusy(
             busy = true,
@@ -4855,7 +4812,21 @@ class SettingsScreenViewModel : ViewModel() {
                     } else {
                         SteamCloudSaveProfileManager.profileRoot(host, targetMode)
                     }
-                    SettingsFileService.importSaveArchive(host, uri, targetRoot)
+                    if (expectedTargetRoot != null && targetRoot.canonicalFile != expectedTargetRoot.canonicalFile) {
+                        throw java.io.IOException("Save slot or account changed; preview the import again")
+                    }
+                    val applyConfirmed = {
+                        if (expectedSummary != null && preparedArchive != null) {
+                            val candidate = io.stamethyst.ui.settings.files.SaveArchiveResolver.inspect(preparedArchive)
+                                .single { it.prefix == candidatePrefix }
+                            val current = io.stamethyst.ui.settings.files.SaveImportPreview.build(candidate, targetRoot, preparedArchive)
+                            if (current != expectedSummary) throw java.io.IOException("Save files changed; preview the import again")
+                        }
+                        SettingsFileService.importSaveArchive(host, uri, targetRoot, candidatePrefix, selectedPaths)
+                    }
+                    if (targetRoot.canonicalFile == RuntimePaths.stsRoot(host).canonicalFile) {
+                        SteamCloudLiveSaveLease.runMutation(host, applyConfirmed)
+                    } else applyConfirmed()
                 }
                 host.runOnUiThread {
                     val message = if (result.backupLabel.isNullOrEmpty()) {
@@ -4880,8 +4851,71 @@ class SettingsScreenViewModel : ViewModel() {
                     showSaveImportFailedDialog(host, error)
                     refreshStatus(host)
                 }
+            } finally {
+                preparedArchive?.delete()
             }
         }
+    }
+
+    private fun prepareSaveImport(host: Activity, uri: Uri, mode: SteamCloudSaveMode) {
+        setBusy(true, UiText.StringResource(R.string.settings_busy_importing_save_archive))
+        executor.execute {
+            val archive = java.io.File(host.cacheDir, "save-preview-${java.util.UUID.randomUUID()}.zip")
+            try {
+                SettingsFileService.copyUriToFile(host, uri, archive)
+                val state = SteamCloudOperationMutex.runExclusive(host) {
+                    val root = if (LauncherPreferences.readSteamCloudSaveMode(host) == mode) RuntimePaths.stsRoot(host)
+                        else SteamCloudSaveProfileManager.profileRoot(host, mode)
+                    val candidates = io.stamethyst.ui.settings.files.SaveArchiveResolver.inspect(archive)
+                    if (candidates.isEmpty()) throw java.io.IOException("No importable saves, preferences or runs")
+                    SaveImportConfirmationState(archive, mode, root, candidates, 0,
+                        io.stamethyst.ui.settings.files.SaveImportPreview.build(candidates.first(), root, archive))
+                }
+                host.runOnUiThread {
+                    if (host.isFinishing || host.isDestroyed) {
+                        archive.delete()
+                        refreshStatus(host)
+                        return@runOnUiThread
+                    }
+                    uiState = uiState.copy(saveImportConfirmation = state)
+                    refreshStatus(host)
+                }
+            } catch (error: Throwable) {
+                archive.delete()
+                host.runOnUiThread { showSaveImportFailedDialog(host, error); refreshStatus(host) }
+            }
+        }
+    }
+
+    fun selectSaveImportCandidate(host: Activity, index: Int) {
+        val state = uiState.saveImportConfirmation ?: return
+        if (uiState.busy || index !in state.candidates.indices) return
+        setBusy(true, UiText.StringResource(R.string.settings_busy_importing_save_archive))
+        executor.execute {
+            try {
+                val summary = io.stamethyst.ui.settings.files.SaveImportPreview.build(state.candidates[index], state.targetRoot, state.archive)
+                host.runOnUiThread {
+                    uiState = uiState.copy(saveImportConfirmation = state.copy(candidateIndex = index, summary = summary))
+                    refreshStatus(host)
+                }
+            } catch (error: Throwable) {
+                host.runOnUiThread { showSaveImportFailedDialog(host, error); refreshStatus(host) }
+            }
+        }
+    }
+
+    fun dismissSaveImportConfirmation() {
+        if (uiState.busy) return
+        uiState.saveImportConfirmation?.archive?.delete()
+        uiState = uiState.copy(saveImportConfirmation = null)
+    }
+
+    fun confirmSaveImport(host: Activity, paths: Set<String>) {
+        val state = uiState.saveImportConfirmation ?: return
+        if (uiState.busy || paths.isEmpty()) return
+        uiState = uiState.copy(saveImportConfirmation = null)
+        importSavesArchive(host, Uri.fromFile(state.archive), state.mode, state.mode.displayName(host),
+            state.candidates[state.candidateIndex].prefix, paths, state.archive, state.targetRoot, state.summary)
     }
 
     fun onSavesExportPicked(
@@ -6374,6 +6408,7 @@ class SettingsScreenViewModel : ViewModel() {
     }
 
     override fun onCleared() {
+        uiState.saveImportConfirmation?.archive?.delete()
         cancelActiveSteamCloudLogin("Settings screen cleared.", clearBusy = false)
         statusRefreshGeneration.incrementAndGet()
         statusRefreshTask?.cancel(true)
