@@ -40,18 +40,19 @@ public class MainActivity {
         FileLinkOpener.open(requireContext(), value);
     }
 
-    public static void querySystemClipboard() {
+    public static String querySystemClipboard() {
         if (GLOBAL_CLIPBOARD == null || !GLOBAL_CLIPBOARD.hasPrimaryClip()) {
-            AWTInputBridge.nativeClipboardReceived(null, null);
-            return;
+            return null;
         }
         ClipData clipData = GLOBAL_CLIPBOARD.getPrimaryClip();
         if (clipData == null || clipData.getItemCount() == 0) {
-            AWTInputBridge.nativeClipboardReceived(null, null);
-            return;
+            return null;
         }
         CharSequence text = clipData.getItemAt(0).coerceToText(requireContext());
-        AWTInputBridge.nativeClipboardReceived(text == null ? null : text.toString(), "plain");
+        if (text == null) {
+            return null;
+        }
+        return text.toString();
     }
 
     public static void putClipboardData(String data, String mimeTypeSub) {

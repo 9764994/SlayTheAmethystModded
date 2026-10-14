@@ -1,102 +1,282 @@
 #include <jni.h>
-#include <assert.h>
+#include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <pthread.h>
 
 static JavaVM* dalvikJavaVMPtr;
-
 static JavaVM* runtimeJavaVMPtr;
-static JNIEnv* runtimeJNIEnvPtr_GRAPHICS;
-static JNIEnv* runtimeJNIEnvPtr_INPUT;
-jclass class_CTCScreen;
-jmethodID method_GetRGB;
 
-jclass class_CTCAndroidInput;
-jmethodID method_ReceiveInput;
+static jclass class_CTCScreen;
+static jmethodID method_GetRGB;
 
-jclass class_MainActivity;
-jmethodID method_OpenLink;
-jmethodID method_OpenPath;
-jmethodID method_QuerySystemClipboard;
-jmethodID method_PutClipboardData;
+static jclass class_CTCAndroidInput;
+static jmethodID method_ReceiveInput;
 
-jclass class_Frame;
-jclass class_Rectangle;
-jclass class_CTCClipboard = NULL;
-jmethodID constructor_Rectangle;
-jmethodID method_GetFrames;
-jmethodID method_GetBounds;
-jmethodID method_SetBounds;
-jmethodID method_SystemClipboardDataReceived = NULL;
+static jclass class_MainActivity;
+static jmethodID method_OpenLink;
+static jmethodID method_OpenPath;
+static jmethodID method_QuerySystemClipboard;
+static jmethodID method_PutClipboardData;
 
-jfieldID field_x;
-jfieldID field_y;
+static jclass class_Frame;
+static jclass class_Rectangle;
+static jclass class_CTCClipboard;
+static jmethodID constructor_Rectangle;
+static jmethodID method_GetFrames;
+static jmethodID method_GetBounds;
+static jmethodID method_SetBounds;
+static jmethodID method_SystemClipboardDataReceived;
 
-jclass class_KeyboardFocusManager = NULL;
-jmethodID method_GetCurrentKeyboardFocusManager = NULL;
-jmethodID method_GetFocusOwner = NULL;
-jclass class_TextComponent = NULL;
-jclass class_JTextComponent = NULL;
+static jfieldID field_x;
+static jfieldID field_y;
 
-static jboolean ensureRuntimeInputEnv() {
-    if (runtimeJNIEnvPtr_INPUT != NULL) {
+static jclass class_KeyboardFocusManager;
+static jmethodID method_GetCurrentKeyboardFocusManager;
+static jmethodID method_GetFocusOwner;
+static jclass class_TextComponent;
+static jclass class_JTextComponent;
+
+/* Game thread holds CTCClipboard.sSyncLock for the whole nQuery call and only
+ * wait()s after it returns. The callback has to run on another thread so its
+ * notifyAll cannot land before that wait.
+ */
+typedef struct {
+    char* data;
+    char* mime;
+} ClipboardPayload;
+
+static void clearJniException(JNIEnv* env, const char* where) {
+    if (env == NULL || (*env)->ExceptionCheck(env) != JNI_TRUE) {
+        return;
+    }
+    fprintf(stderr, "awt_bridge: exception during %s\n", where);
+    (*env)->ExceptionDescribe(env);
+    (*env)->ExceptionClear(env);
+}
+
+static JNIEnv* jniEnvFor(JavaVM* vm, jint version, const char* where, int* attached) {
+    JNIEnv* env = NULL;
+    jint status;
+
+    if (attached != NULL) {
+        *attached = 0;
+    }
+    if (vm == NULL) {
+        static int logged = 0;
+        if (!logged) {
+            fprintf(stderr, "awt_bridge: %s: JavaVM is null\n", where);
+            logged = 1;
+        }
+        return NULL;
+    }
+    status = (*vm)->GetEnv(vm, (void**)&env, version);
+    if (status == JNI_OK) {
+        return env;
+    }
+    if (status != JNI_EDETACHED) {
+        fprintf(stderr, "awt_bridge: %s: GetEnv failed: %d\n", where, status);
+        return NULL;
+    }
+    status = (*vm)->AttachCurrentThread(vm, &env, NULL);
+    if (status != JNI_OK || env == NULL) {
+        fprintf(stderr, "awt_bridge: %s: AttachCurrentThread failed: %d\n", where, status);
+        return NULL;
+    }
+    if (attached != NULL) {
+        *attached = 1;
+    }
+    return env;
+}
+
+/* Only a thread this call attached may be detached. Detach of a thread the VM already owned aborts it. */
+static void releaseAttached(JavaVM* vm, int attached, const char* where) {
+    jint status;
+
+    if (!attached || vm == NULL) {
+        return;
+    }
+    status = (*vm)->DetachCurrentThread(vm);
+    if (status != JNI_OK) {
+        fprintf(stderr, "awt_bridge: %s: DetachCurrentThread failed: %d\n", where, status);
+    }
+}
+
+static jclass newGlobalClass(JNIEnv* env, const char* name, int reportFailure) {
+    jclass local;
+    jclass global;
+
+    local = (*env)->FindClass(env, name);
+    if ((*env)->ExceptionCheck(env) == JNI_TRUE) {
+        if (reportFailure) {
+            fprintf(stderr, "awt_bridge: FindClass %s failed\n", name);
+            (*env)->ExceptionDescribe(env);
+        }
+        (*env)->ExceptionClear(env);
+    }
+    if (local == NULL) {
+        return NULL;
+    }
+    global = (*env)->NewGlobalRef(env, local);
+    (*env)->DeleteLocalRef(env, local);
+    if (global == NULL) {
+        fprintf(stderr, "awt_bridge: NewGlobalRef %s failed\n", name);
+        clearJniException(env, name);
+    }
+    return global;
+}
+
+static void dropGlobalClass(JNIEnv* env, jclass* slot) {
+    if (env == NULL || slot == NULL || *slot == NULL) {
+        return;
+    }
+    (*env)->DeleteGlobalRef(env, *slot);
+    *slot = NULL;
+}
+
+static jmethodID lookupStaticMethod(JNIEnv* env, jclass clazz, const char* name, const char* signature) {
+    jmethodID method = (*env)->GetStaticMethodID(env, clazz, name, signature);
+    if (method == NULL) {
+        fprintf(stderr, "awt_bridge: GetStaticMethodID %s%s failed\n", name, signature);
+        clearJniException(env, name);
+    }
+    return method;
+}
+
+static jmethodID lookupMethod(JNIEnv* env, jclass clazz, const char* name, const char* signature) {
+    jmethodID method = (*env)->GetMethodID(env, clazz, name, signature);
+    if (method == NULL) {
+        fprintf(stderr, "awt_bridge: GetMethodID %s%s failed\n", name, signature);
+        clearJniException(env, name);
+    }
+    return method;
+}
+
+static jfieldID lookupField(JNIEnv* env, jclass clazz, const char* name, const char* signature) {
+    jfieldID field = (*env)->GetFieldID(env, clazz, name, signature);
+    if (field == NULL) {
+        fprintf(stderr, "awt_bridge: GetFieldID %s%s failed\n", name, signature);
+        clearJniException(env, name);
+    }
+    return field;
+}
+
+static char* dupUtf(const char* value) {
+    size_t length;
+    char* copy;
+
+    if (value == NULL) {
+        return NULL;
+    }
+    length = strlen(value) + 1;
+    copy = (char*) malloc(length);
+    if (copy == NULL) {
+        return NULL;
+    }
+    memcpy(copy, value, length);
+    return copy;
+}
+
+static void releaseUtfChars(JNIEnv* env, jstring value, const char* chars) {
+    if (env != NULL && value != NULL && chars != NULL) {
+        (*env)->ReleaseStringUTFChars(env, value, chars);
+    }
+}
+
+static const char* readUtfOrAbort(JNIEnv* env, jstring value, const char** charsOut, const char* where) {
+    if (value == NULL) {
+        *charsOut = NULL;
+        return NULL;
+    }
+    *charsOut = (*env)->GetStringUTFChars(env, value, NULL);
+    if (*charsOut == NULL) {
+        fprintf(stderr, "awt_bridge: GetStringUTFChars failed during %s\n", where);
+        if ((*env)->ExceptionCheck(env) == JNI_TRUE) {
+            (*env)->ExceptionDescribe(env);
+        }
+        return where;
+    }
+    return NULL;
+}
+
+static jboolean ensureReceiveInput(JNIEnv* env) {
+    jclass inputClass;
+    jmethodID receiveInput;
+
+    if (class_CTCAndroidInput != NULL && method_ReceiveInput != NULL) {
         return JNI_TRUE;
     }
-    if (runtimeJavaVMPtr == NULL) {
+    dropGlobalClass(env, &class_CTCAndroidInput);
+    method_ReceiveInput = NULL;
+
+    inputClass = newGlobalClass(env, "net/java/openjdk/cacio/ctc/CTCAndroidInput", 0);
+    if (inputClass == NULL) {
+        inputClass = newGlobalClass(env, "com/github/caciocavallosilano/cacio/ctc/CTCAndroidInput", 0);
+    }
+    if (inputClass == NULL) {
+        static int logged = 0;
+        if (!logged) {
+            fprintf(stderr, "awt_bridge: CTCAndroidInput not found\n");
+            logged = 1;
+        }
         return JNI_FALSE;
     }
-    return (*runtimeJavaVMPtr)->AttachCurrentThread(runtimeJavaVMPtr, &runtimeJNIEnvPtr_INPUT, NULL) == 0
-           ? JNI_TRUE
-           : JNI_FALSE;
+    receiveInput = lookupStaticMethod(env, inputClass, "receiveData", "(IIIII)V");
+    if (receiveInput == NULL) {
+        (*env)->DeleteGlobalRef(env, inputClass);
+        return JNI_FALSE;
+    }
+    class_CTCAndroidInput = inputClass;
+    method_ReceiveInput = receiveInput;
+    return JNI_TRUE;
 }
 
 static jboolean ensureAwtFocusLookup(JNIEnv* env) {
+    jclass localClass;
+    jclass globalClass;
+
     if (class_KeyboardFocusManager == NULL) {
-        jclass localKeyboardFocusManager = (*env)->FindClass(env, "java/awt/KeyboardFocusManager");
-        if (localKeyboardFocusManager == NULL || (*env)->ExceptionCheck(env) == JNI_TRUE) {
-            (*env)->ExceptionClear(env);
+        localClass = newGlobalClass(env, "java/awt/KeyboardFocusManager", 0);
+        if (localClass == NULL) {
+            static int logged = 0;
+            if (!logged) {
+                fprintf(stderr, "awt_bridge: KeyboardFocusManager not found\n");
+                logged = 1;
+            }
             return JNI_FALSE;
         }
-        class_KeyboardFocusManager = (*env)->NewGlobalRef(env, localKeyboardFocusManager);
-        (*env)->DeleteLocalRef(env, localKeyboardFocusManager);
-        if (class_KeyboardFocusManager == NULL) {
-            return JNI_FALSE;
-        }
-        method_GetCurrentKeyboardFocusManager = (*env)->GetStaticMethodID(
+        method_GetCurrentKeyboardFocusManager = lookupStaticMethod(
                 env,
-                class_KeyboardFocusManager,
+                localClass,
                 "getCurrentKeyboardFocusManager",
                 "()Ljava/awt/KeyboardFocusManager;"
         );
-        method_GetFocusOwner = (*env)->GetMethodID(
+        method_GetFocusOwner = lookupMethod(
                 env,
-                class_KeyboardFocusManager,
+                localClass,
                 "getFocusOwner",
                 "()Ljava/awt/Component;"
         );
         if (method_GetCurrentKeyboardFocusManager == NULL || method_GetFocusOwner == NULL) {
-            (*env)->ExceptionClear(env);
+            (*env)->DeleteGlobalRef(env, localClass);
+            method_GetCurrentKeyboardFocusManager = NULL;
+            method_GetFocusOwner = NULL;
             return JNI_FALSE;
         }
+        class_KeyboardFocusManager = localClass;
     }
 
     if (class_TextComponent == NULL) {
-        jclass localTextComponent = (*env)->FindClass(env, "java/awt/TextComponent");
-        if (localTextComponent != NULL && (*env)->ExceptionCheck(env) != JNI_TRUE) {
-            class_TextComponent = (*env)->NewGlobalRef(env, localTextComponent);
-            (*env)->DeleteLocalRef(env, localTextComponent);
-        } else {
-            (*env)->ExceptionClear(env);
+        globalClass = newGlobalClass(env, "java/awt/TextComponent", 0);
+        if (globalClass != NULL) {
+            class_TextComponent = globalClass;
         }
     }
 
     if (class_JTextComponent == NULL) {
-        jclass localJTextComponent = (*env)->FindClass(env, "javax/swing/text/JTextComponent");
-        if (localJTextComponent != NULL && (*env)->ExceptionCheck(env) != JNI_TRUE) {
-            class_JTextComponent = (*env)->NewGlobalRef(env, localJTextComponent);
-            (*env)->DeleteLocalRef(env, localJTextComponent);
-        } else {
-            (*env)->ExceptionClear(env);
+        globalClass = newGlobalClass(env, "javax/swing/text/JTextComponent", 0);
+        if (globalClass != NULL) {
+            class_JTextComponent = globalClass;
         }
     }
 
@@ -108,17 +288,357 @@ static jboolean ensureAwtFocusLookup(JNIEnv* env) {
            : JNI_FALSE;
 }
 
+static jboolean ensureScreenClass(JNIEnv* env) {
+    jclass screen;
+    jmethodID getRgb;
+
+    if (class_CTCScreen != NULL && method_GetRGB != NULL) {
+        return JNI_TRUE;
+    }
+    dropGlobalClass(env, &class_CTCScreen);
+    method_GetRGB = NULL;
+
+    screen = newGlobalClass(env, "net/java/openjdk/cacio/ctc/CTCScreen", 0);
+    if (screen == NULL) {
+        screen = newGlobalClass(env, "com/github/caciocavallosilano/cacio/ctc/CTCScreen", 0);
+    }
+    if (screen == NULL) {
+        static int logged = 0;
+        if (!logged) {
+            fprintf(stderr, "awt_bridge: CTCScreen not found\n");
+            logged = 1;
+        }
+        return JNI_FALSE;
+    }
+    getRgb = lookupStaticMethod(env, screen, "getCurrentScreenRGB", "()[I");
+    if (getRgb == NULL) {
+        (*env)->DeleteGlobalRef(env, screen);
+        return JNI_FALSE;
+    }
+    class_CTCScreen = screen;
+    method_GetRGB = getRgb;
+    return JNI_TRUE;
+}
+
+static jboolean ensureClipboardCallback(JNIEnv* env, jclass clazz) {
+    jclass global;
+    jmethodID method;
+
+    if (class_CTCClipboard != NULL && method_SystemClipboardDataReceived != NULL) {
+        return JNI_TRUE;
+    }
+    dropGlobalClass(env, &class_CTCClipboard);
+    method_SystemClipboardDataReceived = NULL;
+
+    global = (*env)->NewGlobalRef(env, clazz);
+    if (global == NULL) {
+        fprintf(stderr, "awt_bridge: NewGlobalRef CTCClipboard failed\n");
+        clearJniException(env, "CTCClipboard");
+        return JNI_FALSE;
+    }
+    method = lookupStaticMethod(
+            env,
+            global,
+            "systemClipboardDataReceived",
+            "(Ljava/lang/String;Ljava/lang/String;)V"
+    );
+    if (method == NULL) {
+        (*env)->DeleteGlobalRef(env, global);
+        return JNI_FALSE;
+    }
+    class_CTCClipboard = global;
+    method_SystemClipboardDataReceived = method;
+    return JNI_TRUE;
+}
+
+static jboolean ensureMoveWindowIds(JNIEnv* env) {
+    jclass frame;
+    jclass rectangle;
+
+    if (class_Frame != NULL && class_Rectangle != NULL &&
+        method_GetFrames != NULL && method_GetBounds != NULL &&
+        method_SetBounds != NULL && constructor_Rectangle != NULL &&
+        field_x != NULL && field_y != NULL) {
+        return JNI_TRUE;
+    }
+
+    dropGlobalClass(env, &class_Frame);
+    dropGlobalClass(env, &class_Rectangle);
+    method_GetFrames = NULL;
+    method_GetBounds = NULL;
+    method_SetBounds = NULL;
+    constructor_Rectangle = NULL;
+    field_x = NULL;
+    field_y = NULL;
+
+    frame = newGlobalClass(env, "java/awt/Frame", 1);
+    rectangle = newGlobalClass(env, "java/awt/Rectangle", 1);
+    if (frame == NULL || rectangle == NULL) {
+        fprintf(stderr, "awt_bridge: Frame or Rectangle not found\n");
+        if (frame != NULL) {
+            (*env)->DeleteGlobalRef(env, frame);
+        }
+        if (rectangle != NULL) {
+            (*env)->DeleteGlobalRef(env, rectangle);
+        }
+        return JNI_FALSE;
+    }
+
+    method_GetFrames = lookupStaticMethod(env, frame, "getFrames", "()[Ljava/awt/Frame;");
+    method_GetBounds = lookupMethod(env, frame, "getBounds", "(Ljava/awt/Rectangle;)Ljava/awt/Rectangle;");
+    method_SetBounds = lookupMethod(env, frame, "setBounds", "(Ljava/awt/Rectangle;)V");
+    constructor_Rectangle = lookupMethod(env, rectangle, "<init>", "()V");
+    field_x = lookupField(env, rectangle, "x", "I");
+    field_y = lookupField(env, rectangle, "y", "I");
+    if (method_GetFrames == NULL || method_GetBounds == NULL || method_SetBounds == NULL ||
+        constructor_Rectangle == NULL || field_x == NULL || field_y == NULL) {
+        (*env)->DeleteGlobalRef(env, frame);
+        (*env)->DeleteGlobalRef(env, rectangle);
+        method_GetFrames = NULL;
+        method_GetBounds = NULL;
+        method_SetBounds = NULL;
+        constructor_Rectangle = NULL;
+        field_x = NULL;
+        field_y = NULL;
+        return JNI_FALSE;
+    }
+
+    class_Frame = frame;
+    class_Rectangle = rectangle;
+    return JNI_TRUE;
+}
+
+static void* clipboardCallbackThread(void* arg) {
+    ClipboardPayload* payload = (ClipboardPayload*) arg;
+    JavaVM* vm = runtimeJavaVMPtr;
+    JNIEnv* gameEnv = NULL;
+    int detachAfter = 0;
+    jint status = JNI_ERR;
+
+    if (vm == NULL || class_CTCClipboard == NULL || method_SystemClipboardDataReceived == NULL) {
+        fprintf(stderr, "awt_bridge: clipboard callback unavailable\n");
+    } else {
+        status = (*vm)->GetEnv(vm, (void**)&gameEnv, JNI_VERSION_1_4);
+        if (status == JNI_EDETACHED) {
+            status = (*vm)->AttachCurrentThread(vm, &gameEnv, NULL);
+            if (status == JNI_OK) {
+                detachAfter = 1;
+            }
+        }
+        if (status != JNI_OK || gameEnv == NULL || method_SystemClipboardDataReceived == NULL) {
+            fprintf(stderr, "awt_bridge: clipboard callback attach failed: %d\n", status);
+        } else {
+            jstring data = NULL;
+            jstring mime = NULL;
+            if (payload->data != NULL) {
+                data = (*gameEnv)->NewStringUTF(gameEnv, payload->data);
+            }
+            if (payload->mime != NULL && !(*gameEnv)->ExceptionCheck(gameEnv)) {
+                mime = (*gameEnv)->NewStringUTF(gameEnv, payload->mime);
+            }
+            if ((payload->data != NULL && data == NULL) || (payload->mime != NULL && mime == NULL)) {
+                fprintf(stderr, "awt_bridge: clipboard callback string creation failed\n");
+                clearJniException(gameEnv, "clipboard NewStringUTF");
+                if (data != NULL) {
+                    (*gameEnv)->DeleteLocalRef(gameEnv, data);
+                }
+                if (mime != NULL) {
+                    (*gameEnv)->DeleteLocalRef(gameEnv, mime);
+                }
+                data = NULL;
+                mime = NULL;
+            }
+            (*gameEnv)->CallStaticVoidMethod(
+                    gameEnv,
+                    class_CTCClipboard,
+                    method_SystemClipboardDataReceived,
+                    data,
+                    mime
+            );
+            clearJniException(gameEnv, "systemClipboardDataReceived");
+            if (data != NULL) {
+                (*gameEnv)->DeleteLocalRef(gameEnv, data);
+            }
+            if (mime != NULL) {
+                (*gameEnv)->DeleteLocalRef(gameEnv, mime);
+            }
+        }
+        if (detachAfter) {
+            status = (*vm)->DetachCurrentThread(vm);
+            if (status != JNI_OK) {
+                fprintf(stderr, "awt_bridge: clipboard callback detach failed: %d\n", status);
+            }
+        }
+    }
+
+    free(payload->data);
+    free(payload->mime);
+    free(payload);
+    return NULL;
+}
+
+static int startClipboardCallback(char* dataOwned, const char* mime) {
+    ClipboardPayload* payload;
+    pthread_t thread;
+    int rc;
+
+    payload = (ClipboardPayload*) calloc(1, sizeof(ClipboardPayload));
+    if (payload == NULL) {
+        fprintf(stderr, "awt_bridge: clipboard payload allocation failed\n");
+        free(dataOwned);
+        return 0;
+    }
+    payload->data = dataOwned;
+    if (mime != NULL) {
+        payload->mime = dupUtf(mime);
+        if (payload->mime == NULL) {
+            fprintf(stderr, "awt_bridge: clipboard mime allocation failed\n");
+            free(payload->data);
+            payload->data = NULL;
+        }
+    }
+
+    rc = pthread_create(&thread, NULL, clipboardCallbackThread, payload);
+    if (rc != 0) {
+        fprintf(stderr, "awt_bridge: pthread_create clipboard callback failed: %s\n", strerror(rc));
+        free(payload->data);
+        free(payload->mime);
+        free(payload);
+        return 0;
+    }
+    pthread_detach(thread);
+    return 1;
+}
+
+static char* readAndroidClipboard() {
+    JNIEnv* dalvikEnv;
+    jstring value;
+    const char* chars;
+    char* copy;
+    int attached = 0;
+
+    dalvikEnv = jniEnvFor(dalvikJavaVMPtr, JNI_VERSION_1_6, "querySystemClipboard", &attached);
+    if (dalvikEnv == NULL || class_MainActivity == NULL || method_QuerySystemClipboard == NULL) {
+        fprintf(stderr, "awt_bridge: querySystemClipboard is unavailable\n");
+        releaseAttached(dalvikJavaVMPtr, attached, "querySystemClipboard");
+        return NULL;
+    }
+
+    value = (jstring) (*dalvikEnv)->CallStaticObjectMethod(
+            dalvikEnv,
+            class_MainActivity,
+            method_QuerySystemClipboard
+    );
+    if ((*dalvikEnv)->ExceptionCheck(dalvikEnv) == JNI_TRUE) {
+        clearJniException(dalvikEnv, "querySystemClipboard");
+        if (value != NULL) {
+            (*dalvikEnv)->DeleteLocalRef(dalvikEnv, value);
+        }
+        releaseAttached(dalvikJavaVMPtr, attached, "querySystemClipboard");
+        return NULL;
+    }
+    if (value == NULL) {
+        releaseAttached(dalvikJavaVMPtr, attached, "querySystemClipboard");
+        return NULL;
+    }
+
+    chars = (*dalvikEnv)->GetStringUTFChars(dalvikEnv, value, NULL);
+    if (chars == NULL) {
+        fprintf(stderr, "awt_bridge: GetStringUTFChars failed during querySystemClipboard\n");
+        clearJniException(dalvikEnv, "querySystemClipboard");
+        (*dalvikEnv)->DeleteLocalRef(dalvikEnv, value);
+        releaseAttached(dalvikJavaVMPtr, attached, "querySystemClipboard");
+        return NULL;
+    }
+    copy = chars[0] == '\0' ? NULL : dupUtf(chars);
+    if (chars[0] != '\0' && copy == NULL) {
+        fprintf(stderr, "awt_bridge: clipboard text allocation failed\n");
+    }
+    (*dalvikEnv)->ReleaseStringUTFChars(dalvikEnv, value, chars);
+    (*dalvikEnv)->DeleteLocalRef(dalvikEnv, value);
+    releaseAttached(dalvikJavaVMPtr, attached, "querySystemClipboard");
+    return copy;
+}
+
+static void callDalvikOneString(jmethodID method, JNIEnv* env, jstring value, const char* where) {
+    const char* chars = NULL;
+    JNIEnv* dalvikEnv;
+    jstring arg = NULL;
+    int attached = 0;
+
+    if (readUtfOrAbort(env, value, &chars, where) != NULL) {
+        return;
+    }
+    if (class_MainActivity == NULL || method == NULL) {
+        fprintf(stderr, "awt_bridge: %s is unavailable\n", where);
+        releaseUtfChars(env, value, chars);
+        return;
+    }
+    dalvikEnv = jniEnvFor(dalvikJavaVMPtr, JNI_VERSION_1_6, where, &attached);
+    if (dalvikEnv == NULL) {
+        releaseUtfChars(env, value, chars);
+        return;
+    }
+    if (chars != NULL) {
+        arg = (*dalvikEnv)->NewStringUTF(dalvikEnv, chars);
+        if (arg == NULL) {
+            fprintf(stderr, "awt_bridge: NewStringUTF failed during %s\n", where);
+            clearJniException(dalvikEnv, where);
+            releaseUtfChars(env, value, chars);
+            releaseAttached(dalvikJavaVMPtr, attached, where);
+            return;
+        }
+    }
+    (*dalvikEnv)->CallStaticVoidMethod(dalvikEnv, class_MainActivity, method, arg);
+    clearJniException(dalvikEnv, where);
+    if (arg != NULL) {
+        (*dalvikEnv)->DeleteLocalRef(dalvikEnv, arg);
+    }
+    releaseUtfChars(env, value, chars);
+    releaseAttached(dalvikJavaVMPtr, attached, where);
+}
+
 jint JNI_OnLoad(JavaVM* vm, void* reserved) {
+    JNIEnv* env = NULL;
+    jclass localMainActivity;
+    (void) reserved;
+
     if (dalvikJavaVMPtr == NULL) {
-        //Save dalvik global JavaVM pointer
         dalvikJavaVMPtr = vm;
-        JNIEnv *env = NULL;
-        (*vm)->GetEnv(vm, (void**)&env, JNI_VERSION_1_4);
-        class_MainActivity = (*env)->NewGlobalRef(env,(*env)->FindClass(env, "net/kdt/pojavlaunch/MainActivity"));
-        method_OpenLink= (*env)->GetStaticMethodID(env, class_MainActivity, "openLink", "(Ljava/lang/String;)V");
-        method_OpenPath= (*env)->GetStaticMethodID(env, class_MainActivity, "openLink", "(Ljava/lang/String;)V");
-        method_QuerySystemClipboard = (*env)->GetStaticMethodID(env, class_MainActivity, "querySystemClipboard", "()V");
-        method_PutClipboardData = (*env)->GetStaticMethodID(env, class_MainActivity, "putClipboardData", "(Ljava/lang/String;Ljava/lang/String;)V");
+        if ((*vm)->GetEnv(vm, (void**)&env, JNI_VERSION_1_4) != JNI_OK || env == NULL) {
+            fprintf(stderr, "awt_bridge: JNI_OnLoad GetEnv failed\n");
+            return JNI_VERSION_1_4;
+        }
+        localMainActivity = (*env)->FindClass(env, "net/kdt/pojavlaunch/MainActivity");
+        if (localMainActivity == NULL || (*env)->ExceptionCheck(env) == JNI_TRUE) {
+            fprintf(stderr, "awt_bridge: MainActivity not found\n");
+            clearJniException(env, "MainActivity");
+            if (localMainActivity != NULL) {
+                (*env)->DeleteLocalRef(env, localMainActivity);
+            }
+            return JNI_VERSION_1_4;
+        }
+        class_MainActivity = (*env)->NewGlobalRef(env, localMainActivity);
+        (*env)->DeleteLocalRef(env, localMainActivity);
+        if (class_MainActivity == NULL) {
+            fprintf(stderr, "awt_bridge: NewGlobalRef MainActivity failed\n");
+            clearJniException(env, "MainActivity");
+            return JNI_VERSION_1_4;
+        }
+
+        method_OpenLink = lookupStaticMethod(env, class_MainActivity, "openLink", "(Ljava/lang/String;)V");
+        method_OpenPath = lookupStaticMethod(env, class_MainActivity, "openLink", "(Ljava/lang/String;)V");
+        method_QuerySystemClipboard = lookupStaticMethod(env, class_MainActivity, "querySystemClipboard", "()Ljava/lang/String;");
+        method_PutClipboardData = lookupStaticMethod(
+                env,
+                class_MainActivity,
+                "putClipboardData",
+                "(Ljava/lang/String;Ljava/lang/String;)V"
+        );
+        if (method_OpenLink == NULL && method_OpenPath == NULL &&
+            method_QuerySystemClipboard == NULL && method_PutClipboardData == NULL) {
+            dropGlobalClass(env, &class_MainActivity);
+        }
     } else if (dalvikJavaVMPtr != vm) {
         runtimeJavaVMPtr = vm;
     }
@@ -127,162 +647,234 @@ jint JNI_OnLoad(JavaVM* vm, void* reserved) {
 }
 
 JNIEXPORT void JNICALL Java_net_kdt_pojavlaunch_AWTInputBridge_nativeSendData(JNIEnv* env, jclass clazz, jint type, jint i1, jint i2, jint i3, jint i4) {
-    if (!ensureRuntimeInputEnv()) {
+    JNIEnv* inputEnv;
+    (void) env;
+    (void) clazz;
+
+    inputEnv = jniEnvFor(runtimeJavaVMPtr, JNI_VERSION_1_4, "nativeSendData", NULL);
+    if (inputEnv == NULL || !ensureReceiveInput(inputEnv)) {
         return;
     }
-
-    if (method_ReceiveInput == NULL) {
-        class_CTCAndroidInput = (*runtimeJNIEnvPtr_INPUT)->FindClass(runtimeJNIEnvPtr_INPUT, "net/java/openjdk/cacio/ctc/CTCAndroidInput");
-        if ((*runtimeJNIEnvPtr_INPUT)->ExceptionCheck(runtimeJNIEnvPtr_INPUT) == JNI_TRUE) {
-            (*runtimeJNIEnvPtr_INPUT)->ExceptionClear(runtimeJNIEnvPtr_INPUT);
-            class_CTCAndroidInput = (*runtimeJNIEnvPtr_INPUT)->FindClass(runtimeJNIEnvPtr_INPUT, "com/github/caciocavallosilano/cacio/ctc/CTCAndroidInput");
-        }
-        assert(class_CTCAndroidInput != NULL);
-        method_ReceiveInput = (*runtimeJNIEnvPtr_INPUT)->GetStaticMethodID(runtimeJNIEnvPtr_INPUT, class_CTCAndroidInput, "receiveData", "(IIIII)V");
-        assert(method_ReceiveInput != NULL);
-    }
-    (*runtimeJNIEnvPtr_INPUT)->CallStaticVoidMethod(
-        runtimeJNIEnvPtr_INPUT,
-        class_CTCAndroidInput,
-        method_ReceiveInput,
-        type, i1, i2, i3, i4
+    (*inputEnv)->CallStaticVoidMethod(
+            inputEnv,
+            class_CTCAndroidInput,
+            method_ReceiveInput,
+            type, i1, i2, i3, i4
     );
+    clearJniException(inputEnv, "CTCAndroidInput.receiveData");
 }
 
 JNIEXPORT jboolean JNICALL Java_net_kdt_pojavlaunch_AWTInputBridge_nativeIsTextInputFocused(JNIEnv* env, jclass clazz) {
-    if (!ensureRuntimeInputEnv()) {
-        return JNI_FALSE;
-    }
-    if (!ensureAwtFocusLookup(runtimeJNIEnvPtr_INPUT)) {
+    JNIEnv* inputEnv;
+    jobject focusManager;
+    jobject focusOwner;
+    jboolean focused;
+    (void) env;
+    (void) clazz;
+
+    inputEnv = jniEnvFor(runtimeJavaVMPtr, JNI_VERSION_1_4, "nativeIsTextInputFocused", NULL);
+    if (inputEnv == NULL || !ensureAwtFocusLookup(inputEnv)) {
         return JNI_FALSE;
     }
 
-    jobject focusManager = (*runtimeJNIEnvPtr_INPUT)->CallStaticObjectMethod(
-            runtimeJNIEnvPtr_INPUT,
+    focusManager = (*inputEnv)->CallStaticObjectMethod(
+            inputEnv,
             class_KeyboardFocusManager,
             method_GetCurrentKeyboardFocusManager
     );
-    if ((*runtimeJNIEnvPtr_INPUT)->ExceptionCheck(runtimeJNIEnvPtr_INPUT) == JNI_TRUE) {
-        (*runtimeJNIEnvPtr_INPUT)->ExceptionClear(runtimeJNIEnvPtr_INPUT);
+    if ((*inputEnv)->ExceptionCheck(inputEnv) == JNI_TRUE) {
+        clearJniException(inputEnv, "getCurrentKeyboardFocusManager");
+        if (focusManager != NULL) {
+            (*inputEnv)->DeleteLocalRef(inputEnv, focusManager);
+        }
         return JNI_FALSE;
     }
     if (focusManager == NULL) {
         return JNI_FALSE;
     }
 
-    jobject focusOwner = (*runtimeJNIEnvPtr_INPUT)->CallObjectMethod(
-            runtimeJNIEnvPtr_INPUT,
-            focusManager,
-            method_GetFocusOwner
-    );
-    (*runtimeJNIEnvPtr_INPUT)->DeleteLocalRef(runtimeJNIEnvPtr_INPUT, focusManager);
-    if ((*runtimeJNIEnvPtr_INPUT)->ExceptionCheck(runtimeJNIEnvPtr_INPUT) == JNI_TRUE) {
-        (*runtimeJNIEnvPtr_INPUT)->ExceptionClear(runtimeJNIEnvPtr_INPUT);
+    focusOwner = (*inputEnv)->CallObjectMethod(inputEnv, focusManager, method_GetFocusOwner);
+    (*inputEnv)->DeleteLocalRef(inputEnv, focusManager);
+    if ((*inputEnv)->ExceptionCheck(inputEnv) == JNI_TRUE) {
+        clearJniException(inputEnv, "getFocusOwner");
+        if (focusOwner != NULL) {
+            (*inputEnv)->DeleteLocalRef(inputEnv, focusOwner);
+        }
         return JNI_FALSE;
     }
     if (focusOwner == NULL) {
         return JNI_FALSE;
     }
 
-    jboolean focused = JNI_FALSE;
+    focused = JNI_FALSE;
     if (class_TextComponent != NULL &&
-        (*runtimeJNIEnvPtr_INPUT)->IsInstanceOf(runtimeJNIEnvPtr_INPUT, focusOwner, class_TextComponent) == JNI_TRUE) {
+        (*inputEnv)->IsInstanceOf(inputEnv, focusOwner, class_TextComponent) == JNI_TRUE) {
         focused = JNI_TRUE;
     } else if (class_JTextComponent != NULL &&
-               (*runtimeJNIEnvPtr_INPUT)->IsInstanceOf(runtimeJNIEnvPtr_INPUT, focusOwner, class_JTextComponent) == JNI_TRUE) {
+               (*inputEnv)->IsInstanceOf(inputEnv, focusOwner, class_JTextComponent) == JNI_TRUE) {
         focused = JNI_TRUE;
     }
-    (*runtimeJNIEnvPtr_INPUT)->DeleteLocalRef(runtimeJNIEnvPtr_INPUT, focusOwner);
+    (*inputEnv)->DeleteLocalRef(inputEnv, focusOwner);
     return focused;
 }
 
-// TODO: check for memory leaks
-// int printed = 0;
-int threadAttached = 0;
-JNIEXPORT jintArray JNICALL Java_net_kdt_pojavlaunch_utils_JREUtils_renderAWTScreenFrame(JNIEnv* env, jclass clazz /*, jobject canvas, jint width, jint height */) {
-    if (runtimeJNIEnvPtr_GRAPHICS == NULL) {
-        if (runtimeJavaVMPtr == NULL) {
-            return NULL;
-        } else {
-            (*runtimeJavaVMPtr)->AttachCurrentThread(runtimeJavaVMPtr, &runtimeJNIEnvPtr_GRAPHICS, NULL);
-        }
+JNIEXPORT jintArray JNICALL Java_net_kdt_pojavlaunch_utils_JREUtils_renderAWTScreenFrame(JNIEnv* env, jclass clazz) {
+    JNIEnv* graphicsEnv;
+    jintArray jreRgbArray;
+    jintArray androidRgbArray;
+    jint* rgbArray;
+    jsize arrayLength;
+    (void) clazz;
+
+    graphicsEnv = jniEnvFor(runtimeJavaVMPtr, JNI_VERSION_1_4, "renderAWTScreenFrame", NULL);
+    if (graphicsEnv == NULL || !ensureScreenClass(graphicsEnv)) {
+        return NULL;
     }
 
-    int *rgbArray;
-    jintArray jreRgbArray, androidRgbArray;
-  
-    if (method_GetRGB == NULL) {
-        class_CTCScreen = (*runtimeJNIEnvPtr_GRAPHICS)->FindClass(runtimeJNIEnvPtr_GRAPHICS, "net/java/openjdk/cacio/ctc/CTCScreen");
-        if ((*runtimeJNIEnvPtr_GRAPHICS)->ExceptionCheck(runtimeJNIEnvPtr_GRAPHICS) == JNI_TRUE) {
-            (*runtimeJNIEnvPtr_GRAPHICS)->ExceptionClear(runtimeJNIEnvPtr_GRAPHICS);
-            class_CTCScreen = (*runtimeJNIEnvPtr_GRAPHICS)->FindClass(runtimeJNIEnvPtr_GRAPHICS, "com/github/caciocavallosilano/cacio/ctc/CTCScreen");
-        }
-        assert(class_CTCScreen != NULL);
-        method_GetRGB = (*runtimeJNIEnvPtr_GRAPHICS)->GetStaticMethodID(runtimeJNIEnvPtr_GRAPHICS, class_CTCScreen, "getCurrentScreenRGB", "()[I");
-        assert(method_GetRGB != NULL);
-    }
-    jreRgbArray = (jintArray) (*runtimeJNIEnvPtr_GRAPHICS)->CallStaticObjectMethod(
-        runtimeJNIEnvPtr_GRAPHICS,
-        class_CTCScreen,
-        method_GetRGB
+    jreRgbArray = (jintArray) (*graphicsEnv)->CallStaticObjectMethod(
+            graphicsEnv,
+            class_CTCScreen,
+            method_GetRGB
     );
+    if ((*graphicsEnv)->ExceptionCheck(graphicsEnv) == JNI_TRUE) {
+        clearJniException(graphicsEnv, "getCurrentScreenRGB");
+        if (jreRgbArray != NULL) {
+            (*graphicsEnv)->DeleteLocalRef(graphicsEnv, jreRgbArray);
+        }
+        return NULL;
+    }
     if (jreRgbArray == NULL) {
         return NULL;
     }
-    
-    // Copy JRE RGB array memory to Android.
-    int arrayLength = (*runtimeJNIEnvPtr_GRAPHICS)->GetArrayLength(runtimeJNIEnvPtr_GRAPHICS, jreRgbArray);
-    rgbArray = (*runtimeJNIEnvPtr_GRAPHICS)->GetIntArrayElements(runtimeJNIEnvPtr_GRAPHICS, jreRgbArray, 0);
-    androidRgbArray = (*env)->NewIntArray(env, arrayLength);
-    (*env)->SetIntArrayRegion(env, androidRgbArray, 0, arrayLength, rgbArray);
 
-    (*runtimeJNIEnvPtr_GRAPHICS)->ReleaseIntArrayElements(runtimeJNIEnvPtr_GRAPHICS, jreRgbArray, rgbArray, 0);
-    // (*env)->DeleteLocalRef(env, androidRgbArray);
-    // free(rgbArray);
-    
+    arrayLength = (*graphicsEnv)->GetArrayLength(graphicsEnv, jreRgbArray);
+    if ((*graphicsEnv)->ExceptionCheck(graphicsEnv) == JNI_TRUE) {
+        clearJniException(graphicsEnv, "GetArrayLength");
+        (*graphicsEnv)->DeleteLocalRef(graphicsEnv, jreRgbArray);
+        return NULL;
+    }
+    rgbArray = (*graphicsEnv)->GetIntArrayElements(graphicsEnv, jreRgbArray, NULL);
+    if (rgbArray == NULL && arrayLength > 0) {
+        fprintf(stderr, "awt_bridge: GetIntArrayElements failed\n");
+        clearJniException(graphicsEnv, "GetIntArrayElements");
+        (*graphicsEnv)->DeleteLocalRef(graphicsEnv, jreRgbArray);
+        return NULL;
+    }
+
+    androidRgbArray = (*env)->NewIntArray(env, arrayLength);
+    if (androidRgbArray == NULL) {
+        fprintf(stderr, "awt_bridge: NewIntArray failed\n");
+        clearJniException(env, "NewIntArray");
+        if (rgbArray != NULL) {
+            (*graphicsEnv)->ReleaseIntArrayElements(graphicsEnv, jreRgbArray, rgbArray, JNI_ABORT);
+        }
+        (*graphicsEnv)->DeleteLocalRef(graphicsEnv, jreRgbArray);
+        return NULL;
+    }
+
+    if (arrayLength > 0) {
+        (*env)->SetIntArrayRegion(env, androidRgbArray, 0, arrayLength, rgbArray);
+        if ((*env)->ExceptionCheck(env) == JNI_TRUE) {
+            clearJniException(env, "SetIntArrayRegion");
+            if (rgbArray != NULL) {
+                (*graphicsEnv)->ReleaseIntArrayElements(graphicsEnv, jreRgbArray, rgbArray, JNI_ABORT);
+            }
+            (*graphicsEnv)->DeleteLocalRef(graphicsEnv, jreRgbArray);
+            (*env)->DeleteLocalRef(env, androidRgbArray);
+            return NULL;
+        }
+    }
+
+    if (rgbArray != NULL) {
+        (*graphicsEnv)->ReleaseIntArrayElements(graphicsEnv, jreRgbArray, rgbArray, JNI_ABORT);
+    }
+    (*graphicsEnv)->DeleteLocalRef(graphicsEnv, jreRgbArray);
     return androidRgbArray;
 }
 
 JNIEXPORT void JNICALL Java_net_java_openjdk_cacio_ctc_CTCClipboard_nQuerySystemClipboard(JNIEnv *env, jclass clazz) {
-    JNIEnv *dalvikEnv;char detachable = 0;
-    if((*dalvikJavaVMPtr)->GetEnv(dalvikJavaVMPtr, (void **) &dalvikEnv, JNI_VERSION_1_6) == JNI_EDETACHED) {
-        (*dalvikJavaVMPtr)->AttachCurrentThread(dalvikJavaVMPtr, &dalvikEnv, NULL);
-        detachable = 1;
-    }
-    if(method_SystemClipboardDataReceived == NULL) {
-        jclass globalClass = (*env)->NewGlobalRef(env, clazz);
-        if (globalClass == NULL) {
-            if(detachable) (*dalvikJavaVMPtr)->DetachCurrentThread(dalvikJavaVMPtr);
+    char* text;
+
+    if (ensureClipboardCallback(env, clazz)) {
+        text = readAndroidClipboard();
+        if (startClipboardCallback(text, text == NULL ? NULL : "plain")) {
             return;
         }
-        jmethodID method = (*env)->GetStaticMethodID(env, clazz, "systemClipboardDataReceived", "(Ljava/lang/String;Ljava/lang/String;)V");
-        if (method == NULL) {
-            (*env)->DeleteGlobalRef(env, globalClass);
-            if(detachable) (*dalvikJavaVMPtr)->DetachCurrentThread(dalvikJavaVMPtr);
-            return;
-        }
-        class_CTCClipboard = globalClass;
-        method_SystemClipboardDataReceived = method;
     }
-    (*dalvikEnv)->CallStaticVoidMethod(dalvikEnv, class_MainActivity, method_QuerySystemClipboard);
-    if(detachable) (*dalvikJavaVMPtr)->DetachCurrentThread(dalvikJavaVMPtr);
+    /* A native exception skips Cacio's unconditional wait when no callback can be scheduled. */
+    jclass failure = (*env)->FindClass(env, "java/lang/IllegalStateException");
+    if (failure != NULL) {
+        (*env)->ThrowNew(env, failure, "Unable to schedule the system clipboard callback");
+        (*env)->DeleteLocalRef(env, failure);
+    }
 }
 
 JNIEXPORT void JNICALL Java_net_java_openjdk_cacio_ctc_CTCClipboard_nPutClipboardData(JNIEnv* env, jclass clazz, jstring clipboardData, jstring clipboardDataMime) {
-    JNIEnv *dalvikEnv;char detachable = 0;
-    if((*dalvikJavaVMPtr)->GetEnv(dalvikJavaVMPtr, (void **) &dalvikEnv, JNI_VERSION_1_6) == JNI_EDETACHED) {
-        (*dalvikJavaVMPtr)->AttachCurrentThread(dalvikJavaVMPtr, &dalvikEnv, NULL);
-        detachable = 1;
+    const char* dataChars = NULL;
+    const char* mimeChars = NULL;
+    JNIEnv* dalvikEnv;
+    jstring data = NULL;
+    jstring mime = NULL;
+    (void) clazz;
+
+    if (readUtfOrAbort(env, clipboardData, &dataChars, "nPutClipboardData") != NULL) {
+        return;
+    }
+    if (readUtfOrAbort(env, clipboardDataMime, &mimeChars, "nPutClipboardData") != NULL) {
+        releaseUtfChars(env, clipboardData, dataChars);
+        return;
+    }
+    if (class_MainActivity == NULL || method_PutClipboardData == NULL) {
+        fprintf(stderr, "awt_bridge: putClipboardData is unavailable\n");
+        releaseUtfChars(env, clipboardData, dataChars);
+        releaseUtfChars(env, clipboardDataMime, mimeChars);
+        return;
     }
 
-    const char* dataChars = (*env)->GetStringUTFChars(env, clipboardData, NULL);
-    const char* mimeChars = (*env)->GetStringUTFChars(env, clipboardDataMime, NULL);
-    (*dalvikEnv)->CallStaticVoidMethod(dalvikEnv, class_MainActivity, method_PutClipboardData,
-                                       (*dalvikEnv)->NewStringUTF(dalvikEnv, dataChars),
-                                       (*dalvikEnv)->NewStringUTF(dalvikEnv, mimeChars));
-    (*env)->ReleaseStringUTFChars(env, clipboardData, dataChars);
-    (*env)->ReleaseStringUTFChars(env, clipboardDataMime, mimeChars);
-    if(detachable) (*dalvikJavaVMPtr)->DetachCurrentThread(dalvikJavaVMPtr);
+    int attached = 0;
+    dalvikEnv = jniEnvFor(dalvikJavaVMPtr, JNI_VERSION_1_6, "nPutClipboardData", &attached);
+    if (dalvikEnv == NULL) {
+        releaseUtfChars(env, clipboardData, dataChars);
+        releaseUtfChars(env, clipboardDataMime, mimeChars);
+        return;
+    }
+    if (dataChars != NULL) {
+        data = (*dalvikEnv)->NewStringUTF(dalvikEnv, dataChars);
+        if (data == NULL) {
+            fprintf(stderr, "awt_bridge: NewStringUTF failed during nPutClipboardData\n");
+            clearJniException(dalvikEnv, "nPutClipboardData");
+            releaseUtfChars(env, clipboardData, dataChars);
+            releaseUtfChars(env, clipboardDataMime, mimeChars);
+            releaseAttached(dalvikJavaVMPtr, attached, "nPutClipboardData");
+            return;
+        }
+    }
+    if (mimeChars != NULL) {
+        mime = (*dalvikEnv)->NewStringUTF(dalvikEnv, mimeChars);
+        if (mime == NULL) {
+            fprintf(stderr, "awt_bridge: NewStringUTF failed during nPutClipboardData mime\n");
+            clearJniException(dalvikEnv, "nPutClipboardData");
+            if (data != NULL) {
+                (*dalvikEnv)->DeleteLocalRef(dalvikEnv, data);
+            }
+            releaseUtfChars(env, clipboardData, dataChars);
+            releaseUtfChars(env, clipboardDataMime, mimeChars);
+            releaseAttached(dalvikJavaVMPtr, attached, "nPutClipboardData");
+            return;
+        }
+    }
+
+    (*dalvikEnv)->CallStaticVoidMethod(dalvikEnv, class_MainActivity, method_PutClipboardData, data, mime);
+    clearJniException(dalvikEnv, "putClipboardData");
+    if (data != NULL) {
+        (*dalvikEnv)->DeleteLocalRef(dalvikEnv, data);
+    }
+    if (mime != NULL) {
+        (*dalvikEnv)->DeleteLocalRef(dalvikEnv, mime);
+    }
+    releaseUtfChars(env, clipboardData, dataChars);
+    releaseUtfChars(env, clipboardDataMime, mimeChars);
+    releaseAttached(dalvikJavaVMPtr, attached, "nPutClipboardData");
 }
 
 JNIEXPORT void JNICALL Java_com_github_caciocavallosilano_cacio_ctc_CTCClipboard_nQuerySystemClipboard(JNIEnv *env, jclass clazz) {
@@ -294,76 +886,169 @@ JNIEXPORT void JNICALL Java_com_github_caciocavallosilano_cacio_ctc_CTCClipboard
 }
 
 JNIEXPORT void JNICALL Java_net_java_openjdk_cacio_ctc_CTCDesktopPeer_openFile(JNIEnv *env, jclass clazz, jstring filePath) {
-    JNIEnv *dalvikEnv;char detachable = 0;
-    if((*dalvikJavaVMPtr)->GetEnv(dalvikJavaVMPtr, (void **) &dalvikEnv, JNI_VERSION_1_6) == JNI_EDETACHED) {
-        (*dalvikJavaVMPtr)->AttachCurrentThread(dalvikJavaVMPtr, &dalvikEnv, NULL);
-        detachable = 1;
-    }
-    const char* stringChars = (*env)->GetStringUTFChars(env, filePath, NULL);
-    (*dalvikEnv)->CallStaticVoidMethod(dalvikEnv, class_MainActivity, method_OpenPath, (*dalvikEnv)->NewStringUTF(dalvikEnv, stringChars));
-    (*env)->ReleaseStringUTFChars(env, filePath, stringChars);
-    if(detachable) (*dalvikJavaVMPtr)->DetachCurrentThread(dalvikJavaVMPtr);
+    (void) clazz;
+    callDalvikOneString(method_OpenPath, env, filePath, "openFile");
 }
 
 JNIEXPORT void JNICALL Java_net_java_openjdk_cacio_ctc_CTCDesktopPeer_openUri(JNIEnv *env, jclass clazz, jstring uri) {
-    JNIEnv *dalvikEnv;char detachable = 0;
-    if((*dalvikJavaVMPtr)->GetEnv(dalvikJavaVMPtr, (void **) &dalvikEnv, JNI_VERSION_1_6) == JNI_EDETACHED) {
-        (*dalvikJavaVMPtr)->AttachCurrentThread(dalvikJavaVMPtr, &dalvikEnv, NULL);
-        detachable = 1;
-    }
-    const char* stringChars = (*env)->GetStringUTFChars(env, uri, NULL);
-    (*dalvikEnv)->CallStaticVoidMethod(dalvikEnv, class_MainActivity, method_OpenLink, (*dalvikEnv)->NewStringUTF(dalvikEnv, stringChars));
-    (*env)->ReleaseStringUTFChars(env, uri, stringChars);
-    if(detachable) (*dalvikJavaVMPtr)->DetachCurrentThread(dalvikJavaVMPtr);
+    (void) clazz;
+    callDalvikOneString(method_OpenLink, env, uri, "openUri");
 }
 
 JNIEXPORT void JNICALL Java_net_kdt_pojavlaunch_AWTInputBridge_nativeClipboardReceived(JNIEnv *env, jclass clazz, jstring clipboardData, jstring clipboardDataMime) {
-    if(method_SystemClipboardDataReceived == NULL || class_CTCClipboard == NULL) return;
-    if (runtimeJNIEnvPtr_INPUT == NULL) {
-        if (runtimeJavaVMPtr == NULL) {
+    JNIEnv* gameEnv;
+    const char* dataChars = NULL;
+    const char* mimeChars = NULL;
+    jstring data = NULL;
+    jstring mime = NULL;
+    (void) clazz;
+
+    if (method_SystemClipboardDataReceived == NULL || class_CTCClipboard == NULL) {
+        return;
+    }
+    if (readUtfOrAbort(env, clipboardData, &dataChars, "nativeClipboardReceived") != NULL) {
+        return;
+    }
+    if (readUtfOrAbort(env, clipboardDataMime, &mimeChars, "nativeClipboardReceived") != NULL) {
+        releaseUtfChars(env, clipboardData, dataChars);
+        return;
+    }
+
+    gameEnv = jniEnvFor(runtimeJavaVMPtr, JNI_VERSION_1_4, "nativeClipboardReceived", NULL);
+    if (gameEnv == NULL) {
+        releaseUtfChars(env, clipboardData, dataChars);
+        releaseUtfChars(env, clipboardDataMime, mimeChars);
+        return;
+    }
+    if (dataChars != NULL) {
+        data = (*gameEnv)->NewStringUTF(gameEnv, dataChars);
+        if (data == NULL) {
+            fprintf(stderr, "awt_bridge: NewStringUTF failed during nativeClipboardReceived\n");
+            clearJniException(gameEnv, "nativeClipboardReceived");
+            releaseUtfChars(env, clipboardData, dataChars);
+            releaseUtfChars(env, clipboardDataMime, mimeChars);
             return;
-        } else {
-            (*runtimeJavaVMPtr)->AttachCurrentThread(runtimeJavaVMPtr, &runtimeJNIEnvPtr_INPUT, NULL);
         }
     }
-    const char* dataChars = clipboardData != NULL ? (*env)->GetStringUTFChars(env, clipboardData, NULL) : NULL;
-    const char* mimeChars = clipboardDataMime != NULL ? (*env)->GetStringUTFChars(env, clipboardDataMime, NULL) : NULL;
-    (*runtimeJNIEnvPtr_INPUT)->CallStaticVoidMethod(runtimeJNIEnvPtr_INPUT, class_CTCClipboard, method_SystemClipboardDataReceived,
-                                                    clipboardData != NULL ? (*runtimeJNIEnvPtr_INPUT)->NewStringUTF(runtimeJNIEnvPtr_INPUT, dataChars) : NULL,
-                                                    clipboardDataMime != NULL ? (*runtimeJNIEnvPtr_INPUT)->NewStringUTF(runtimeJNIEnvPtr_INPUT, mimeChars) : NULL);
-    if(dataChars != NULL) (*env)->ReleaseStringUTFChars(env, clipboardData, dataChars);
-    if(mimeChars != NULL) (*env)->ReleaseStringUTFChars(env, clipboardDataMime, mimeChars);
+    if (mimeChars != NULL) {
+        mime = (*gameEnv)->NewStringUTF(gameEnv, mimeChars);
+        if (mime == NULL) {
+            fprintf(stderr, "awt_bridge: NewStringUTF failed during nativeClipboardReceived mime\n");
+            clearJniException(gameEnv, "nativeClipboardReceived");
+            if (data != NULL) {
+                (*gameEnv)->DeleteLocalRef(gameEnv, data);
+            }
+            releaseUtfChars(env, clipboardData, dataChars);
+            releaseUtfChars(env, clipboardDataMime, mimeChars);
+            return;
+        }
+    }
+
+    (*gameEnv)->CallStaticVoidMethod(
+            gameEnv,
+            class_CTCClipboard,
+            method_SystemClipboardDataReceived,
+            data,
+            mime
+    );
+    clearJniException(gameEnv, "nativeClipboardReceived");
+    if (data != NULL) {
+        (*gameEnv)->DeleteLocalRef(gameEnv, data);
+    }
+    if (mime != NULL) {
+        (*gameEnv)->DeleteLocalRef(gameEnv, mime);
+    }
+    releaseUtfChars(env, clipboardData, dataChars);
+    releaseUtfChars(env, clipboardDataMime, mimeChars);
 }
 
 JNIEXPORT void JNICALL
 Java_net_kdt_pojavlaunch_AWTInputBridge_nativeMoveWindow(JNIEnv *env, jclass clazz, jint xoff, jint yoff) {
-    if (runtimeJNIEnvPtr_INPUT == NULL) {
-        if (runtimeJavaVMPtr == NULL) {
-            return;
-        } else {
-            (*runtimeJavaVMPtr)->AttachCurrentThread(runtimeJavaVMPtr, &runtimeJNIEnvPtr_INPUT, NULL);
+    JNIEnv* inputEnv;
+    jobject rectangle;
+    jobjectArray frames;
+    jsize count;
+    jsize i;
+    (void) env;
+    (void) clazz;
+
+    inputEnv = jniEnvFor(runtimeJavaVMPtr, JNI_VERSION_1_4, "nativeMoveWindow", NULL);
+    if (inputEnv == NULL || !ensureMoveWindowIds(inputEnv)) {
+        return;
+    }
+
+    rectangle = (*inputEnv)->NewObject(inputEnv, class_Rectangle, constructor_Rectangle);
+    if (rectangle == NULL || (*inputEnv)->ExceptionCheck(inputEnv) == JNI_TRUE) {
+        clearJniException(inputEnv, "new Rectangle");
+        if (rectangle != NULL) {
+            (*inputEnv)->DeleteLocalRef(inputEnv, rectangle);
         }
+        return;
     }
-    if(field_y == NULL) {
-        class_Frame = (*runtimeJNIEnvPtr_INPUT)->FindClass(runtimeJNIEnvPtr_INPUT, "java/awt/Frame");
-        method_GetFrames = (*runtimeJNIEnvPtr_INPUT)->GetStaticMethodID(runtimeJNIEnvPtr_INPUT, class_Frame, "getFrames", "()[Ljava/awt/Frame;");
-        method_GetBounds = (*runtimeJNIEnvPtr_INPUT)->GetMethodID(runtimeJNIEnvPtr_INPUT, class_Frame, "getBounds", "(Ljava/awt/Rectangle;)Ljava/awt/Rectangle;");
-        method_SetBounds = (*runtimeJNIEnvPtr_INPUT)->GetMethodID(runtimeJNIEnvPtr_INPUT, class_Frame, "setBounds", "(Ljava/awt/Rectangle;)V");
-        class_Rectangle = (*runtimeJNIEnvPtr_INPUT)->FindClass(runtimeJNIEnvPtr_INPUT, "java/awt/Rectangle");
-        constructor_Rectangle = (*runtimeJNIEnvPtr_INPUT)->GetMethodID(runtimeJNIEnvPtr_INPUT, class_Rectangle, "<init>", "()V");
-        field_x = (*runtimeJNIEnvPtr_INPUT)->GetFieldID(runtimeJNIEnvPtr_INPUT, class_Rectangle, "x", "I");
-        field_y = (*runtimeJNIEnvPtr_INPUT)->GetFieldID(runtimeJNIEnvPtr_INPUT, class_Rectangle, "y", "I");
+
+    frames = (jobjectArray) (*inputEnv)->CallStaticObjectMethod(inputEnv, class_Frame, method_GetFrames);
+    if ((*inputEnv)->ExceptionCheck(inputEnv) == JNI_TRUE || frames == NULL) {
+        clearJniException(inputEnv, "Frame.getFrames");
+        if (frames != NULL) {
+            (*inputEnv)->DeleteLocalRef(inputEnv, frames);
+        }
+        (*inputEnv)->DeleteLocalRef(inputEnv, rectangle);
+        return;
     }
-    jobject rectangle = (*runtimeJNIEnvPtr_INPUT)->NewObject(runtimeJNIEnvPtr_INPUT, class_Rectangle, constructor_Rectangle);
-    jobjectArray frames = (*runtimeJNIEnvPtr_INPUT)->CallStaticObjectMethod(runtimeJNIEnvPtr_INPUT, class_Frame, method_GetFrames);
-    for(jsize i = 0; i < (*runtimeJNIEnvPtr_INPUT)->GetArrayLength(runtimeJNIEnvPtr_INPUT, frames); i++) {
-        jobject frame = (*runtimeJNIEnvPtr_INPUT)->GetObjectArrayElement(runtimeJNIEnvPtr_INPUT, frames, i);
-        (*runtimeJNIEnvPtr_INPUT)->CallObjectMethod(runtimeJNIEnvPtr_INPUT, frame, method_GetBounds, rectangle);
-        (*runtimeJNIEnvPtr_INPUT)->SetIntField(runtimeJNIEnvPtr_INPUT, rectangle,  field_x, (*runtimeJNIEnvPtr_INPUT)->GetIntField(runtimeJNIEnvPtr_INPUT, rectangle, field_x) + xoff);
-        (*runtimeJNIEnvPtr_INPUT)->SetIntField(runtimeJNIEnvPtr_INPUT, rectangle,  field_y, (*runtimeJNIEnvPtr_INPUT)->GetIntField(runtimeJNIEnvPtr_INPUT, rectangle, field_y) + yoff);
-        (*runtimeJNIEnvPtr_INPUT)->CallVoidMethod(runtimeJNIEnvPtr_INPUT, frame, method_SetBounds, rectangle);
-        (*runtimeJNIEnvPtr_INPUT)->DeleteLocalRef(runtimeJNIEnvPtr_INPUT, frame);
+
+    count = (*inputEnv)->GetArrayLength(inputEnv, frames);
+    if ((*inputEnv)->ExceptionCheck(inputEnv)) {
+        clearJniException(inputEnv, "Frame array length");
+        (*inputEnv)->DeleteLocalRef(inputEnv, rectangle);
+        (*inputEnv)->DeleteLocalRef(inputEnv, frames);
+        return;
     }
-    (*runtimeJNIEnvPtr_INPUT)->DeleteLocalRef(runtimeJNIEnvPtr_INPUT, rectangle);
-    (*runtimeJNIEnvPtr_INPUT)->DeleteLocalRef(runtimeJNIEnvPtr_INPUT, frames);
+    for (i = 0; i < count; i++) {
+        jobject frame = (*inputEnv)->GetObjectArrayElement(inputEnv, frames, i);
+        jobject bounds;
+        if ((*inputEnv)->ExceptionCheck(inputEnv) == JNI_TRUE) {
+            clearJniException(inputEnv, "GetObjectArrayElement Frame");
+            if (frame != NULL) {
+                (*inputEnv)->DeleteLocalRef(inputEnv, frame);
+            }
+            continue;
+        }
+        if (frame == NULL) {
+            continue;
+        }
+
+        bounds = (*inputEnv)->CallObjectMethod(inputEnv, frame, method_GetBounds, rectangle);
+        if ((*inputEnv)->ExceptionCheck(inputEnv) == JNI_TRUE) {
+            clearJniException(inputEnv, "Frame.getBounds");
+            if (bounds != NULL) {
+                (*inputEnv)->DeleteLocalRef(inputEnv, bounds);
+            }
+            (*inputEnv)->DeleteLocalRef(inputEnv, frame);
+            continue;
+        }
+        if (bounds != NULL && bounds != rectangle) {
+            (*inputEnv)->DeleteLocalRef(inputEnv, bounds);
+        }
+
+        (*inputEnv)->SetIntField(
+                inputEnv,
+                rectangle,
+                field_x,
+                (*inputEnv)->GetIntField(inputEnv, rectangle, field_x) + xoff
+        );
+        (*inputEnv)->SetIntField(
+                inputEnv,
+                rectangle,
+                field_y,
+                (*inputEnv)->GetIntField(inputEnv, rectangle, field_y) + yoff
+        );
+        (*inputEnv)->CallVoidMethod(inputEnv, frame, method_SetBounds, rectangle);
+        if ((*inputEnv)->ExceptionCheck(inputEnv) == JNI_TRUE) {
+            clearJniException(inputEnv, "Frame.setBounds");
+        }
+        (*inputEnv)->DeleteLocalRef(inputEnv, frame);
+    }
+
+    (*inputEnv)->DeleteLocalRef(inputEnv, rectangle);
+    (*inputEnv)->DeleteLocalRef(inputEnv, frames);
 }
