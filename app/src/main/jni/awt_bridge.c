@@ -250,8 +250,19 @@ JNIEXPORT void JNICALL Java_net_java_openjdk_cacio_ctc_CTCClipboard_nQuerySystem
         detachable = 1;
     }
     if(method_SystemClipboardDataReceived == NULL) {
-        class_CTCClipboard = (*env)->NewGlobalRef(env, clazz);
-        method_SystemClipboardDataReceived = (*env)->GetStaticMethodID(env, clazz, "systemClipboardDataReceived", "(Ljava/lang/String;Ljava/lang/String;)V");
+        jclass globalClass = (*env)->NewGlobalRef(env, clazz);
+        if (globalClass == NULL) {
+            if(detachable) (*dalvikJavaVMPtr)->DetachCurrentThread(dalvikJavaVMPtr);
+            return;
+        }
+        jmethodID method = (*env)->GetStaticMethodID(env, clazz, "systemClipboardDataReceived", "(Ljava/lang/String;Ljava/lang/String;)V");
+        if (method == NULL) {
+            (*env)->DeleteGlobalRef(env, globalClass);
+            if(detachable) (*dalvikJavaVMPtr)->DetachCurrentThread(dalvikJavaVMPtr);
+            return;
+        }
+        class_CTCClipboard = globalClass;
+        method_SystemClipboardDataReceived = method;
     }
     (*dalvikEnv)->CallStaticVoidMethod(dalvikEnv, class_MainActivity, method_QuerySystemClipboard);
     if(detachable) (*dalvikJavaVMPtr)->DetachCurrentThread(dalvikJavaVMPtr);
