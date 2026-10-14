@@ -437,6 +437,9 @@ class EasyTierProcessService : Service() {
                         roomInfo = roomInfo,
                     )
                 }.getOrElse { error ->
+                    if ((error as? EasyTierRoomApiHttpException)?.isRoomPasswordRejected == true) {
+                        EasyTierCredentialStore.clearRoomPassword(applicationContext, roomId)
+                    }
                     val failureSnapshot = EasyTierSessionController.persistSnapshot(
                         context = applicationContext,
                         snapshot = EasyTierSessionController.buildFailureSnapshot(

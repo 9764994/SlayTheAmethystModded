@@ -33,6 +33,10 @@ internal class EasyTierRoomApiHttpException(
     val isSessionMissing: Boolean
         get() = errorCode == ERROR_CODE_SESSION_NOT_FOUND
 
+    val isRoomPasswordRejected: Boolean
+        get() = errorCode == "lan_room_password_required" ||
+            errorCode == "lan_room_password_invalid"
+
     /**
      * True when a 404 carries no server error code at all, which is the only case that still looks
      * like an endpoint the server does not implement.

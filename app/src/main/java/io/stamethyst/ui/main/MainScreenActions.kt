@@ -253,6 +253,7 @@ internal fun rememberMainScreenActions(
                 onConnectEasyTier = { password ->
                     val permissionIntent = EasyTierPermissionCoordinator.prepareVpnPermissionIntent(activity)
                     if (permissionIntent != null) {
+                        viewModel.queueEasyTierRoomConnection(activity, password)
                         viewModel.onEasyTierVpnPermissionRequired(activity)
                         easyTierVpnPermissionLauncher.launch(permissionIntent)
                     } else {

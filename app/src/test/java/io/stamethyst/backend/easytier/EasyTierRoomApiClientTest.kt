@@ -24,6 +24,15 @@ import io.stamethyst.config.CloudControlSettings
 
 class EasyTierRoomApiClientTest {
     @Test
+    fun roomPasswordRejection_invalidatesOnlyMissingOrIncorrectPasswords() {
+        assertTrue(EasyTierRoomApiHttpException(403, "localized", "lan_room_password_required").isRoomPasswordRejected)
+        assertTrue(EasyTierRoomApiHttpException(403, "localized", "lan_room_password_invalid").isRoomPasswordRejected)
+        assertFalse(EasyTierRoomApiHttpException(429, "localized", "lan_room_password_throttled").isRoomPasswordRejected)
+        assertFalse(EasyTierRoomApiHttpException(403, "Room is locked").isRoomPasswordRejected)
+        assertFalse(EasyTierRoomApiHttpException(503, "Service unavailable").isRoomPasswordRejected)
+    }
+
+    @Test
     fun parseStartSessionResponse_mapsRoomSessionFields() {
         val roots = TestRoots.create("easytier-room-api-parse-start")
         try {

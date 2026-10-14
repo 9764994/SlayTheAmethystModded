@@ -247,14 +247,15 @@ private fun InGameEasyTierDialogHost(
                 onKickMember = { playerId, message ->
                     viewModel.kickEasyTierRoomMember(activity, playerId, message)
                 },
-                onConnect = {
+                onConnect = { password ->
                     val permissionIntent =
                         EasyTierPermissionCoordinator.prepareVpnPermissionIntent(activity)
                     if (permissionIntent != null) {
+                        viewModel.queueEasyTierRoomConnection(activity, password)
                         viewModel.onEasyTierVpnPermissionRequired(activity)
                         permissionLauncher.launch(permissionIntent)
                     } else {
-                        viewModel.onConnectEasyTier(activity)
+                        viewModel.onConnectEasyTier(activity, password = password)
                     }
                 },
                 onDisconnect = { viewModel.onDisconnectEasyTier(activity) },

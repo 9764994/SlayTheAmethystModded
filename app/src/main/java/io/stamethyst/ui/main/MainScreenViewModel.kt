@@ -1000,6 +1000,17 @@ class MainScreenViewModel : ViewModel() {
         )
     }
 
+    fun queueEasyTierRoomConnection(host: Activity, password: String?) {
+        val roomId = resolveRequestedEasyTierRoomId(
+            host,
+            EasyTierSessionController.currentSnapshot(host),
+        )
+        queueEasyTierSharedRoomJoin(
+            roomId,
+            password ?: EasyTierCredentialStore.roomPassword(host, roomId),
+        )
+    }
+
     fun onConnectEasyTier(
         host: Activity,
         roomIdOverride: String? = null,
