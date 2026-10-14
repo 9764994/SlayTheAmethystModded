@@ -19,18 +19,22 @@ char** convert_to_char_array(JNIEnv *env, jobjectArray jstringArray) {
 	for (int i = 0; i < num_rows; i++) {
 		row = (jstring) (*env)->GetObjectArrayElement(env, jstringArray, i);
 		cArray[i] = (char*)(*env)->GetStringUTFChars(env, row, 0);
+		(*env)->DeleteLocalRef(env, row);
     }
 	
     return cArray;
 }
 
 jobjectArray convert_from_char_array(JNIEnv *env, char **charArray, int num_rows) {
-	jobjectArray resultArr = (*env)->NewObjectArray(env, num_rows, (*env)->FindClass(env, "java/lang/String"), NULL);
+	jclass stringClass = (*env)->FindClass(env, "java/lang/String");
+	jobjectArray resultArr = (*env)->NewObjectArray(env, num_rows, stringClass, NULL);
+	(*env)->DeleteLocalRef(env, stringClass);
 	jstring row;
 	
 	for (int i = 0; i < num_rows; i++) {
 		row = (jstring) (*env)->NewStringUTF(env, charArray[i]);
 		(*env)->SetObjectArrayElement(env, resultArr, i, row);
+		(*env)->DeleteLocalRef(env, row);
     }
 
 	return resultArr;
@@ -43,6 +47,7 @@ void free_char_array(JNIEnv *env, jobjectArray jstringArray, const char **charAr
 	for (int i = 0; i < num_rows; i++) {
 		row = (jstring) (*env)->GetObjectArrayElement(env, jstringArray, i);
 		(*env)->ReleaseStringUTFChars(env, row, charArray[i]);
+		(*env)->DeleteLocalRef(env, row);
 	}
 }
 
@@ -227,4 +232,3 @@ JNIEXPORT jint JNICALL Java_net_kdt_pojavlaunch_utils_JREUtils_executeForkedBina
 	return status;
 }
 */
-
