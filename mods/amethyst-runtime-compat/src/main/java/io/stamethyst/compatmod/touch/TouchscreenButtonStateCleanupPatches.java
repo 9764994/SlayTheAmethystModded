@@ -226,7 +226,10 @@ public final class TouchscreenButtonStateCleanupPatches {
             if (!isEndTurnButtonWaitingForRelease(__instance)) {
                 return;
             }
-            resetEndTurnButton(__instance);
+            // Keep hover continuity: clearing hovered here makes vanilla report a
+            // new hover every frame and continuously replay UI_HOVER next turn.
+            resetHitbox(getEndTurnButtonHitbox(__instance));
+            resetEndTurnButtonHoldProgress(__instance);
             if (InputHelper.isMouseDown) {
                 return;
             }
