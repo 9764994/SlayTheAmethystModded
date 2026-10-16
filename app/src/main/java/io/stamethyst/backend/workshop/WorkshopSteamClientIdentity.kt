@@ -9,6 +9,8 @@ import top.apricityx.workshop.steam.protocol.DEFAULT_MACHINE_NAME
 import top.apricityx.workshop.steam.protocol.OkHttpSteamCmSession
 import top.apricityx.workshop.steam.protocol.SteamAccountSession
 import top.apricityx.workshop.steam.protocol.buildSteamMachineId
+import top.apricityx.workshop.steam.protocol.SteamWebSocketFactory
+import io.stamethyst.backend.steam.SteamCmSelectionPolicy
 
 internal class WorkshopSteamClientIdentity(context: Context) {
     private val appContext = context.applicationContext
@@ -48,6 +50,9 @@ internal class WorkshopSteamClientIdentity(context: Context) {
         accountValidator = accountValidator,
         onAccountLogonFailure = onAccountLogonFailure,
         sessionValidator = sessionValidator,
+        serverSelector = SteamCmSelectionPolicy.create(
+            appContext, SteamWebSocketFactory { request, listener -> client.newWebSocket(request, listener) },
+        ),
     )
 
     private fun resolveAndroidId(): String? = Settings.Secure.getString(

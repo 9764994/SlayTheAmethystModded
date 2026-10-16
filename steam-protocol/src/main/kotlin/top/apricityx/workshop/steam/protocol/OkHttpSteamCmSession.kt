@@ -26,6 +26,11 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.async
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -56,6 +61,7 @@ class OkHttpSteamCmSession(
     private val accountValidator: (SteamAccountSession) -> Boolean = { true },
     private val onAccountLogonFailure: (SteamAccountSession, Throwable) -> Unit = { _, _ -> },
     private val sessionValidator: () -> Boolean = { true },
+    private val serverSelector: SteamCmServerSelector? = null,
 ) : SteamCmSession {
     init {
         activeSessions += this
@@ -87,6 +93,9 @@ class OkHttpSteamCmSession(
 
     @Volatile
     private var reconnectPlan: ReconnectPlan? = null
+
+    private var selectionScope: String = "default"
+    private var selectionJob: Job? = null
 
     override val currentSession: StateFlow<SessionContext?> = _currentSession
 
@@ -179,18 +188,39 @@ class OkHttpSteamCmSession(
         requestLabel: String,
         buildBody: () -> CMsgClientLogon,
         headerSteamId: Long,
+    ): SessionContext = try {
+        withTimeout(serverSelector?.selectionAndLogonTimeoutMs ?: 180_000L) {
+            logonSelectedServers(servers, requestLabel, buildBody, headerSteamId)
+        }
+    } catch (error: Exception) {
+        closeTransport()
+        throw error
+    }
+
+    private suspend fun logonSelectedServers(
+        servers: List<CmServer>,
+        requestLabel: String,
+        buildBody: () -> CMsgClientLogon,
+        headerSteamId: Long,
     ): SessionContext {
         require(servers.isNotEmpty()) { "No Steam CM servers available" }
+        selectionScope = serverSelector?.scope() ?: "default"
+        val selected = prepareCandidates(servers)
         val connected = currentServer?.takeIf { webSocket != null }
-        val candidates = (listOfNotNull(connected) + rotateServers(servers))
-            .distinctBy(CmServer::websocketUri).take(MAX_LOGON_ATTEMPTS)
+        val candidates = (listOfNotNull(connected) + selected)
+            .distinctBy(CmServer::websocketUri).take(if (serverSelector == null) MAX_LOGON_ATTEMPTS else 20)
         var lastError: Exception? = null
+        var logonAttempts = 0
         candidates.forEachIndexed { index, server ->
             checkOpen()
             currentCoroutineContext().ensureActive()
+            val previousLogonAttempts = logonAttempts
             try {
                 if (webSocket == null || currentServer != server) connectSingleServer(server)
-                return startLogon(requestLabel, buildBody, headerSteamId)
+                logonAttempts++
+                return startLogon(requestLabel, buildBody, headerSteamId).also {
+                    serverSelector?.loggedOn(selectionScope, server)
+                }
             } catch (error: Exception) {
                 closeTransport()
                 // A local request timeout can use another CM; cancellation of the caller cannot.
@@ -199,8 +229,17 @@ class OkHttpSteamCmSession(
                 val recoverable = if (error is SteamAuthenticationException) error.resultCode == 20
                     else isRecoverableConnectionFailure(error)
                 if (!recoverable) throw error
+                serverSelector?.failed(selectionScope, server)
                 lastError = error
-                if (index < candidates.lastIndex) delay(LOGON_RETRY_DELAY_MS * (index + 1))
+                if (logonAttempts >= MAX_LOGON_ATTEMPTS) {
+                    throw SteamProtocolException("Steam session logon unavailable after $logonAttempts logon attempts", lastError)
+                }
+                // A dead transport is not an authentication attempt. Do not accumulate
+                // seconds of login backoff for a list of DNS/TLS/connection failures.
+                if (index < candidates.lastIndex) {
+                    if (serverSelector == null) delay(LOGON_RETRY_DELAY_MS * (index + 1))
+                    else if (logonAttempts > previousLogonAttempts) delay(LOGON_RETRY_DELAY_MS * logonAttempts)
+                }
             }
         }
         throw SteamProtocolException("Steam session logon unavailable after ${candidates.size} CM attempts", lastError)
@@ -210,10 +249,23 @@ class OkHttpSteamCmSession(
         if (webSocket != null) {
             return
         }
-        require(servers.isNotEmpty()) { "No Steam CM servers available" }
+        try {
+            withTimeout(serverSelector?.selectionAndLogonTimeoutMs ?: 180_000L) {
+                ensureSelectedConnected(servers)
+            }
+        } catch (error: Exception) {
+            closeTransport()
+            throw error
+        }
+    }
 
+    private suspend fun ensureSelectedConnected(servers: List<CmServer>) {
+        require(servers.isNotEmpty()) { "No Steam CM servers available" }
+        selectionScope = serverSelector?.scope() ?: "default"
+        val candidates = prepareCandidates(servers)
+        if (webSocket != null) return
         var lastError: Throwable? = null
-        for (server in rotateServers(servers)) {
+        for (server in candidates.take(if (serverSelector == null) candidates.size else 20)) {
             try {
                 connectSingleServer(server)
                 return
@@ -221,11 +273,68 @@ class OkHttpSteamCmSession(
                 closeTransport()
                 currentCoroutineContext().ensureActive()
                 if (error is CancellationException && error !is TimeoutCancellationException) throw error
+                serverSelector?.failed(selectionScope, server)
                 lastError = error
             }
         }
 
         throw SteamProtocolException("Unable to connect to any Steam CM websocket", lastError)
+    }
+
+    /** Keep a slow-but-usable connection alive while probing alternatives. Never race logons. */
+    private suspend fun prepareCandidates(servers: List<CmServer>): List<CmServer> = coroutineScope {
+        val selector = serverSelector ?: return@coroutineScope rotateServers(servers)
+        currentServer?.takeIf { webSocket != null }?.let {
+            return@coroutineScope listOf(it) + rotateServers(servers)
+        }
+        val preferred = selector.preferred(selectionScope, servers) ?: return@coroutineScope emptyList()
+        val connection = async {
+            try {
+                connectSingleServer(preferred)
+                true
+            } catch (error: Exception) {
+                closeTransport()
+                currentCoroutineContext().ensureActive()
+                if (error is CancellationException && error !is TimeoutCancellationException) throw error
+                selector.failed(selectionScope, preferred)
+                false
+            }
+        }
+        val fast = withTimeoutOrNull(selector.optimisticConnectTimeoutMs) { connection.await() }
+        if (fast == true) return@coroutineScope listOf(preferred) + rotateServers(servers)
+        if (fast == false) return@coroutineScope selectServers(servers)
+        val probes = async { selectServers(servers) }
+        try {
+            select {
+                connection.onAwait { connected ->
+                    if (connected) {
+                        probes.cancelAndJoin()
+                        listOf(preferred) + rotateServers(servers)
+                    } else probes.await()
+                }
+                probes.onAwait { selected ->
+                    connection.cancelAndJoin()
+                    closeTransport()
+                    selected
+                }
+            }
+        } finally {
+            connection.cancel()
+            probes.cancel()
+        }
+    }
+
+    private suspend fun selectServers(servers: List<CmServer>): List<CmServer> = coroutineScope {
+        val job = currentCoroutineContext()[Job]!!
+        synchronized(transportLock) {
+            checkOpen()
+            selectionJob = job
+        }
+        try {
+            serverSelector!!.select(servers, selectionScope, forceProbe = true)
+        } finally {
+            synchronized(transportLock) { if (selectionJob === job) selectionJob = null }
+        }
     }
 
     private suspend fun connectSingleServer(server: CmServer) {
@@ -261,6 +370,7 @@ class OkHttpSteamCmSession(
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                 synchronized(transportLock) {
                     if (transportGeneration.get() != generation) return
+                    if (currentSession.value != null) serverSelector?.failed(selectionScope, server)
                     this@OkHttpSteamCmSession.webSocket = null
                     failActiveState(t)
                     deferred.completeExceptionallyIfNeeded(t)
@@ -270,6 +380,7 @@ class OkHttpSteamCmSession(
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
                 synchronized(transportLock) {
                     if (transportGeneration.get() != generation) return
+                    if (currentSession.value != null) serverSelector?.failed(selectionScope, server)
                     this@OkHttpSteamCmSession.webSocket = null
                     val failure = IOException("Steam websocket closed: $code $reason")
                     failActiveState(failure)
@@ -285,7 +396,7 @@ class OkHttpSteamCmSession(
             if (transportGeneration.get() != generation || deferred.isCompleted && currentServer == null) socket.cancel()
             else webSocket = socket
         }
-        withTimeout(REQUEST_TIMEOUT_MS) { deferred.await() }
+        withTimeout(serverSelector?.probeTimeoutMs ?: REQUEST_TIMEOUT_MS) { deferred.await() }
     }
 
     private fun sendHello() {
@@ -674,6 +785,8 @@ class OkHttpSteamCmSession(
         synchronized(transportLock) {
             if (closed) return
             closed = true
+            selectionJob?.cancel(SteamSessionRevokedException())
+            selectionJob = null
             reconnectPlan = null
             activeSessions -= this
             closeTransport()
@@ -793,6 +906,7 @@ class OkHttpSteamCmSession(
                     throw error
                 }
                 shouldRetry = false
+                currentServer?.let { serverSelector?.failed(selectionScope, it) }
                 reconnectMutex.lock()
                 try {
                     checkOpen()

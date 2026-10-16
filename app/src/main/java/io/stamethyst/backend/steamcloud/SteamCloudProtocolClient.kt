@@ -23,7 +23,11 @@ internal class SteamCloudProtocolClient(
 ) : AutoCloseable {
     private val ownsSession = externalSession == null
     private val session: SteamCmSession =
-        externalSession ?: OkHttpSteamCmSession(httpClient, webSocketFactory = webSocketFactory)
+        externalSession ?: OkHttpSteamCmSession(
+            httpClient,
+            webSocketFactory = webSocketFactory,
+            serverSelector = top.apricityx.workshop.steam.protocol.SteamCmServerSelector(webSocketFactory),
+        )
     private val directory = SteamDirectoryClient(httpClient)
 
     fun logOn(accountName: String, refreshToken: String, steamId64: String): Long = runBlocking {

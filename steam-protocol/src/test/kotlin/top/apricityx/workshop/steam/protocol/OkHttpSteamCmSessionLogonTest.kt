@@ -85,6 +85,38 @@ class OkHttpSteamCmSessionLogonTest {
         }
     }
 
+    @Test fun selectorCanFindUsableNodeBeyondFirstThreeWithoutConcurrentLogons() = runBlocking {
+        SteamCmServerSelectorTest.Fixture(mapOf(
+            "cm1.example" to -1L, "cm2.example" to -1L, "cm3.example" to -1L, "cm4.example" to 10L,
+        )).use { probes ->
+            val factory = FakeFactory(listOf(Outcome.HandshakeFailure, Outcome.Success))
+            val selector = SteamCmServerSelector(probes.factory, collectionWindowMs = 20)
+            OkHttpSteamCmSession(webSocketFactory = factory, serverSelector = selector).use { session ->
+                assertEquals(account.steamId, session.connectWithRefreshToken(servers, account).steamId)
+                assertEquals("cm4.example", factory.sockets.last().request().url.host)
+                assertEquals(1, factory.logons)
+                assertEquals(0, probes.active.get())
+            }
+        }
+    }
+
+    @Test fun selectionAndLogonShareOneDeadlineAndCleanUpTransport() = runBlocking {
+        val factory = FakeFactory(listOf(Outcome.NoReply))
+        var notices = 0
+        val health = SteamCmServerHealth().apply { loggedOn("test", servers.first()) }
+        val selector = SteamCmServerSelector(factory, { "test" }, health, selectionAndLogonTimeoutMs = 100)
+        OkHttpSteamCmSession(
+            webSocketFactory = factory, serverSelector = selector,
+            onAccountLogonFailure = { _, _ -> notices++ },
+        ).use { session ->
+            assertTrue(runCatching { session.connectWithRefreshToken(servers, account) }.exceptionOrNull() is TimeoutCancellationException)
+            assertEquals(1, factory.logons)
+            assertTrue(factory.sockets.single().cancelled)
+            assertNull(session.currentSession.value)
+            assertEquals(0, notices)
+        }
+    }
+
     @Test fun unavailableCmRoutingNeverSuggestsExpiredCredentials() = runBlocking {
         var notices = 0
         val factory = FakeFactory(listOf(Outcome.Unavailable))
@@ -92,6 +124,26 @@ class OkHttpSteamCmSessionLogonTest {
             val error = runCatching { session.connectWithRefreshToken(servers.take(1), account) }.exceptionOrNull()
             assertTrue(error is SteamProtocolException && error.isCmLogonFailure)
             assertEquals(0, notices)
+        }
+    }
+
+    @Test fun logoutDuringNodeProbingCancelsAllProbesWithoutLoggingOn() = runBlocking {
+        SteamCmServerSelectorTest.Fixture(emptyMap()).use { probes ->
+            val factory = FakeFactory(listOf(Outcome.HandshakeFailure))
+            val session = OkHttpSteamCmSession(
+                webSocketFactory = factory,
+                serverSelector = SteamCmServerSelector(probes.factory),
+            )
+            try {
+                val login = async { runCatching { session.connectWithRefreshToken(servers, account) } }
+                withTimeout(2_000) {
+                    while (probes.sockets.isEmpty()) kotlinx.coroutines.yield()
+                }
+                session.close()
+                assertTrue(login.await().exceptionOrNull() is SteamSessionRevokedException)
+                assertEquals(0, factory.logons)
+                assertEquals(0, probes.active.get())
+            } finally { session.close() }
         }
     }
 
