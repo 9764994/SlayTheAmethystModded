@@ -50,6 +50,10 @@ class SteamCloudLocalStateTest {
         assertEquals(SteamCloudSaveMode.STEAM_CLOUD, LauncherConfig.readSteamCloudSaveMode(host))
         assertEquals("123", LauncherConfig.readSteamCloudPendingProfileSteamId(host))
         assertEquals(setOf("preferences/STSPlayer"), LauncherConfig.readSteamCloudSyncBlacklistPaths(host))
+        assertFalse(SteamCloudControlStore.file(host).exists())
+        assertTrue(SteamCloudControlStore.read(host).disabled)
+        // Migration is persisted by the first mutation, never by a main-thread read.
+        LauncherConfig.setSteamCloudBackgroundLaunchRequested(host, true)
         legacy["steam_cloud_sync_disabled"] = false
         assertTrue(LauncherConfig.isSteamCloudSyncDisabled(host))
         LauncherConfig.setSteamCloudSyncDisabled(host, false)
@@ -65,6 +69,54 @@ class SteamCloudLocalStateTest {
         LauncherConfig.setSteamCloudBackgroundLaunchRequested(host, true)
         assertTrue(LauncherConfig.isSteamCloudSyncDisabled(host))
         assertTrue(LauncherConfig.isSteamCloudBackgroundLaunchRequested(host))
+    }
+
+    @Test fun launcherStatusReadDoesNotWaitForControlTransactionLock() {
+        val host = context()
+        LauncherConfig.setSteamCloudSyncDisabled(host, true)
+        val entered = CountDownLatch(1); val release = CountDownLatch(1)
+        val pool = java.util.concurrent.Executors.newFixedThreadPool(2)
+        try {
+            val transaction = pool.submit {
+                SteamCloudControlStore.locked(host) {
+                    entered.countDown()
+                    check(release.await(10, TimeUnit.SECONDS))
+                }
+            }
+            assertTrue(entered.await(2, TimeUnit.SECONDS))
+            assertTrue(pool.submit<Boolean> { LauncherConfig.isSteamCloudSyncDisabled(host) }.get(1, TimeUnit.SECONDS))
+            release.countDown()
+            transaction.get(2, TimeUnit.SECONDS)
+        } finally { release.countDown(); pool.shutdownNow() }
+    }
+
+    @Test fun controlWriteStillSerializesWithTransactionAndPreservesOtherFields() {
+        val host = context()
+        LauncherConfig.setSteamCloudSyncDisabled(host, true)
+        val entered = CountDownLatch(1); val release = CountDownLatch(1); val writeStarted = CountDownLatch(1)
+        val pool = java.util.concurrent.Executors.newFixedThreadPool(2)
+        try {
+            val transaction = pool.submit {
+                SteamCloudControlStore.locked(host) {
+                    entered.countDown()
+                    check(release.await(10, TimeUnit.SECONDS))
+                    LauncherConfig.saveSteamCloudSaveMode(host, SteamCloudSaveMode.STEAM_CLOUD)
+                }
+            }
+            assertTrue(entered.await(2, TimeUnit.SECONDS))
+            val launchRequest = pool.submit {
+                writeStarted.countDown()
+                LauncherConfig.setSteamCloudBackgroundLaunchRequested(host, true)
+            }
+            assertTrue(writeStarted.await(2, TimeUnit.SECONDS))
+            assertFalse(launchRequest.isDone)
+            release.countDown()
+            transaction.get(2, TimeUnit.SECONDS)
+            launchRequest.get(2, TimeUnit.SECONDS)
+            assertEquals(SteamCloudSaveMode.STEAM_CLOUD, LauncherConfig.readSteamCloudSaveMode(host))
+            assertTrue(LauncherConfig.isSteamCloudSyncDisabled(host))
+            assertTrue(LauncherConfig.isSteamCloudBackgroundLaunchRequested(host))
+        } finally { release.countDown(); pool.shutdownNow() }
     }
 
     @Test fun disableDoesNotWaitForNetworkOperationLock() {

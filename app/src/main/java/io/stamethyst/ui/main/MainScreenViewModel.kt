@@ -137,6 +137,7 @@ import java.util.Locale
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.runBlocking
@@ -1983,20 +1984,19 @@ class MainScreenViewModel : ViewModel() {
         // require replacing live files must defer instead of holding up the game or overwriting it.
         pendingSteamCloudAutoLaunchAfterSync = false
         pendingSteamCloudManualBackgroundLaunch = false
-        SteamCloudSyncProcessService.requestBackgroundLaunch(host)
-        return performSteamCloudBackgroundLaunch(action, startSync = {
-            if (!syncSteamCloudIndicatorIfNeeded(host, force = true)) {
-                LauncherConfig.setSteamCloudBackgroundLaunchRequested(host, false)
+        return prepareSteamCloudBackgroundLaunch(host) {
+            if (action == SteamCloudBackgroundLaunchAction.START_SYNC &&
+                !syncSteamCloudIndicatorIfNeeded(host, force = true)
+            ) {
+                withContext(Dispatchers.IO) {
+                    LauncherConfig.setSteamCloudBackgroundLaunchRequested(host.applicationContext, false)
+                }
                 // A rejected/offline cloud operation must not prevent this explicit local launch.
             }
-        }, launch = {
-            if (!tryBeginLaunchRequest()) false else {
-                dismissCrashRecovery()
-                beginLaunchFlow(host = host, launchMode = StsLaunchSpec.LAUNCH_MODE_MTS,
-                    forceJvmCrash = false, skipEnabledModSizeWarning = true)
-                true
-            }
-        })
+            dismissCrashRecovery()
+            beginLaunchFlow(host = host, launchMode = StsLaunchSpec.LAUNCH_MODE_MTS,
+                forceJvmCrash = false, skipEnabledModSizeWarning = true)
+        }
     }
 
     private fun launchWithSteamCloudUpload(host: Activity): Boolean {
@@ -2008,20 +2008,40 @@ class MainScreenViewModel : ViewModel() {
             !shouldShowSteamCloudBackgroundUploadAction(indicator)) {
             return false
         }
-        if (!tryBeginLaunchRequest()) {
-            return false
-        }
         pendingSteamCloudAutoLaunchAfterSync = false
         pendingSteamCloudManualBackgroundLaunch = false
-        SteamCloudSyncProcessService.requestBackgroundLaunch(host)
+        return prepareSteamCloudBackgroundLaunch(host) {
+            dismissCrashRecovery()
+            beginLaunchFlow(
+                host = host,
+                launchMode = StsLaunchSpec.LAUNCH_MODE_MTS,
+                forceJvmCrash = false,
+                skipEnabledModSizeWarning = true,
+            )
+        }
+    }
 
-        dismissCrashRecovery()
-        beginLaunchFlow(
-            host = host,
-            launchMode = StsLaunchSpec.LAUNCH_MODE_MTS,
-            forceJvmCrash = false,
-            skipEnabledModSizeWarning = true,
-        )
+    /** Reserve the launch on main, persist its safety fence on IO, then continue on main. */
+    private fun prepareSteamCloudBackgroundLaunch(host: Activity, launch: suspend () -> Unit): Boolean {
+        if (!tryBeginLaunchRequest()) return false
+        viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    SteamCloudSyncProcessService.requestBackgroundLaunch(host.applicationContext)
+                }
+                if (host.isFinishing || host.isDestroyed) {
+                    clearLaunchInFlightState()
+                } else launch()
+            } catch (error: Exception) {
+                clearLaunchInFlightState()
+                if (error is kotlinx.coroutines.CancellationException) throw error
+                Log.w(LOGCAT_TAG, "Cannot prepare Steam Cloud background launch", error)
+                _effects.tryEmit(Effect.ShowSnackbar(
+                    message = UiText.DynamicString(error.message ?: "Cannot prepare Steam Cloud background launch"),
+                    duration = LauncherTransientNoticeDuration.LONG,
+                ))
+            }
+        }
         return true
     }
 

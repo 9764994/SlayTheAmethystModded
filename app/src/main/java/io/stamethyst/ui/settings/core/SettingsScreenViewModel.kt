@@ -650,6 +650,10 @@ class SettingsScreenViewModel : ViewModel() {
     private val executor: ExecutorService = Executors.newSingleThreadExecutor()
     private val statusRefreshExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     private val steamCloudLoginCleanupExecutor: ExecutorService = Executors.newSingleThreadExecutor()
+    // Control writes may wait for a save transaction in :steamcloud. Never do so on main,
+    // or behind a network operation on the general settings executor. Preserve toggle order.
+    private val steamCloudControlExecutor: ExecutorService = Executors.newSingleThreadExecutor()
+    private var steamCloudControlGeneration = 0L
     // A slow refresh must not overwrite a newer setting change with its older snapshot.
     private val statusRefreshGeneration = AtomicLong(0L)
     private var statusRefreshTask: Future<*>? = null
@@ -2361,12 +2365,20 @@ class SettingsScreenViewModel : ViewModel() {
     }
 
     fun onSteamCloudSyncDisabledChanged(host: Activity, disabled: Boolean) {
-        LauncherPreferences.setSteamCloudSyncDisabled(host, disabled)
+        val generation = ++steamCloudControlGeneration
+        val context = host.applicationContext
         uiState = uiState.copy(steamCloudSyncDisabled = disabled)
-        if (disabled) {
-            SteamCloudSyncProcessService.cancel(host)
+        steamCloudControlExecutor.execute {
+            val result = runCatching {
+                LauncherPreferences.setSteamCloudSyncDisabled(context, disabled)
+                if (disabled) SteamCloudSyncProcessService.cancel(context)
+            }
+            host.runOnUiThread {
+                if (generation != steamCloudControlGeneration || host.isFinishing || host.isDestroyed) return@runOnUiThread
+                result.exceptionOrNull()?.let { showToast(host, UiText.DynamicString(summarizeSteamCloudError(host, it))) }
+                refreshStatus(host, clearBusy = false)
+            }
         }
-        refreshStatus(host, clearBusy = false)
     }
 
     fun onSteamCloudAutoLaunchAfterSyncChanged(host: Activity, enabled: Boolean) {
@@ -6430,6 +6442,7 @@ class SettingsScreenViewModel : ViewModel() {
         statusRefreshExecutor.shutdownNow()
         executor.shutdownNow()
         steamCloudLoginCleanupExecutor.shutdown()
+        steamCloudControlExecutor.shutdown()
         super.onCleared()
     }
 

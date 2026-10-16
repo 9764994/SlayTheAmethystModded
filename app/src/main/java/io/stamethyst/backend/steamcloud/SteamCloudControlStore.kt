@@ -14,7 +14,7 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
 
-/** Uncached, independently locked control state. Disabling sync never waits for network RPCs. */
+/** Atomic, uncached snapshots for readers; only writers/transactions take the control lock. */
 internal object SteamCloudControlStore {
     @Serializable data class State(
         val disabled: Boolean = false,
@@ -27,30 +27,37 @@ internal object SteamCloudControlStore {
     private val json = Json { ignoreUnknownKeys = true; prettyPrint = true }
     private val lock = ReentrantLock(true)
     fun file(context: Context): File = File(RuntimePaths.storageRoot(context), "steam-cloud/control-v2.json")
-    fun <T> locked(context: Context, block: () -> T): T = lock.withLock {
+    fun <T> locked(context: Context, block: () -> T): T =
+        locked(File(context.filesDir, "steam-cloud-control.lock"), block)
+
+    internal fun <T> locked(lockFile: File, block: () -> T): T = lock.withLock {
         if (lock.holdCount > 1) return@withLock block()
-        RandomAccessFile(File(context.filesDir, "steam-cloud-control.lock"), "rw").use { handle ->
+        RandomAccessFile(lockFile, "rw").use { handle ->
             handle.channel.lock().use { block() }
         }
     }
-    fun read(context: Context, legacy: SharedPreferences? = null): State = locked(context) {
-        val file = file(context)
-        if (file.exists()) json.decodeFromString<State>(file.readText())
-        else {
-            val migrated = State(
-                disabled = legacy?.getBoolean("steam_cloud_sync_disabled", false) ?: false,
-                mode = legacy?.getString("steam_cloud_save_mode", SteamCloudSaveMode.DEFAULT.persistedValue)
-                    ?: SteamCloudSaveMode.DEFAULT.persistedValue,
-                independentSwitchPending = legacy?.getBoolean("steam_cloud_independent_switch_pending", false) ?: false,
-                pendingSteamId = legacy?.getString("steam_cloud_pending_profile_steam_id", "").orEmpty(),
-                blacklist = legacy?.getStringSet("steam_cloud_sync_blacklist_paths", LauncherConfig.DEFAULT_STEAM_CLOUD_SYNC_BLACKLIST_PATHS)
-                    ?: LauncherConfig.DEFAULT_STEAM_CLOUD_SYNC_BLACKLIST_PATHS,
-            )
-            write(file, migrated)
-            migrated
-        }
-    }
-    fun update(context: Context, legacy: SharedPreferences? = null, transform: (State) -> State) = locked(context) {
+    // Route backend readers through the same legacy preferences as LauncherConfig.
+    // Reads no longer persist migration, so a no-legacy fallback would lose old flags.
+    fun read(context: Context): State = LauncherConfig.readSteamCloudControls(context)
+    fun read(context: Context, legacy: SharedPreferences): State = read(file(context), legacy)
+
+    // A save transaction can hold the writer lock for seconds. UI/status reads must
+    // never acquire it. Every writer (including transaction apply/rollback) replaces
+    // this regular file atomically, so readers see a complete old or new snapshot.
+    internal fun read(file: File, legacy: SharedPreferences? = null): State =
+        if (file.exists()) json.decodeFromString<State>(file.readText()) else legacyState(legacy)
+
+    private fun legacyState(legacy: SharedPreferences?): State = State(
+        disabled = legacy?.getBoolean("steam_cloud_sync_disabled", false) ?: false,
+        mode = legacy?.getString("steam_cloud_save_mode", SteamCloudSaveMode.DEFAULT.persistedValue)
+            ?: SteamCloudSaveMode.DEFAULT.persistedValue,
+        independentSwitchPending = legacy?.getBoolean("steam_cloud_independent_switch_pending", false) ?: false,
+        pendingSteamId = legacy?.getString("steam_cloud_pending_profile_steam_id", "").orEmpty(),
+        blacklist = legacy?.getStringSet("steam_cloud_sync_blacklist_paths", LauncherConfig.DEFAULT_STEAM_CLOUD_SYNC_BLACKLIST_PATHS)
+            ?: LauncherConfig.DEFAULT_STEAM_CLOUD_SYNC_BLACKLIST_PATHS,
+    )
+    fun update(context: Context, legacy: SharedPreferences, transform: (State) -> State) = locked(context) {
+        // Migration is persisted on the first write, not from a UI read.
         write(file(context), transform(read(context, legacy)))
     }
     fun write(file: File, state: State) {

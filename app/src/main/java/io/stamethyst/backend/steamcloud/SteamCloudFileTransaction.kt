@@ -94,6 +94,12 @@ internal class SteamCloudFileTransaction private constructor(
         val install = File(target.parentFile, ".${target.name}.sync-install-${directory.name}-$index")
         if (install.exists() && !install.deleteRecursively()) throw IOException("Cannot clear $install")
         if (source != null) copyPath(source, install)
+        if (source?.isFile == true && !target.isDirectory) {
+            // In particular, control-v2.json has lock-free readers. Do not unlink
+            // it before rename: that gap looks like an unmigrated/default state.
+            SteamCloudAtomicFileStore.replaceFile(install, target)
+            return
+        }
         if (target.exists() && !target.deleteRecursively()) throw IOException("Cannot replace $target")
         if (source != null && !install.renameTo(target)) throw IOException("Cannot install $target")
         if (target.parentFile.exists()) syncDirectory(target.parentFile)
