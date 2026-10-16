@@ -367,8 +367,9 @@ internal fun buildBeginAuthSessionRequest(
     return builder.build()
 }
 
-private fun Throwable.asAuthenticationException(prefix: String): SteamAuthenticationException =
+private fun Throwable.asAuthenticationException(prefix: String): Throwable =
     when (this) {
+        is java.util.concurrent.CancellationException, is InterruptedException -> this
         is SteamAuthenticationException -> this
         is SteamServiceMethodException -> SteamAuthenticationException(
             resultCode = resultCode,

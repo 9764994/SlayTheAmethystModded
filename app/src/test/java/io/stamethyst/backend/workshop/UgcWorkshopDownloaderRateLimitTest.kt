@@ -23,6 +23,37 @@ import top.apricityx.workshop.workshop.WorkshopSteamRateLimitedException
 
 class UgcWorkshopDownloaderRateLimitTest {
     @Test
+    fun revokedCmLoginStopsBeforePublicCdnFallback() {
+        val server = MockWebServer()
+        server.start()
+        try {
+            server.enqueue(MockResponse.Builder()
+                .body("{\"response\":{\"serverlist\":[{\"endpoint\":\"cm.example:443\",\"type\":\"websockets\"}]}}")
+                .build())
+            val session = RateLimitedSession()
+            val downloader = UgcWorkshopDownloader(
+                client = OkHttpClient(),
+                directoryClient = SteamDirectoryClient(OkHttpClient(), apiBaseUrl = server.url("/")),
+                sessionFactory = { session },
+                sessionConnector = { _, _ -> throw top.apricityx.workshop.steam.protocol.SteamSessionRevokedException() },
+                allowPublicCdnFallbackOnSessionFailure = true,
+            )
+            val error = runCatching {
+                runBlocking {
+                    downloader.download(WorkshopDownloadRequest(646570u, 1uL, File("build/test-revoked")),
+                        ResolvedWorkshopItem.UgcManifestItem(1uL, 2u, "test", "{}"), {}, {})
+                }
+            }.exceptionOrNull()
+            assertTrue(error is top.apricityx.workshop.steam.protocol.SteamSessionRevokedException)
+            assertEquals(0, session.serviceMethodCalls)
+            assertEquals(0, session.depotKeyRequests)
+            assertEquals(1, server.requestCount)
+        } finally {
+            server.close()
+        }
+    }
+
+    @Test
     fun rateLimitedCmLoginStopsBeforeManifestOrCdnRequests() {
         val server = MockWebServer()
         server.start()

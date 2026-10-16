@@ -32,6 +32,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -51,6 +53,9 @@ class OkHttpSteamCmSession(
     private val webSocketFactory: SteamWebSocketFactory = SteamWebSocketFactory { request, listener ->
         client.newWebSocket(request, listener)
     },
+    private val accountValidator: (SteamAccountSession) -> Boolean = { true },
+    private val onAccountLogonFailure: (SteamAccountSession, Throwable) -> Unit = { _, _ -> },
+    private val sessionValidator: () -> Boolean = { true },
 ) : SteamCmSession {
     init {
         activeSessions += this
@@ -62,6 +67,11 @@ class OkHttpSteamCmSession(
     private val nextJobId = AtomicLong(1L)
     private val transportGeneration = AtomicLong(0L)
     private val transportLock = Any()
+
+    @Volatile private var closed = false
+    private var pendingConnect: CompletableDeferred<Unit>? = null
+    private val reconnectMutex = Mutex()
+    private val connectMutex = Mutex()
 
     @Volatile
     private var webSocket: WebSocket? = null
@@ -80,15 +90,22 @@ class OkHttpSteamCmSession(
 
     override val currentSession: StateFlow<SessionContext?> = _currentSession
 
-    override suspend fun connect(servers: List<CmServer>) {
-        reconnectPlan = ReconnectPlan.TransportOnly(servers.toList())
+    override suspend fun connect(servers: List<CmServer>) = connectMutex.withLock {
+        synchronized(transportLock) {
+            checkOpen()
+            reconnectPlan = ReconnectPlan.TransportOnly(servers.toList())
+        }
         ensureConnected(servers)
     }
 
-    override suspend fun connectAnonymous(servers: List<CmServer>): SessionContext {
-        currentSession.value?.let { return it }
-        reconnectPlan = ReconnectPlan.Anonymous(servers.toList())
-        return logonWithFailover(
+    override suspend fun connectAnonymous(servers: List<CmServer>): SessionContext = connectMutex.withLock {
+        checkOpen()
+        currentSession.value?.let { return@withLock it }
+        synchronized(transportLock) {
+            checkOpen()
+            reconnectPlan = ReconnectPlan.Anonymous(servers.toList())
+        }
+        logonWithFailover(
             servers = servers,
             requestLabel = "anonymous",
             buildBody = {
@@ -112,34 +129,47 @@ class OkHttpSteamCmSession(
     override suspend fun connectWithRefreshToken(
         servers: List<CmServer>,
         account: SteamAccountSession,
-    ): SessionContext {
-        currentSession.value?.let { return it }
-        reconnectPlan = ReconnectPlan.RefreshToken(
-            servers = servers.toList(),
-            account = account,
-        )
-        return logonWithFailover(
-            servers = servers,
-            requestLabel = "refresh token",
-            buildBody = {
-                CMsgClientLogon.newBuilder()
-                    .setProtocolVersion(SteamPacketCodec.clientLogonProtocol)
-                    .setClientOsType(DEFAULT_CLIENT_OS_TYPE)
-                    .setClientLanguage("english")
-                    .setCellId(0)
-                    .setClientPackageVersion(1771)
-                    .setObfuscatedPrivateIp(defaultObfuscatedPrivateIp())
-                    .setDeprecatedObfustucatedPrivateIp(defaultObfuscatedPrivateIp().v4)
-                    .setMachineName(account.machineName.ifBlank { machineName })
-                    .setMachineId(ByteString.copyFrom(machineId))
-                    .setSupportsRateLimitResponse(true)
-                    .setAccountName(account.accountName)
-                    .setShouldRememberPassword(account.shouldRememberPassword)
-                    .setAccessToken(account.refreshToken)
-                    .build()
-            },
-            headerSteamId = account.steamId,
-        )
+    ): SessionContext = connectMutex.withLock {
+        checkAccount(account)
+        currentSession.value?.let { return@withLock it }
+        synchronized(transportLock) {
+            checkAccount(account)
+            reconnectPlan = ReconnectPlan.RefreshToken(servers.toList(), account)
+        }
+        try {
+            logonWithFailover(
+                servers = servers,
+                requestLabel = "refresh token",
+                buildBody = {
+                    checkAccount(account)
+                    CMsgClientLogon.newBuilder()
+                        .setProtocolVersion(SteamPacketCodec.clientLogonProtocol)
+                        .setClientOsType(DEFAULT_CLIENT_OS_TYPE)
+                        .setClientLanguage("english")
+                        .setCellId(0)
+                        .setClientPackageVersion(1771)
+                        .setObfuscatedPrivateIp(defaultObfuscatedPrivateIp())
+                        .setDeprecatedObfustucatedPrivateIp(defaultObfuscatedPrivateIp().v4)
+                        .setMachineName(account.machineName.ifBlank { machineName })
+                        .setMachineId(ByteString.copyFrom(machineId))
+                        .setSupportsRateLimitResponse(true)
+                        .setAccountName(account.accountName)
+                        .setShouldRememberPassword(account.shouldRememberPassword)
+                        .setAccessToken(account.refreshToken)
+                        .build()
+                },
+                headerSteamId = account.steamId,
+            )
+        } catch (error: Exception) {
+            synchronized(transportLock) { reconnectPlan = null }
+            // Cancellation/revocation is expected during logout; never suggest re-login for it.
+            if (error !is CancellationException && error !is InterruptedException && !closed) {
+                runCatching { if (accountValidator(account)) onAccountLogonFailure(account, error) }
+            }
+            if (error is CancellationException || error is InterruptedException) throw error
+            throw (error as? SteamProtocolException ?: SteamProtocolException("Steam CM logon failed", error))
+                .also { it.isCmLogonFailure = true }
+        }
     }
 
     /** A successful WebSocket handshake does not imply that this CM can route ClientLogon. */
@@ -155,6 +185,7 @@ class OkHttpSteamCmSession(
             .distinctBy(CmServer::websocketUri).take(MAX_LOGON_ATTEMPTS)
         var lastError: Exception? = null
         candidates.forEachIndexed { index, server ->
+            checkOpen()
             currentCoroutineContext().ensureActive()
             try {
                 if (webSocket == null || currentServer != server) connectSingleServer(server)
@@ -197,8 +228,12 @@ class OkHttpSteamCmSession(
     }
 
     private suspend fun connectSingleServer(server: CmServer) {
-        val generation = transportGeneration.incrementAndGet()
         val deferred = CompletableDeferred<Unit>()
+        val generation = synchronized(transportLock) {
+            checkOpen()
+            pendingConnect = deferred
+            transportGeneration.incrementAndGet()
+        }
         val request = Request.Builder().url(server.websocketUri).build()
 
         val listener = object : WebSocketListener() {
@@ -242,8 +277,9 @@ class OkHttpSteamCmSession(
             }
         }
 
-        val socket = webSocketFactory.newWebSocket(request, listener)
         synchronized(transportLock) {
+            checkOpen()
+            val socket = webSocketFactory.newWebSocket(request, listener)
             // A custom factory can invoke onFailure before newWebSocket returns.
             if (transportGeneration.get() != generation || deferred.isCompleted && currentServer == null) socket.cancel()
             else webSocket = socket
@@ -269,21 +305,25 @@ class OkHttpSteamCmSession(
         buildBody: () -> CMsgClientLogon,
         headerSteamId: Long,
     ): SessionContext {
-        pendingLogon = CompletableDeferred()
-        val packet = SteamPacketCodec.encode(
-            emsg = SteamPacketCodec.emsgClientLogon,
-            header = CMsgProtoBufHeader.newBuilder()
-                .setClientSessionid(0)
-                .setSteamid(headerSteamId)
-                .build(),
-            body = buildBody(),
-        )
-        if (webSocket?.send(packet.toByteString()) != true) {
-            val error = SteamProtocolException("Failed to send Steam $requestLabel logon")
-            pendingLogon.completeExceptionallyIfNeeded(error)
-            throw error
+        val logon = CompletableDeferred<SessionContext>()
+        synchronized(transportLock) {
+            checkOpen()
+            pendingLogon = logon
+            val packet = SteamPacketCodec.encode(
+                emsg = SteamPacketCodec.emsgClientLogon,
+                header = CMsgProtoBufHeader.newBuilder()
+                    .setClientSessionid(0)
+                    .setSteamid(headerSteamId)
+                    .build(),
+                body = buildBody(),
+            )
+            if (webSocket?.send(packet.toByteString()) != true) {
+                val error = SteamProtocolException("Failed to send Steam $requestLabel logon")
+                logon.completeExceptionallyIfNeeded(error)
+                throw error
+            }
         }
-        return withTimeout(REQUEST_TIMEOUT_MS) { pendingLogon.await() }
+        return withTimeout(REQUEST_TIMEOUT_MS) { logon.await() }
     }
 
     private fun handleIncomingPacket(rawPacket: ByteArray) {
@@ -488,6 +528,8 @@ class OkHttpSteamCmSession(
     }
 
     override suspend fun sendClientMessage(emsg: Int, request: MessageLite) {
+        checkOpen()
+        (reconnectPlan as? ReconnectPlan.RefreshToken)?.let { checkAccount(it.account) }
         val session = currentSession.value
             ?: throw SteamProtocolException("Steam CM session is not logged on")
         val packet = SteamPacketCodec.encode(
@@ -504,6 +546,8 @@ class OkHttpSteamCmSession(
     }
 
     override suspend fun sendClientMessage(emsg: Int, request: MessageLite, routingAppId: UInt) {
+        checkOpen()
+        (reconnectPlan as? ReconnectPlan.RefreshToken)?.let { checkAccount(it.account) }
         val session = currentSession.value
             ?: throw SteamProtocolException("Steam CM session is not logged on")
         val packet = SteamPacketCodec.encode(
@@ -626,8 +670,30 @@ class OkHttpSteamCmSession(
     }
 
     override fun close() {
-        activeSessions -= this
-        closeTransport()
+        synchronized(transportLock) {
+            if (closed) return
+            closed = true
+            reconnectPlan = null
+            activeSessions -= this
+            closeTransport()
+            scope.cancel()
+        }
+    }
+
+    private fun checkOpen() {
+        if (closed) throw SteamSessionRevokedException()
+        if (!runCatching { sessionValidator() }.getOrDefault(false)) {
+            close()
+            throw SteamSessionRevokedException()
+        }
+    }
+
+    private fun checkAccount(account: SteamAccountSession) {
+        checkOpen()
+        if (!runCatching { accountValidator(account) }.getOrDefault(false)) {
+            close()
+            throw SteamSessionRevokedException()
+        }
     }
 
     companion object {
@@ -652,7 +718,9 @@ class OkHttpSteamCmSession(
         heartbeatJob = null
         _currentSession.value = null
         currentServer = null
-        val failure = SteamProtocolException("Steam CM session closed")
+        val failure = if (closed) SteamSessionRevokedException() else SteamProtocolException("Steam CM session closed")
+        pendingConnect?.completeExceptionallyIfNeeded(failure)
+        pendingConnect = null
         failActiveState(failure)
         webSocket?.cancel()
         webSocket = null
@@ -714,6 +782,9 @@ class OkHttpSteamCmSession(
     private suspend fun <T> retryRecoverableRequest(block: suspend () -> T): T {
         var shouldRetry = true
         while (true) {
+            checkOpen()
+            (reconnectPlan as? ReconnectPlan.RefreshToken)?.let { checkAccount(it.account) }
+            val generation = transportGeneration.get()
             try {
                 return block()
             } catch (error: Throwable) {
@@ -721,7 +792,13 @@ class OkHttpSteamCmSession(
                     throw error
                 }
                 shouldRetry = false
-                reconnectForRetry()
+                reconnectMutex.lock()
+                try {
+                    checkOpen()
+                    if (transportGeneration.get() == generation || currentSession.value == null) reconnectForRetry()
+                } finally {
+                    reconnectMutex.unlock()
+                }
             }
         }
     }

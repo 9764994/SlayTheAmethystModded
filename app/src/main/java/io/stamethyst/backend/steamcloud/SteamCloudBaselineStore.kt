@@ -44,8 +44,7 @@ internal object SteamCloudBaselineStore {
     fun clear(context: Context) {
         SteamCloudOperationMutex.runExclusive(context) {
             val baseline = baselineFile(context)
-            baseline.delete()
-            SteamCloudAtomicFileStore.backupFile(baseline).delete()
+            SteamCloudAtomicFileStore.deleteFiles(baseline, SteamCloudAtomicFileStore.backupFile(baseline))
         }
     }
 

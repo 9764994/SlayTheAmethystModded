@@ -1294,6 +1294,7 @@ fun LauncherContent(
                         onConfirmForceImport = { settingsViewModel.confirmPendingStsJarForceImport(activity) }
                     )
                 }
+            SteamCmLoginFailureDialog(onLogin = { navigator.push(Route.SteamCloudLogin) })
             feedbackInboxState.pendingNotice?.let { notice ->
                 AlertDialog(
                     onDismissRequest = FeedbackInboxCoordinator::dismissUnreadNotice,

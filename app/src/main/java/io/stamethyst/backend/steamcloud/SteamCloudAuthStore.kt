@@ -5,6 +5,8 @@ import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
 import android.util.Log
+import io.stamethyst.backend.steam.SteamCmAccountEpoch
+import io.stamethyst.backend.steam.SteamCmLoginFailureNotice
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import java.io.File
@@ -87,6 +89,8 @@ internal object SteamCloudAuthStore {
         val revision: Long = 0L,
         val credentialRevision: Long = 0L,
         val activeLoginAttemptId: String = "",
+        val activeLoginCmEpoch: String = "",
+        val cmAccountEpoch: String = "",
         val committedLoginAttemptId: String = "",
         val loginUsername: String = "",
         val loginPassword: String = "",
@@ -108,6 +112,10 @@ internal object SteamCloudAuthStore {
     )
 
     fun readAuthMaterial(context: Context): SavedAuthMaterial? =
+        readCmAuthMaterial(context)
+
+    /** Only local profile migration may read the revoked account identity before it is wiped. */
+    fun readProfileAuthMaterial(context: Context): SavedAuthMaterial? =
         readStateOrNull(context)?.toAuthMaterialOrNull()
 
     fun readSavedLoginCredentials(context: Context): SavedLoginCredentials {
@@ -160,7 +168,8 @@ internal object SteamCloudAuthStore {
             }
             runCatching { loadState(context) }
                 .onSuccess { state ->
-                    return AuthSnapshotRead(snapshot = state.toAuthSnapshot(), readFailed = false)
+                    val visibleState = if (state.cmAccountEpoch == SteamCmAccountEpoch.read(context)) state else StoredState()
+                    return AuthSnapshotRead(snapshot = visibleState.toAuthSnapshot(), readFailed = false)
                 }
                 .onFailure { error ->
                     lastError = error
@@ -216,6 +225,7 @@ internal object SteamCloudAuthStore {
                 state.copy(
                     revision = state.revision + 1L,
                     activeLoginAttemptId = attemptId,
+                    activeLoginCmEpoch = SteamCmAccountEpoch.read(appContext),
                 ),
             )
         }
@@ -264,7 +274,9 @@ internal object SteamCloudAuthStore {
         SteamCloudOperationMutex.runExclusive(context) {
             cancellationHandle.runIfActive {
                 val state = loadStateExclusive(appContext(context))
-                if (state.activeLoginAttemptId != normalizedAttemptId) {
+                if (state.activeLoginAttemptId != normalizedAttemptId ||
+                    state.activeLoginCmEpoch != SteamCmAccountEpoch.read(context)
+                ) {
                     throw CancellationException("Steam login attempt is no longer active.")
                 }
                 writeState(
@@ -274,6 +286,7 @@ internal object SteamCloudAuthStore {
                         credentialRevision = state.credentialRevision + 1L,
                         activeLoginAttemptId = "",
                         committedLoginAttemptId = normalizedAttemptId,
+                        cmAccountEpoch = state.activeLoginCmEpoch,
                         accountName = accountName.trim(),
                         refreshToken = refreshToken.trim(),
                         guardData = guardData.trim(),
@@ -291,8 +304,12 @@ internal object SteamCloudAuthStore {
                         webAccessTokenRefreshFingerprint = "",
                     ),
                 )
+                runCatching { SteamCmLoginFailureNotice.clear(context) }
             }
         }
+        // A successful explicit login starts a new borrowing lifetime, even when
+        // Steam returned the same token. Old handles/cooldowns must not follow it.
+        io.stamethyst.backend.workshop.SharedSteamCmSessions.invalidateProcessSession()
     }
 
     fun readCachedWebAccessToken(
@@ -304,6 +321,7 @@ internal object SteamCloudAuthStore {
     ): CachedWebAccessToken? {
         val state = readStateOrNull(context) ?: return null
         if (
+            state.cmAccountEpoch != SteamCmAccountEpoch.read(context) ||
             state.webAccessToken.isBlank() ||
             state.webAccessTokenExpiresAtMs <= nowMs + minimumRemainingLifetimeMs ||
             state.webAccessTokenSteamId64 != steamId.toString() ||
@@ -330,7 +348,7 @@ internal object SteamCloudAuthStore {
         }
         mutateState(context) { state ->
             val auth = state.toAuthMaterialOrNull()
-            if (auth == null ||
+            if (state.cmAccountEpoch != SteamCmAccountEpoch.read(context) || auth == null ||
                 auth.steamId64 != steamId.toString() ||
                 auth.refreshToken != refreshToken.trim()
             ) {
@@ -397,6 +415,14 @@ internal object SteamCloudAuthStore {
         mutateAuthenticatedState(context) { state -> state.copy(guardData = "") }
     }
 
+    /** Unlike profile migration, network authentication must respect the logout fence immediately. */
+    fun readCmAuthMaterial(context: Context): SavedAuthMaterial? {
+        val epoch = SteamCmAccountEpoch.read(context)
+        val state = readStateOrNull(context) ?: return null
+        return state.takeIf { it.cmAccountEpoch == epoch && SteamCmAccountEpoch.read(context) == epoch }
+            ?.toAuthMaterialOrNull()
+    }
+
     fun clear(context: Context) {
         val appContext = appContext(context)
         SteamCloudOperationMutex.runExclusive(appContext) {
@@ -408,6 +434,15 @@ internal object SteamCloudAuthStore {
             writeStateAfterExplicitReset(appContext, clearedState)
             clearLegacyPreferences(appContext)
         }
+    }
+
+    /** Read the actual encrypted state, not the UI snapshot masked by the revocation fence. */
+    fun verifyCleared(context: Context) {
+        val state = loadState(context)
+        check(state.loginUsername.isBlank() && state.loginPassword.isBlank() &&
+            state.accountName.isBlank() && state.refreshToken.isBlank() && state.guardData.isBlank() &&
+            state.steamId64.isBlank() && state.webAccessToken.isBlank() && state.activeLoginAttemptId.isBlank()
+        ) { "Steam account credentials are still present after logout." }
     }
 
     private fun mutateAuthenticatedState(
@@ -617,7 +652,7 @@ internal object SteamCloudAuthStore {
         if (!context.deleteSharedPreferences(LEGACY_PREFS_NAME)) {
             Log.w(TAG, "Migrated Steam Cloud preferences could not be deleted.")
         }
-        legacyBackupFile.delete()
+        SteamCloudAtomicFileStore.deleteFiles(legacyFile, legacyBackupFile)
     }
 
     private fun StoredState.toAuthMaterialOrNull(): SavedAuthMaterial? {

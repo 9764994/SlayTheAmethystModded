@@ -1,6 +1,7 @@
 package io.stamethyst.backend.steamcloud
 
 import android.content.Context
+import io.stamethyst.backend.steam.SteamCmAccountEpoch
 import java.util.concurrent.CancellationException
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.TimeoutException
@@ -212,9 +213,14 @@ internal object SteamCloudAuthCoordinator {
             readTimeoutMs = 60_000L,
             callTimeoutMs = 60_000L,
         )
+        val cmEpoch = SteamCmAccountEpoch.read(context)
         val authenticationClient = SteamAuthenticationClient(
             directoryClient = SteamDirectoryClient(httpClient),
-            sessionFactory = { OkHttpSteamCmSession(httpClient) },
+            sessionFactory = {
+                OkHttpSteamCmSession(httpClient, sessionValidator = {
+                    cmEpoch == SteamCmAccountEpoch.read(context)
+                })
+            },
         )
         val protocolEvents = mutableListOf<String>()
         val debugLogger: (String) -> Unit = { line ->

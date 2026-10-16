@@ -200,6 +200,17 @@ class WorkshopDownloadProcessService : Service() {
             control(context, ACTION_CANCEL, appId, publishedFileId, receiver)
         }
 
+        /** Preserve partial data and require explicit resume instead of restarting the queue on logout. */
+        fun pauseAllForLogout(context: Context) {
+            runningService?.let { service ->
+                service.workerThreads.forEach { (key, worker) ->
+                    service.requestedStops[key] = StopReason.Pause
+                    worker.interrupt()
+                }
+            }
+            WorkshopDownloadTaskStore(context.applicationContext).pauseAllForLogout()
+        }
+
         private fun control(context: Context, action: String, appId: UInt, publishedFileId: ULong, receiver: ResultReceiver?) {
             val appContext = context.applicationContext
             val intent = Intent(appContext, WorkshopDownloadProcessService::class.java).apply {
@@ -787,7 +798,9 @@ class WorkshopDownloadProcessService : Service() {
                 }
             }
         } catch (throwable: Throwable) {
-            when (requestedStops[downloadKey]) {
+            val revoked = generateSequence(throwable) { it.cause?.takeUnless { cause -> cause === it } }
+                .take(12).any { it is top.apricityx.workshop.steam.protocol.SteamSessionRevokedException }
+            when (requestedStops[downloadKey] ?: StopReason.Pause.takeIf { revoked }) {
                 StopReason.Pause -> {
                     taskStore.update(details.summary.publishedFileId) {
                         it.copy(
@@ -871,6 +884,7 @@ class WorkshopDownloadProcessService : Service() {
                 }
             }
         } finally {
+            service.close()
             activeDownloadHeartbeat.interrupt()
             clearActiveDownloadMarker(details.summary.publishedFileId)
             workerThreads.remove(downloadKey)

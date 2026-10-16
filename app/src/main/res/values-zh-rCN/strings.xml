@@ -3172,6 +3172,8 @@
     <string name="main_mod_patch_dialog_unrecorded_version_format">无应用记录 / 当前 v%1$d</string>
     <string name="main_mod_patch_badge_attention_content_description">导入补丁存在缺失记录或新版本，查看详情</string>
     <string name="main_mod_patch_dialog_unrecorded_message">此模组有适用但无应用记录的导入补丁，可能是在模组导入后新增，或在导入时被跳过。请重新导入原始模组以检查并应用；没有记录不一定代表文件未打补丁。已禁用的补丁仍会跳过。</string>
+    <string name="steam_cm_login_failed_title">Steam CM 登录失败</string>
+    <string name="steam_cm_login_failed_message">Steam CM 登录失败，Steam 账号登录状态疑似过期，建议重新登录账号。</string>
     <string name="settings_mts_cache_optimizations_title">模组缓存启动优化</string>
     <string name="settings_mts_cache_optimizations_entry_desc">分别调整缓存命中时的额外启动优化</string>
     <string name="settings_mts_cache_optimizations_desc">默认全部关闭，按需开启。仅在命中模组缓存时生效，下次启动游戏应用，无需重建缓存。</string>

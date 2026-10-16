@@ -249,10 +249,9 @@ internal class SteamStsJarDownloadService(
     }
 
     private fun readSteamAccountSession(identity: WorkshopSteamClientIdentity): SteamAccountSession {
-        val auth = SteamCloudAuthStore.readAuthMaterial(context)
+        val auth = SteamCloudAuthStore.readCmAuthMaterial(context)
             ?: throw IOException("Steam account is not logged in")
-        val snapshot = SteamCloudAuthStore.readSnapshot(context)
-        val steamId = snapshot.steamId64.toLongOrNull() ?: 0L
+        val steamId = auth.steamId64.toLongOrNull() ?: 0L
         if (steamId <= 0L) {
             throw IOException("Steam account session is missing SteamID64")
         }

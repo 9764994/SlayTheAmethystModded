@@ -3130,6 +3130,8 @@
     <string name="main_mod_patch_dialog_unrecorded_version_format">無套用記錄 / 目前 v%1$d</string>
     <string name="main_mod_patch_badge_attention_content_description">匯入修補程式有缺失記錄或新版本，查看詳情</string>
     <string name="main_mod_patch_dialog_unrecorded_message">此模組有適用但無套用記錄的匯入修補程式，可能是在模組匯入後新增，或在匯入時被略過。請重新匯入原始模組以檢查並套用；沒有記錄不一定代表檔案未修補。已停用的修補程式仍會略過。</string>
+    <string name="steam_cm_login_failed_title">Steam CM 登入失敗</string>
+    <string name="steam_cm_login_failed_message">Steam CM 登入失敗，Steam 帳號登入狀態疑似過期，建議重新登入帳號。</string>
     <string name="settings_mts_cache_optimizations_title">模組快取啟動最佳化</string>
     <string name="settings_mts_cache_optimizations_entry_desc">分別調整命中快取時的額外啟動最佳化</string>
     <string name="settings_mts_cache_optimizations_desc">預設全部關閉，按需開啟。僅在命中模組快取時生效，下次啟動遊戲套用，無需重建快取。</string>

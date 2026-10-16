@@ -56,11 +56,8 @@ internal object SteamCloudManifestStore {
     fun clear(context: Context) {
         SteamCloudOperationMutex.runExclusive(context) {
             val manifest = manifestFile(context)
-            manifest.delete()
-            SteamCloudAtomicFileStore.backupFile(manifest).delete()
-            pullSummaryFile(context).delete()
-            pullDownloadDetailsFile(context).delete()
-            pushSummaryFile(context).delete()
+            SteamCloudAtomicFileStore.deleteFiles(manifest, SteamCloudAtomicFileStore.backupFile(manifest),
+                pullSummaryFile(context), pullDownloadDetailsFile(context), pushSummaryFile(context))
         }
     }
 

@@ -60,6 +60,7 @@ class SteamCloudSyncProcessService : Service() {
         const val EXTRA_APPLIED_FILE_COUNT = "io.stamethyst.extra.STEAM_CLOUD_APPLIED_FILE_COUNT"
         const val EXTRA_ERROR_SUMMARY = "io.stamethyst.extra.STEAM_CLOUD_ERROR_SUMMARY"
         const val EXTRA_FAILURE_CATEGORY = "io.stamethyst.extra.STEAM_CLOUD_FAILURE_CATEGORY"
+        const val EXTRA_CM_LOGON_FAILED = "io.stamethyst.extra.STEAM_CM_LOGON_FAILED"
         const val EXTRA_BACKGROUND_UPLOAD_READY = "io.stamethyst.extra.STEAM_CLOUD_BACKGROUND_UPLOAD_READY"
         const val EXTRA_REQUIRES_RESOLUTION = "io.stamethyst.extra.STEAM_CLOUD_REQUIRES_RESOLUTION"
         const val EXTRA_WARNINGS = "io.stamethyst.extra.STEAM_CLOUD_WARNINGS"
@@ -313,6 +314,8 @@ class SteamCloudSyncProcessService : Service() {
                 Bundle().apply {
                     putString(EXTRA_ERROR_SUMMARY, error.message ?: error.javaClass.simpleName)
                     putString(EXTRA_FAILURE_CATEGORY, category.name)
+                    putBoolean(EXTRA_CM_LOGON_FAILED, generateSequence<Throwable>(error) { it.cause }
+                        .take(12).any { it is top.apricityx.workshop.steam.protocol.SteamProtocolException && it.isCmLogonFailure })
                     putBoolean(EXTRA_REQUIRES_RESOLUTION, generateSequence<Throwable>(error) { it.cause }
                         .take(12).any { it is SteamCloudPushReconciliationException })
                     putLong(EXTRA_CHECKED_AT_MS, System.currentTimeMillis())

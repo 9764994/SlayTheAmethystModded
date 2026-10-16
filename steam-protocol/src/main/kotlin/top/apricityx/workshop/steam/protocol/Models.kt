@@ -135,7 +135,15 @@ data class SteamPacket(
     val body: ByteArray,
 )
 
-open class SteamProtocolException(message: String, cause: Throwable? = null) : Exception(message, cause)
+open class SteamProtocolException(message: String, cause: Throwable? = null) : Exception(message, cause) {
+    /** Keeps the original error/result code while identifying the failed connection stage. */
+    var isCmLogonFailure: Boolean = false
+        internal set
+}
+
+/** Explicit revocation is terminal, not a recoverable network failure. */
+class SteamSessionRevokedException : java.util.concurrent.CancellationException("Steam CM session has been revoked")
+
 
 /** CM routing failure, not a rejection of the user's credentials. */
 class SteamServerUnavailableException(

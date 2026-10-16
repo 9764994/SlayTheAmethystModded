@@ -60,6 +60,15 @@ class WorkshopDownloadTaskStore(context: Context) {
 
     fun save(tasks: List<WorkshopDownloadTaskRecord>) = withStoreLock { saveUnlocked(tasks) }
 
+    fun pauseAllForLogout() = withStoreLock {
+        saveUnlocked(loadUnlocked().map { task ->
+            if (task.status.isRunningDownload() || task.status == WorkshopDownloadTaskStatus.Queued) {
+                task.copy(status = WorkshopDownloadTaskStatus.Paused, message = "Steam 账号已退出，下载已暂停",
+                    preservePartialDownload = true, updatedAtMillis = System.currentTimeMillis())
+            } else task
+        })
+    }
+
     fun upsert(task: WorkshopDownloadTaskRecord) = withStoreLock {
         clearDeletedMarker(task.publishedFileId)
         val current = loadUnlocked().toMutableList()

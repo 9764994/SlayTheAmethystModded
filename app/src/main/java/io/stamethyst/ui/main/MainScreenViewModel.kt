@@ -4633,7 +4633,11 @@ class MainScreenViewModel : ViewModel() {
         pendingSteamCloudAutoLaunchAfterSync = false
         pendingSteamCloudManualBackgroundLaunch = false
         lastSteamCloudCheckAtMs = failedAtMs
-        if (SteamAuthenticationCircuitBreaker.trip(failureCategory)) {
+        // CM logon failures have a dedicated, account-scoped re-login dialog. Do not
+        // wipe credentials (and that notice) in response to a possible network outage.
+        if (!data.getBoolean(SteamCloudSyncProcessService.EXTRA_CM_LOGON_FAILED) &&
+            SteamAuthenticationCircuitBreaker.trip(failureCategory)
+        ) {
             forceSteamAccountLogoutAfterCircuitTrip(
                 appContext = appContext,
                 category = failureCategory,

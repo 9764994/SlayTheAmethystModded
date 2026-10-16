@@ -57,6 +57,7 @@ class UgcWorkshopDownloader(
             connectResult
                 .onSuccess { log("Connected to Steam CM cell=${it.cellId} steamId=${it.steamId}") }
                 .onFailure {
+                    if (it is CancellationException || it is InterruptedException) throw it
                     if (it.isSteamRateLimited()) {
                         log("Steam CM login was rate limited; stopping before CDN fallback")
                         throw WorkshopSteamRateLimitedException(it)
@@ -74,6 +75,7 @@ class UgcWorkshopDownloader(
                     manifestId = item.manifestId,
                 )
             }.getOrElse {
+                if (it is CancellationException || it is InterruptedException) throw it
                 log("Manifest request code unavailable, retrying without request code: ${it.message}")
                 0uL
             }
@@ -81,6 +83,7 @@ class UgcWorkshopDownloader(
             val contentServers = runCatching {
                 contentClient.getServersForSteamPipe()
             }.getOrElse {
+                if (it is CancellationException || it is InterruptedException) throw it
                 log("Falling back to public content server directory API")
                 directoryClient.loadContentServers()
             }
@@ -110,6 +113,7 @@ class UgcWorkshopDownloader(
             }.onSuccess {
                 log("Loaded depot key for depot=${item.depotId}")
             }.onFailure {
+                if (it is CancellationException || it is InterruptedException) throw it
                 log("Depot key request failed for depot=${item.depotId}: ${it.message}")
             }.getOrNull()
 

@@ -42,11 +42,10 @@ internal object SteamCloudAvatarCacheStore {
         if (!directory.exists()) {
             return 0
         }
-        val deletedCount = directory.walkBottomUp()
-            .filter { it.isFile }
-            .count { it.delete() }
+        val files = directory.walkBottomUp().filter { it.isFile }.toList()
+        SteamCloudAtomicFileStore.deleteFiles(*files.toTypedArray())
         directory.listFiles()?.filter { it.isDirectory }?.forEach { it.delete() }
-        return deletedCount
+        return files.size
     }
 
     private fun decodeCached(context: Context, cacheKey: String): Bitmap? {

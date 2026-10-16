@@ -6,6 +6,8 @@ import java.nio.ByteOrder
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.async
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.withTimeout
 import okhttp3.Protocol
 import okhttp3.Request
@@ -140,10 +142,99 @@ class OkHttpSteamCmSessionLogonTest {
         }
     }
 
+    @Test fun closedSessionCannotReconnectOrRetryRpcWithOldToken() = runBlocking {
+        val factory = FakeFactory(listOf(Outcome.Success, Outcome.Success))
+        val session = OkHttpSteamCmSession(webSocketFactory = factory)
+        session.connectWithRefreshToken(servers, account)
+        session.close()
+        assertNull(session.currentSession.value)
+        assertTrue(runCatching { session.requestDepotDecryptionKey(1u, 2u) }.exceptionOrNull() is SteamSessionRevokedException)
+        assertTrue(runCatching { session.connectWithRefreshToken(servers, account) }.exceptionOrNull() is SteamSessionRevokedException)
+        assertTrue(runCatching { session.connectAnonymous(servers) }.exceptionOrNull() is SteamSessionRevokedException)
+        assertEquals(1, factory.logons)
+    }
+
+    @Test fun closingInFlightRpcIsTerminalNotANetworkRetry() = runBlocking {
+        val factory = FakeFactory(listOf(Outcome.Success, Outcome.Success))
+        val session = OkHttpSteamCmSession(webSocketFactory = factory)
+        session.connectWithRefreshToken(servers, account)
+        val rpc = async(start = CoroutineStart.UNDISPATCHED) {
+            runCatching { session.requestDepotDecryptionKey(1u, 2u) }
+        }
+        session.close()
+        assertTrue(rpc.await().exceptionOrNull() is SteamSessionRevokedException)
+        assertEquals(1, factory.logons)
+    }
+
+    @Test fun logoutCancelsInFlightLogonWithoutFailureNoticeOrFailover() = runBlocking {
+        val factory = FakeFactory(listOf(Outcome.NoReply, Outcome.Success))
+        var notices = 0
+        val session = OkHttpSteamCmSession(webSocketFactory = factory, onAccountLogonFailure = { _, _ -> notices++ })
+        val logon = async(start = CoroutineStart.UNDISPATCHED) { runCatching { session.connectWithRefreshToken(servers, account) } }
+        session.close()
+        assertTrue(logon.await().exceptionOrNull() is SteamSessionRevokedException)
+        assertEquals(1, factory.logons)
+        assertEquals(0, notices)
+    }
+
+    @Test fun revokedCredentialsBlockAutomaticReconnectAfterSocketFailure() = runBlocking {
+        val factory = FakeFactory(listOf(Outcome.Success, Outcome.Success))
+        var valid = true
+        val session = OkHttpSteamCmSession(webSocketFactory = factory, accountValidator = { valid })
+        session.connectWithRefreshToken(servers, account)
+        val rpc = async(start = CoroutineStart.UNDISPATCHED) { runCatching { session.requestDepotDecryptionKey(1u, 2u) } }
+        valid = false
+        factory.sockets.single().let { it.listener.onFailure(it, IOException("lost connection"), null) }
+        assertTrue(rpc.await().exceptionOrNull() is SteamSessionRevokedException)
+        assertEquals(1, factory.logons)
+        session.close()
+    }
+
+    @Test fun authenticatedLogonFailureNotifiesButAnonymousFailureDoesNot() = runBlocking {
+        var notices = 0
+        val failed = FakeFactory(listOf(Outcome.AuthError(5)))
+        OkHttpSteamCmSession(webSocketFactory = failed, onAccountLogonFailure = { actual, _ ->
+            assertEquals(account, actual); notices++
+        }).use { session ->
+            assertTrue(runCatching { session.connectWithRefreshToken(servers, account) }.isFailure)
+        }
+        val anonymous = FakeFactory(listOf(Outcome.AuthError(5)))
+        OkHttpSteamCmSession(webSocketFactory = anonymous, onAccountLogonFailure = { _, _ -> notices++ }).use { session ->
+            assertTrue(runCatching { session.connectAnonymous(servers) }.isFailure)
+        }
+        assertEquals(1, notices)
+    }
+
+    @Test fun automaticReconnectLogonFailureAlsoNotifies() = runBlocking {
+        val factory = FakeFactory(listOf(Outcome.Success, Outcome.AuthError(5)))
+        var notices = 0
+        OkHttpSteamCmSession(webSocketFactory = factory, onAccountLogonFailure = { _, _ -> notices++ }).use { session ->
+            session.connectWithRefreshToken(servers, account)
+            val rpc = async(start = CoroutineStart.UNDISPATCHED) { runCatching { session.requestDepotDecryptionKey(1u, 2u) } }
+            factory.sockets.single().let { it.listener.onFailure(it, IOException("lost connection"), null) }
+            assertTrue(rpc.await().exceptionOrNull() is SteamAuthenticationException)
+            assertEquals(1, notices)
+            assertEquals(2, factory.logons)
+        }
+    }
+
+    @Test fun closeCancelsPendingHandshakeAndQueuedConnect() = runBlocking {
+        val factory = FakeFactory(listOf(Outcome.NoHandshake, Outcome.Success))
+        val session = OkHttpSteamCmSession(webSocketFactory = factory)
+        val pending = async(start = CoroutineStart.UNDISPATCHED) { runCatching { session.connectWithRefreshToken(servers, account) } }
+        val queued = async(start = CoroutineStart.UNDISPATCHED) { runCatching { session.connectWithRefreshToken(servers, account) } }
+        session.close()
+        assertTrue(pending.await().exceptionOrNull() is SteamSessionRevokedException)
+        assertTrue(queued.await().exceptionOrNull() is SteamSessionRevokedException)
+        assertEquals(1, factory.sockets.size)
+        assertEquals(0, factory.logons)
+    }
+
     private sealed interface Outcome {
         data object Unavailable : Outcome
         data object Success : Outcome
         data object NoReply : Outcome
+        data object NoHandshake : Outcome
         data object Cancel : Outcome
         data object HandshakeFailure : Outcome
         data class AuthError(val code: Int) : Outcome
@@ -168,7 +259,7 @@ class OkHttpSteamCmSessionLogonTest {
             }
             sockets += socket
             if (outcome == Outcome.HandshakeFailure) listener.onFailure(socket, IOException("CM offline"), null)
-            else listener.onOpen(socket, Response.Builder().request(request).protocol(Protocol.HTTP_1_1).code(101).message("Switching Protocols").build())
+            else if (outcome != Outcome.NoHandshake) listener.onOpen(socket, Response.Builder().request(request).protocol(Protocol.HTTP_1_1).code(101).message("Switching Protocols").build())
             return socket
         }
     }

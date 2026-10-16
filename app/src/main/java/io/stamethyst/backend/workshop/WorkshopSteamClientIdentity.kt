@@ -7,6 +7,7 @@ import java.util.UUID
 import okhttp3.OkHttpClient
 import top.apricityx.workshop.steam.protocol.DEFAULT_MACHINE_NAME
 import top.apricityx.workshop.steam.protocol.OkHttpSteamCmSession
+import top.apricityx.workshop.steam.protocol.SteamAccountSession
 import top.apricityx.workshop.steam.protocol.buildSteamMachineId
 
 internal class WorkshopSteamClientIdentity(context: Context) {
@@ -35,10 +36,18 @@ internal class WorkshopSteamClientIdentity(context: Context) {
         )
     }
 
-    fun createSession(client: OkHttpClient): OkHttpSteamCmSession = OkHttpSteamCmSession(
+    fun createSession(
+        client: OkHttpClient,
+        accountValidator: (SteamAccountSession) -> Boolean = { true },
+        onAccountLogonFailure: (SteamAccountSession, Throwable) -> Unit = { _, _ -> },
+        sessionValidator: () -> Boolean = { true },
+    ): OkHttpSteamCmSession = OkHttpSteamCmSession(
         client = client,
         machineName = machineName,
         machineId = machineId,
+        accountValidator = accountValidator,
+        onAccountLogonFailure = onAccountLogonFailure,
+        sessionValidator = sessionValidator,
     )
 
     private fun resolveAndroidId(): String? = Settings.Secure.getString(

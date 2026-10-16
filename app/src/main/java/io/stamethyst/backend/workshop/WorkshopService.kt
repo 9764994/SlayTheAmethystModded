@@ -114,6 +114,12 @@ internal class WorkshopService(
         }
     }
 
+    private fun revokeAccountSession() {
+        steamWebSession.invalidate()
+        cancelActiveCalls()
+        synchronized(communityDetailCacheLock) { communityDetailCache.clear() }
+    }
+
     fun close() {
         cancelActiveCalls()
         synchronized(activeInstances) {
@@ -1119,9 +1125,8 @@ internal class WorkshopService(
         identity: WorkshopSteamClientIdentity = WorkshopSteamClientIdentity(context),
     ): SteamAccountSession? {
         if (SteamAuthenticationCircuitBreaker.isOpen()) return null
-        return SteamCloudAuthStore.readAuthMaterial(context)?.let { auth ->
-            val snapshot = SteamCloudAuthStore.readSnapshot(context)
-            val steamId = snapshot.steamId64.toLongOrNull() ?: 0L
+        return SteamCloudAuthStore.readCmAuthMaterial(context)?.let { auth ->
+            val steamId = auth.steamId64.toLongOrNull() ?: 0L
             if (steamId > 0L) {
                 SteamAccountSession(
                     accountName = auth.accountName,
@@ -2043,6 +2048,11 @@ internal class WorkshopService(
             instances.forEach { service ->
                 runCatching { service.cancelActiveCalls() }
             }
+        }
+
+        fun revokeAllAccountSessions() {
+            val instances = synchronized(activeInstances) { activeInstances.toList() }
+            instances.forEach { it.revokeAccountSession() }
         }
 
         private const val TAG = "WorkshopService"

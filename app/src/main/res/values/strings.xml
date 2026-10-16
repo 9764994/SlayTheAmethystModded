@@ -3173,6 +3173,8 @@ Patch rule: keep Ori full-resolution glow/bloom rendering, but replace the blur 
     <string name="settings_floating_tool_button_alt">Show Alt button</string>
     <string name="settings_floating_tool_button_lock">Show input lock button</string>
     <string name="settings_floating_tool_button_wheel">Show virtual wheel button</string>
+    <string name="steam_cm_login_failed_title">Steam CM login failed</string>
+    <string name="steam_cm_login_failed_message">Steam CM login failed. Your Steam account session may have expired. We recommend logging in again.</string>
     <string name="settings_mts_cache_optimizations_title">模组缓存启动优化</string>
     <string name="settings_mts_cache_optimizations_entry_desc">分别调整缓存命中时的额外启动优化</string>
     <string name="settings_mts_cache_optimizations_desc">默认全部关闭，按需开启。仅在命中模组缓存时生效，下次启动游戏应用，无需重建缓存。</string>

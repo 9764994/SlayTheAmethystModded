@@ -13,68 +13,76 @@ import io.stamethyst.backend.steamcloud.SteamCloudSyncProcessService
 import io.stamethyst.backend.steamcloud.SteamGamePresenceService
 import io.stamethyst.backend.workshop.SharedSteamCmSessions
 import io.stamethyst.backend.workshop.WorkshopService
+import io.stamethyst.backend.workshop.WorkshopDownloadProcessService
 import io.stamethyst.config.LauncherConfig
 import io.stamethyst.config.SteamCloudSaveMode
 import io.stamethyst.ui.preferences.LauncherPreferences
 import top.apricityx.workshop.steam.protocol.OkHttpSteamCmSession
 
 internal object SteamAccountLogoutCoordinator {
+    @Synchronized
     fun logout(
         context: Context,
         clearDiagnostics: Boolean,
     ) {
         val appContext = context.applicationContext
-
-        SteamGamePresenceService.stop(appContext)
-        LauncherPreferences.setSteamGamePresenceEnabled(appContext, false)
-        runCatching { SteamCloudSyncProcessService.cancel(appContext) }
-        WorkshopService.cancelAllActiveCalls()
-        OkHttpSteamCmSession.closeAllActiveSessions()
-        // The shared CM transport is closed by closeAllActiveSessions above; also
-        // reset its logon fingerprint so the next connect re-logons instead of
-        // riding the logged-out state.
-        SharedSteamCmSessions.invalidateProcessSession()
-
+        // Publish before waiting for the operation lock: other processes may hold it
+        // while using CM. Their observers and account validators revoke immediately.
+        val failures = mutableListOf<Throwable>()
+        fun cleanup(block: () -> Unit) {
+            try { block() } catch (error: Exception) { failures += error }
+        }
+        cleanup { SteamCmAccountEpoch.revoke(appContext) }
+        cleanup { WorkshopDownloadProcessService.pauseAllForLogout(appContext) }
+        cleanup { SharedSteamCmSessions.invalidateProcessSession() }
+        cleanup { OkHttpSteamCmSession.closeAllActiveSessions() }
+        cleanup { WorkshopService.revokeAllAccountSessions() }
+        cleanup { SteamCmLoginFailureNotice.clear(appContext) }
+        cleanup { LauncherPreferences.setSteamGamePresenceEnabled(appContext, false) }
+        cleanup { SteamGamePresenceService.stop(appContext) }
+        cleanup { SteamCloudSyncProcessService.cancel(appContext) }
         SteamCloudOperationMutex.runExclusive(appContext) {
-            val cloudProfileSteamId = SteamCloudAuthStore.readAuthMaterial(appContext)
-                ?.steamId64
-                .orEmpty()
-            val currentMode = LauncherPreferences.readSteamCloudSaveMode(appContext)
-            if (currentMode != SteamCloudSaveMode.INDEPENDENT) {
-                try {
-                    SteamCloudSaveProfileManager.switchMode(
-                        context = appContext,
-                        fromMode = currentMode,
-                        toMode = SteamCloudSaveMode.INDEPENDENT,
-                    )
-                    LauncherConfig.saveSteamCloudIndependentSwitchPending(appContext, false)
-                } catch (_: SteamCloudLiveSaveInUseException) {
+            // Profile migration needs the old account ID, but no network caller can
+            // use its credentials after the epoch fence above. Always wipe credentials
+            // and caches, even if local profile migration fails.
+            try {
+                val cloudProfileSteamId = SteamCloudAuthStore.readProfileAuthMaterial(appContext)?.steamId64.orEmpty()
+                    .ifBlank { LauncherConfig.readSteamCloudPendingProfileSteamId(appContext) }
+                val currentMode = LauncherPreferences.readSteamCloudSaveMode(appContext)
+                if (currentMode != SteamCloudSaveMode.INDEPENDENT) {
                     LauncherConfig.saveSteamCloudIndependentSwitchPending(
-                        context = appContext,
-                        pending = true,
-                        cloudProfileSteamId = cloudProfileSteamId,
+                        appContext, true, cloudProfileSteamId,
                     )
+                    try {
+                        SteamCloudSaveProfileManager.switchMode(
+                            context = appContext,
+                            fromMode = currentMode,
+                            toMode = SteamCloudSaveMode.INDEPENDENT,
+                        )
+                        LauncherConfig.saveSteamCloudIndependentSwitchPending(appContext, false)
+                    } catch (_: SteamCloudLiveSaveInUseException) {
+                        // The game still owns the live save; finish the already-recorded
+                        // independent switch when its lease is released.
+                    }
+                } else {
+                    LauncherPreferences.saveSteamCloudSaveMode(appContext, SteamCloudSaveMode.INDEPENDENT)
+                    LauncherConfig.saveSteamCloudIndependentSwitchPending(appContext, false)
                 }
-            } else {
-                LauncherPreferences.saveSteamCloudSaveMode(appContext, SteamCloudSaveMode.INDEPENDENT)
-                LauncherConfig.saveSteamCloudIndependentSwitchPending(appContext, false)
-            }
-            SteamCloudAuthStore.clear(appContext)
-            SteamCloudAvatarCacheStore.clear(appContext)
-            SteamCloudManifestStore.clear(appContext)
-            SteamCloudBaselineStore.clear(appContext)
-            if (clearDiagnostics) {
-                SteamCloudDiagnosticsStore.clear(appContext)
+            } catch (error: Exception) {
+                failures += error
+            } finally {
+                cleanup { SteamCloudAuthStore.clear(appContext) }
+                cleanup { SteamCloudAvatarCacheStore.clear(appContext) }
+                cleanup { SteamCloudManifestStore.clear(appContext) }
+                cleanup { SteamCloudBaselineStore.clear(appContext) }
+                if (clearDiagnostics) cleanup { SteamCloudDiagnosticsStore.clear(appContext) }
             }
 
-            val snapshot = SteamCloudAuthStore.readSnapshot(appContext)
-            check(snapshot.accountName.isBlank() &&
-                !snapshot.refreshTokenConfigured &&
-                !snapshot.guardDataConfigured &&
-                snapshot.steamId64.isBlank()
-            ) {
-                "Steam account credentials are still present after logout."
-            }
+            cleanup { SteamCloudAuthStore.verifyCleared(appContext) }
+        }
+        if (failures.isNotEmpty()) {
+            throw IllegalStateException("Steam account was revoked, but logout cleanup did not fully complete.", failures.first())
+                .also { failure -> failures.drop(1).forEach(failure::addSuppressed) }
         }
     }
 }

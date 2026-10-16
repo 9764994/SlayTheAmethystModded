@@ -282,7 +282,7 @@ internal object SteamCloudSaveProfileManager {
 
     private fun resolveCloudProfileId(context: Context, explicitSteamId: String = ""): String {
         val steamId = explicitSteamId.trim().ifBlank {
-            SteamCloudAuthStore.readAuthMaterial(context)?.steamId64.orEmpty()
+            SteamCloudAuthStore.readProfileAuthMaterial(context)?.steamId64.orEmpty()
         }
         return steamId.takeIf { value ->
             value.toULongOrNull()?.let { it > 0uL } == true
@@ -308,7 +308,7 @@ internal object SteamCloudSaveProfileManager {
             )
         }
 
-        val auth = SteamCloudAuthStore.readAuthMaterial(context)
+        val auth = SteamCloudAuthStore.readProfileAuthMaterial(context)
         val legacyCloudProfile = File(root, SteamCloudSaveMode.STEAM_CLOUD.persistedValue)
         if (profileContainsManagedPath(legacyCloudProfile)) {
             if (LauncherConfig.readSteamCloudSaveMode(context) == SteamCloudSaveMode.STEAM_CLOUD &&

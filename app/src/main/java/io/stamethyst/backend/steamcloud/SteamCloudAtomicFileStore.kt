@@ -12,6 +12,18 @@ import java.nio.file.StandardOpenOption
 import java.nio.channels.FileChannel
 
 internal object SteamCloudAtomicFileStore {
+    /** Try every deletion, but never report successful cleanup if a file remains. */
+    fun deleteFiles(vararg files: File) {
+        var failure: IOException? = null
+        files.forEach { file ->
+            if (file.exists() && !file.delete()) {
+                val error = IOException("Cannot delete Steam account cache: ${file.absolutePath}")
+                if (failure == null) failure = error else failure.addSuppressed(error)
+            }
+        }
+        failure?.let { throw it }
+    }
+
     fun backupFile(file: File): File = File(file.parentFile, file.name + ".bak")
 
     @Throws(IOException::class)

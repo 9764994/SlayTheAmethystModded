@@ -26,6 +26,7 @@ import top.apricityx.workshop.steam.protocol.STEAM_LANGUAGE_SIMPLIFIED_CHINESE
 import top.apricityx.workshop.steam.protocol.SteamAccountSession
 import top.apricityx.workshop.steam.protocol.SteamAuthenticationClient
 import top.apricityx.workshop.steam.protocol.SteamDirectoryClient
+import top.apricityx.workshop.steam.protocol.SteamSessionRevokedException
 
 enum class SteamLanguagePreference(
     val storageValue: String,
@@ -73,7 +74,7 @@ internal class WorkshopSteamWebSession(
 
     val cookieJar: SteamWebSessionCookieJar = SteamWebSessionCookieJar(
         projectedCookiesProvider = ::projectedCookiesFor,
-        sessionScopeProvider = { currentScope },
+        sessionScopeProvider = ::activeScope,
     )
 
     private val lock = Any()
@@ -89,9 +90,36 @@ internal class WorkshopSteamWebSession(
     private var currentScope: String? = null
     private var primedScope: String? = null
     private var webLoginContext: SteamWebLoginContext? = null
+    private var webLoginAccount: SteamAccountSession? = null
+    private var generation = 0L
+
+    fun invalidate() {
+        synchronized(lock) {
+            generation++
+            currentScope = null
+            primedScope = null
+            webLoginContext = null
+            webLoginAccount = null
+        }
+        cookieJar.clear()
+    }
+
+    private fun accountIsCurrent(account: SteamAccountSession): Boolean {
+        val auth = SteamCloudAuthStore.readCmAuthMaterial(appContext) ?: return false
+        return auth.steamId64 == account.steamId.toString() && auth.refreshToken == account.refreshToken
+    }
+
+    private fun activeScope(): String? {
+        val account = synchronized(lock) { webLoginAccount } ?: return null
+        if (!accountIsCurrent(account)) {
+            invalidate()
+            return null
+        }
+        return synchronized(lock) { currentScope }
+    }
 
     fun currentSessionId(): String? = synchronized(lock) {
-        webLoginContext?.sessionId
+        webLoginContext?.sessionId?.takeIf { activeScope() != null }
     }
 
     private fun isPrimedFor(scope: String, nowMs: Long): Boolean = synchronized(lock) {
@@ -105,14 +133,11 @@ internal class WorkshopSteamWebSession(
     ) {
         val primeStartedAtMs = SystemClock.elapsedRealtime()
         if (account == null) {
-            synchronized(lock) {
-                currentScope = null
-                primedScope = null
-                webLoginContext = null
-            }
+            invalidate()
             Log.i(PERF_TAG, "ensurePrimed skip noAccount elapsedMs=${SystemClock.elapsedRealtime() - primeStartedAtMs}")
             return
         }
+        if (!accountIsCurrent(account)) throw SteamSessionRevokedException()
         val scope = "${account.steamId}:${account.refreshToken.hashCode()}"
         if (isPrimedFor(scope, System.currentTimeMillis())) {
             Log.i(PERF_TAG, "ensurePrimed skip alreadyPrimed elapsedMs=${SystemClock.elapsedRealtime() - primeStartedAtMs}")
@@ -120,6 +145,7 @@ internal class WorkshopSteamWebSession(
         }
 
         primeMutex.withLock {
+            if (!accountIsCurrent(account)) throw SteamSessionRevokedException()
             // Re-check inside the critical section: a concurrent caller may have completed
             // priming for this scope while we were waiting for the mutex.
             if (isPrimedFor(scope, System.currentTimeMillis())) {
@@ -143,6 +169,7 @@ internal class WorkshopSteamWebSession(
         languagePreference: SteamLanguagePreference,
         primeStartedAtMs: Long,
     ) {
+        val expectedGeneration = synchronized(lock) { generation }
         val tokenStartedAtMs = SystemClock.elapsedRealtime()
         val cachedToken = SteamCloudAuthStore.readCachedWebAccessToken(
             context = appContext,
@@ -183,7 +210,9 @@ internal class WorkshopSteamWebSession(
         val tokenMs = SystemClock.elapsedRealtime() - tokenStartedAtMs
 
         synchronized(lock) {
+            if (generation != expectedGeneration || !accountIsCurrent(account)) throw SteamSessionRevokedException()
             currentScope = scope
+            webLoginAccount = account
             webLoginContext = SteamWebLoginContext(
                 steamId = account.steamId,
                 accessToken = webAccessToken.value,
@@ -210,6 +239,7 @@ internal class WorkshopSteamWebSession(
             }
         }
         synchronized(lock) {
+            if (generation != expectedGeneration || !accountIsCurrent(account)) throw SteamSessionRevokedException()
             primedScope = scope
         }
         Log.i(
@@ -220,6 +250,7 @@ internal class WorkshopSteamWebSession(
 
     private fun projectedCookiesFor(url: HttpUrl): List<Cookie> {
         if (!url.host.isSteamDomain()) return emptyList()
+        if (activeScope() == null) return emptyList()
         val context = synchronized(lock) { webLoginContext } ?: return emptyList()
         val domain = when {
             url.host == "steamcommunity.com" || url.host.endsWith(".steamcommunity.com") -> "steamcommunity.com"
@@ -249,6 +280,7 @@ internal class WorkshopSteamWebSession(
         url: String,
         languagePreference: SteamLanguagePreference,
     ) {
+        if (activeScope() == null) throw SteamSessionRevokedException()
         client.newCall(
             Request.Builder()
                 .url(url)
@@ -270,9 +302,12 @@ internal class SteamWebSessionCookieJar(
     private var isScopeInitialized = false
     private var currentScope: String? = null
 
+    fun clear() = synchronized(lock) { cookies.clear() }
+
     override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) {
         if (!url.host.isSteamDomain()) return
         syncScope()
+        if (sessionScopeProvider != null && sessionScopeProvider.invoke() == null) return
         val now = System.currentTimeMillis()
         synchronized(lock) {
             cookies.forEach { cookie ->
@@ -289,6 +324,7 @@ internal class SteamWebSessionCookieJar(
     override fun loadForRequest(url: HttpUrl): List<Cookie> {
         if (!url.host.isSteamDomain()) return emptyList()
         syncScope()
+        if (sessionScopeProvider != null && sessionScopeProvider.invoke() == null) return emptyList()
         val persistedCookies = synchronized(lock) {
             val now = System.currentTimeMillis()
             val expiredKeys = mutableListOf<StoredCookieKey>()

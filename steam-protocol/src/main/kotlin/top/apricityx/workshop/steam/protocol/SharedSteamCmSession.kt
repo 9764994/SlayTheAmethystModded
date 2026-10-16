@@ -1,8 +1,9 @@
 package top.apricityx.workshop.steam.protocol
 
-import java.security.MessageDigest
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 
 /**
  * Process-wide CM connection pool.
@@ -21,13 +22,17 @@ import kotlinx.coroutines.sync.withLock
  */
 class SharedSteamCmSession(
     private val sessionFactory: () -> SteamCmSession,
-    private val accountProvider: suspend () -> SteamAccountSession? = { null },
+    private val accountProvider: suspend () -> SteamAccountSession?,
 ) {
     private val mutex = Mutex()
-    private val underlying: SteamCmSession by lazy { sessionFactory() }
+    private val stateLock = Any()
+    private var underlying: SteamCmSession? = null
+    private val disconnected = MutableStateFlow<SessionContext?>(null)
+    @Volatile private var revoked = false
+    @Volatile private var loggedOnAccount: SteamAccountSession? = null
+    private var failedLogon: FailedLogon? = null
 
-    @Volatile
-    private var loggedOnTokenFingerprint: String? = null
+    private data class FailedLogon(val account: SteamAccountSession?, val error: Exception, val retryAfterNanos: Long)
 
     /**
      * Returns a [SteamCmSession] handle whose close() never closes the shared
@@ -35,7 +40,26 @@ class SharedSteamCmSession(
      */
     fun asCmSession(): SteamCmSession = Borrowed()
 
-    val currentSession get() = underlying.currentSession
+    private fun transport(): SteamCmSession = synchronized(stateLock) {
+        checkActive()
+        underlying ?: sessionFactory().also { underlying = it }
+    }
+
+    val currentSession: StateFlow<SessionContext?>
+        get() = synchronized(stateLock) { underlying?.currentSession ?: disconnected }
+
+    private fun checkActive() {
+        if (revoked) throw SteamSessionRevokedException()
+    }
+
+    private suspend fun currentAccount(): SteamAccountSession? {
+        checkActive()
+        return accountProvider().also { checkActive() }
+    }
+
+    private fun sameAccount(first: SteamAccountSession?, second: SteamAccountSession?): Boolean =
+        first?.steamId == second?.steamId && first?.refreshToken == second?.refreshToken &&
+            first?.accountName == second?.accountName
 
     /**
      * Ensures the shared transport is connected and logged on.
@@ -43,78 +67,124 @@ class SharedSteamCmSession(
      * Pass an explicit [requestedAccount] to pin the credentials for this call;
      * pass null to use whatever [accountProvider] currently reports, falling
      * back to an anonymous logon when no account is available. An already
-     * authenticated transport is always reused, even for anonymous requests.
+     * authenticated transport is reused only while its credentials are current.
      */
     suspend fun ensureLoggedOn(
         servers: List<CmServer>,
         requestedAccount: SteamAccountSession?,
     ): SessionContext = mutex.withLock {
-        val account = requestedAccount ?: runCatching { accountProvider() }.getOrNull()
-        if (underlying.currentSession.value != null) {
-            val wantedFingerprint = account?.refreshToken?.let(::tokenFingerprint)
-            if (wantedFingerprint == null || wantedFingerprint == loggedOnTokenFingerprint) {
-                return@withLock underlying.currentSession.value ?: error("Steam CM session vanished")
-            }
-            // The stored account changed since this transport logged on.
-            closeTransportLocked()
+        val account = currentAccount()
+        // Explicit credentials are a claim, never authority. A task created before logout
+        // must not be allowed to resurrect its captured refresh token.
+        if (requestedAccount != null && !sameAccount(requestedAccount, account)) {
+            throw SteamSessionRevokedException()
         }
-        if (account != null) {
-            underlying.connectWithRefreshToken(servers, account).also {
-                loggedOnTokenFingerprint = tokenFingerprint(account.refreshToken)
+        // Queued callers must not turn one failed logon into an authentication storm.
+        failedLogon?.let { failure ->
+            if (sameAccount(failure.account, account) && System.nanoTime() < failure.retryAfterNanos) throw failure.error
+        }
+        if (!sameAccount(loggedOnAccount, account)) {
+            synchronized(stateLock) {
+                checkActive()
+                underlying?.close()
+                underlying = null
             }
-        } else {
-            underlying.connectAnonymous(servers).also {
-                loggedOnTokenFingerprint = null
+        }
+        val session = transport()
+        try {
+            val result = if (account != null) session.connectWithRefreshToken(servers, account)
+                else session.connectAnonymous(servers)
+            if (!sameAccount(account, currentAccount())) {
+                session.close()
+                throw SteamSessionRevokedException()
             }
+            synchronized(stateLock) {
+                checkActive()
+                loggedOnAccount = account
+                failedLogon = null
+            }
+            result
+        } catch (error: Exception) {
+            // A cancelled/failed logon must not leave an account-bearing retry plan behind.
+            synchronized(stateLock) {
+                if (!revoked && error !is java.util.concurrent.CancellationException) {
+                    failedLogon = FailedLogon(account, error, System.nanoTime() + 30_000_000_000L)
+                }
+                if (underlying === session) {
+                    session.close()
+                    underlying = null
+                    loggedOnAccount = null
+                }
+            }
+            throw error
         }
     }
 
     /**
-     * Drops the shared transport so the next connect performs a fresh logon.
-     * Called after logout or credential wipes; safe to invoke concurrently.
+     * Permanently revokes this manager and all of its borrowed handles, including
+     * queued/in-flight connects. The owner must create a new manager afterwards.
      */
     fun invalidate() {
-        loggedOnTokenFingerprint = null
-        runCatching { underlying.close() }
+        synchronized(stateLock) {
+            revoked = true
+            underlying?.close()
+            underlying = null
+            loggedOnAccount = null
+            failedLogon = null
+        }
     }
 
-    private fun closeTransportLocked() {
-        loggedOnTokenFingerprint = null
-        runCatching { underlying.close() }
+    private suspend fun checkedTransport(expectedAccount: SteamAccountSession?): SteamCmSession {
+        val account = currentAccount()
+        if (!sameAccount(loggedOnAccount, account) || !sameAccount(expectedAccount, account)) {
+            throw SteamSessionRevokedException()
+        }
+        return transport()
     }
-
-    private fun tokenFingerprint(refreshToken: String): String =
-        MessageDigest.getInstance("SHA-256")
-            .digest(refreshToken.toByteArray(Charsets.UTF_8))
-            .joinToString(separator = "") { byte -> "%02x".format(byte) }
 
     private inner class Borrowed : SteamCmSession {
+        private var expectedAccount: SteamAccountSession? = null
+        private var connected = false
+
+        private suspend fun connectBorrowed(servers: List<CmServer>, account: SteamAccountSession?): SessionContext {
+            val claimedAccount = account ?: currentAccount()
+            val result = ensureLoggedOn(servers, claimedAccount)
+            expectedAccount = claimedAccount
+            connected = true
+            return result
+        }
+
+        private suspend fun checkedTransport(): SteamCmSession {
+            if (!connected) throw SteamProtocolException("Steam CM handle has not connected")
+            return this@SharedSteamCmSession.checkedTransport(expectedAccount)
+        }
+
         override val currentSession get() = this@SharedSteamCmSession.currentSession
 
         override suspend fun connect(servers: List<CmServer>) {
-            ensureLoggedOn(servers, requestedAccount = null)
+            connectBorrowed(servers, null)
         }
 
         override suspend fun connectAnonymous(servers: List<CmServer>): SessionContext =
-            ensureLoggedOn(servers, requestedAccount = null)
+            connectBorrowed(servers, null)
 
         override suspend fun connectWithRefreshToken(
             servers: List<CmServer>,
             account: SteamAccountSession,
-        ): SessionContext = ensureLoggedOn(servers, requestedAccount = account)
+        ): SessionContext = connectBorrowed(servers, account)
 
         override suspend fun <T : com.google.protobuf.MessageLite> callServiceMethod(
             methodName: String,
             request: com.google.protobuf.MessageLite,
             parser: com.google.protobuf.Parser<T>,
-        ): T = underlying.callServiceMethod(methodName, request, parser)
+        ): T = checkedTransport().callServiceMethod(methodName, request, parser)
 
         override suspend fun <T : com.google.protobuf.MessageLite> sendClientMessage(
             emsg: Int,
             request: com.google.protobuf.MessageLite,
             responseEmsg: Int,
             parser: com.google.protobuf.Parser<T>,
-        ): T = underlying.sendClientMessage(emsg, request, responseEmsg, parser)
+        ): T = checkedTransport().sendClientMessage(emsg, request, responseEmsg, parser)
 
         override suspend fun <T : com.google.protobuf.MessageLite> sendClientMessage(
             emsg: Int,
@@ -122,22 +192,22 @@ class SharedSteamCmSession(
             responseEmsg: Int,
             parser: com.google.protobuf.Parser<T>,
             routingAppId: UInt?,
-        ): T = underlying.sendClientMessage(emsg, request, responseEmsg, parser, routingAppId)
+        ): T = checkedTransport().sendClientMessage(emsg, request, responseEmsg, parser, routingAppId)
 
         override suspend fun sendClientMessage(emsg: Int, request: com.google.protobuf.MessageLite) =
-            underlying.sendClientMessage(emsg, request)
+            checkedTransport().sendClientMessage(emsg, request)
 
         override suspend fun sendClientMessage(
             emsg: Int,
             request: com.google.protobuf.MessageLite,
             routingAppId: UInt,
-        ) = underlying.sendClientMessage(emsg, request, routingAppId)
+        ) = checkedTransport().sendClientMessage(emsg, request, routingAppId)
 
         override suspend fun requestDepotDecryptionKey(appId: UInt, depotId: UInt): ByteArray =
-            underlying.requestDepotDecryptionKey(appId, depotId)
+            checkedTransport().requestDepotDecryptionKey(appId, depotId)
 
         override suspend fun requestAppProductInfo(appId: UInt): SteamAppProductInfo =
-            underlying.requestAppProductInfo(appId)
+            checkedTransport().requestAppProductInfo(appId)
 
         /** Borrowed handle: the shared transport stays open for other features. */
         override fun close() = Unit
