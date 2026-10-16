@@ -71,11 +71,11 @@ internal object WorkshopDownloadCenterStore {
         loadedTasks: List<WorkshopDownloadTaskUi>,
         preserveExistingFinishedTasks: Boolean,
     ) {
-        val nextTasks = if (preserveExistingFinishedTasks) {
+        val nextTasks = (if (preserveExistingFinishedTasks) {
             mergePreservingFinishedTasks(loadedTasks)
         } else {
             loadedTasks
-        }
+        }).sortedByDescending { it.updatedAtMillis }
         replaceTaskStatuses(nextTasks)
         if (tasks == nextTasks) return
         tasks.clear()
@@ -118,7 +118,10 @@ internal object WorkshopDownloadCenterStore {
     fun upsertInMemory(task: WorkshopDownloadTaskUi) {
         taskStatuses[task.publishedFileId] = task.status
         val index = tasks.indexOfFirst { it.publishedFileId == task.publishedFileId }
-        if (index >= 0) tasks[index] = task else tasks.add(0, task)
+        if (index >= 0 && tasks[index] == task) return
+        if (index >= 0) tasks.removeAt(index)
+        val insertionIndex = tasks.indexOfFirst { it.updatedAtMillis <= task.updatedAtMillis }
+        tasks.add(if (insertionIndex >= 0) insertionIndex else tasks.size, task)
     }
 
     fun updateInMemory(
@@ -128,8 +131,7 @@ internal object WorkshopDownloadCenterStore {
         val index = tasks.indexOfFirst { it.publishedFileId == publishedFileId }
         if (index < 0) return null
         val updatedTask = transform(tasks[index])
-        tasks[index] = updatedTask
-        taskStatuses[publishedFileId] = updatedTask.status
+        upsertInMemory(updatedTask)
         return updatedTask
     }
 
