@@ -3,6 +3,8 @@
 #include <string.h>
 #include <stdio.h>
 #include <pthread.h>
+#include <stdatomic.h>
+#include <stdbool.h>
 
 static JavaVM* dalvikJavaVMPtr;
 static JavaVM* runtimeJavaVMPtr;
@@ -37,6 +39,15 @@ static jmethodID method_GetFocusOwner;
 static jclass class_TextComponent;
 static jclass class_JTextComponent;
 
+/* Bindings are immutable after release publication. JNI lookups run outside
+ * this lock: FindClass/GetMethodID can initialize Java classes and reenter us. */
+static pthread_mutex_t bindingLock = PTHREAD_MUTEX_INITIALIZER;
+static atomic_bool inputBindingReady;
+static atomic_bool focusBindingReady;
+static atomic_bool screenBindingReady;
+static atomic_bool clipboardBindingReady;
+static atomic_bool windowBindingReady;
+
 /* Game thread holds CTCClipboard.sSyncLock for the whole nQuery call and only
  * wait()s after it returns. The callback has to run on another thread so its
  * notifyAll cannot land before that wait.
@@ -44,6 +55,11 @@ static jclass class_JTextComponent;
 typedef struct {
     char* data;
     char* mime;
+    pthread_mutex_t lock;
+    pthread_cond_t ready;
+    int attachDone;
+    int attachSucceeded;
+    int acknowledged;
 } ClipboardPayload;
 
 static void clearJniException(JNIEnv* env, const char* where) {
@@ -63,10 +79,9 @@ static JNIEnv* jniEnvFor(JavaVM* vm, jint version, const char* where, int* attac
         *attached = 0;
     }
     if (vm == NULL) {
-        static int logged = 0;
-        if (!logged) {
+        static atomic_bool logged;
+        if (!atomic_exchange_explicit(&logged, true, memory_order_relaxed)) {
             fprintf(stderr, "awt_bridge: %s: JavaVM is null\n", where);
-            logged = 1;
         }
         return NULL;
     }
@@ -203,21 +218,18 @@ static jboolean ensureReceiveInput(JNIEnv* env) {
     jclass inputClass;
     jmethodID receiveInput;
 
-    if (class_CTCAndroidInput != NULL && method_ReceiveInput != NULL) {
+    if (atomic_load_explicit(&inputBindingReady, memory_order_acquire)) {
         return JNI_TRUE;
     }
-    dropGlobalClass(env, &class_CTCAndroidInput);
-    method_ReceiveInput = NULL;
 
     inputClass = newGlobalClass(env, "net/java/openjdk/cacio/ctc/CTCAndroidInput", 0);
     if (inputClass == NULL) {
         inputClass = newGlobalClass(env, "com/github/caciocavallosilano/cacio/ctc/CTCAndroidInput", 0);
     }
     if (inputClass == NULL) {
-        static int logged = 0;
-        if (!logged) {
+        static atomic_bool logged;
+        if (!atomic_exchange_explicit(&logged, true, memory_order_relaxed)) {
             fprintf(stderr, "awt_bridge: CTCAndroidInput not found\n");
-            logged = 1;
         }
         return JNI_FALSE;
     }
@@ -226,87 +238,63 @@ static jboolean ensureReceiveInput(JNIEnv* env) {
         (*env)->DeleteGlobalRef(env, inputClass);
         return JNI_FALSE;
     }
-    class_CTCAndroidInput = inputClass;
-    method_ReceiveInput = receiveInput;
+    pthread_mutex_lock(&bindingLock);
+    if (!atomic_load_explicit(&inputBindingReady, memory_order_relaxed)) {
+        class_CTCAndroidInput = inputClass;
+        method_ReceiveInput = receiveInput;
+        atomic_store_explicit(&inputBindingReady, true, memory_order_release);
+        inputClass = NULL;
+    }
+    pthread_mutex_unlock(&bindingLock);
+    if (inputClass != NULL) (*env)->DeleteGlobalRef(env, inputClass);
     return JNI_TRUE;
 }
 
 static jboolean ensureAwtFocusLookup(JNIEnv* env) {
-    jclass localClass;
-    jclass globalClass;
-
-    if (class_KeyboardFocusManager == NULL) {
-        localClass = newGlobalClass(env, "java/awt/KeyboardFocusManager", 0);
-        if (localClass == NULL) {
-            static int logged = 0;
-            if (!logged) {
-                fprintf(stderr, "awt_bridge: KeyboardFocusManager not found\n");
-                logged = 1;
-            }
-            return JNI_FALSE;
+    if (atomic_load_explicit(&focusBindingReady, memory_order_acquire)) return JNI_TRUE;
+    jclass manager = newGlobalClass(env, "java/awt/KeyboardFocusManager", 0);
+    if (manager == NULL) return JNI_FALSE;
+    jmethodID current = lookupStaticMethod(env, manager, "getCurrentKeyboardFocusManager",
+                                          "()Ljava/awt/KeyboardFocusManager;");
+    jmethodID owner = lookupMethod(env, manager, "getFocusOwner", "()Ljava/awt/Component;");
+    jclass text = newGlobalClass(env, "java/awt/TextComponent", 0);
+    jclass swingText = newGlobalClass(env, "javax/swing/text/JTextComponent", 0);
+    jboolean success = current != NULL && owner != NULL && (text != NULL || swingText != NULL);
+    if (success) {
+        pthread_mutex_lock(&bindingLock);
+        if (!atomic_load_explicit(&focusBindingReady, memory_order_relaxed)) {
+            class_KeyboardFocusManager = manager;
+            method_GetCurrentKeyboardFocusManager = current;
+            method_GetFocusOwner = owner;
+            class_TextComponent = text;
+            class_JTextComponent = swingText;
+            atomic_store_explicit(&focusBindingReady, true, memory_order_release);
+            manager = text = swingText = NULL;
         }
-        method_GetCurrentKeyboardFocusManager = lookupStaticMethod(
-                env,
-                localClass,
-                "getCurrentKeyboardFocusManager",
-                "()Ljava/awt/KeyboardFocusManager;"
-        );
-        method_GetFocusOwner = lookupMethod(
-                env,
-                localClass,
-                "getFocusOwner",
-                "()Ljava/awt/Component;"
-        );
-        if (method_GetCurrentKeyboardFocusManager == NULL || method_GetFocusOwner == NULL) {
-            (*env)->DeleteGlobalRef(env, localClass);
-            method_GetCurrentKeyboardFocusManager = NULL;
-            method_GetFocusOwner = NULL;
-            return JNI_FALSE;
-        }
-        class_KeyboardFocusManager = localClass;
+        pthread_mutex_unlock(&bindingLock);
     }
-
-    if (class_TextComponent == NULL) {
-        globalClass = newGlobalClass(env, "java/awt/TextComponent", 0);
-        if (globalClass != NULL) {
-            class_TextComponent = globalClass;
-        }
-    }
-
-    if (class_JTextComponent == NULL) {
-        globalClass = newGlobalClass(env, "javax/swing/text/JTextComponent", 0);
-        if (globalClass != NULL) {
-            class_JTextComponent = globalClass;
-        }
-    }
-
-    return class_KeyboardFocusManager != NULL &&
-           method_GetCurrentKeyboardFocusManager != NULL &&
-           method_GetFocusOwner != NULL &&
-           (class_TextComponent != NULL || class_JTextComponent != NULL)
-           ? JNI_TRUE
-           : JNI_FALSE;
+    if (manager != NULL) (*env)->DeleteGlobalRef(env, manager);
+    if (text != NULL) (*env)->DeleteGlobalRef(env, text);
+    if (swingText != NULL) (*env)->DeleteGlobalRef(env, swingText);
+    return success;
 }
 
 static jboolean ensureScreenClass(JNIEnv* env) {
     jclass screen;
     jmethodID getRgb;
 
-    if (class_CTCScreen != NULL && method_GetRGB != NULL) {
+    if (atomic_load_explicit(&screenBindingReady, memory_order_acquire)) {
         return JNI_TRUE;
     }
-    dropGlobalClass(env, &class_CTCScreen);
-    method_GetRGB = NULL;
 
     screen = newGlobalClass(env, "net/java/openjdk/cacio/ctc/CTCScreen", 0);
     if (screen == NULL) {
         screen = newGlobalClass(env, "com/github/caciocavallosilano/cacio/ctc/CTCScreen", 0);
     }
     if (screen == NULL) {
-        static int logged = 0;
-        if (!logged) {
+        static atomic_bool logged;
+        if (!atomic_exchange_explicit(&logged, true, memory_order_relaxed)) {
             fprintf(stderr, "awt_bridge: CTCScreen not found\n");
-            logged = 1;
         }
         return JNI_FALSE;
     }
@@ -315,8 +303,15 @@ static jboolean ensureScreenClass(JNIEnv* env) {
         (*env)->DeleteGlobalRef(env, screen);
         return JNI_FALSE;
     }
-    class_CTCScreen = screen;
-    method_GetRGB = getRgb;
+    pthread_mutex_lock(&bindingLock);
+    if (!atomic_load_explicit(&screenBindingReady, memory_order_relaxed)) {
+        class_CTCScreen = screen;
+        method_GetRGB = getRgb;
+        atomic_store_explicit(&screenBindingReady, true, memory_order_release);
+        screen = NULL;
+    }
+    pthread_mutex_unlock(&bindingLock);
+    if (screen != NULL) (*env)->DeleteGlobalRef(env, screen);
     return JNI_TRUE;
 }
 
@@ -324,11 +319,9 @@ static jboolean ensureClipboardCallback(JNIEnv* env, jclass clazz) {
     jclass global;
     jmethodID method;
 
-    if (class_CTCClipboard != NULL && method_SystemClipboardDataReceived != NULL) {
+    if (atomic_load_explicit(&clipboardBindingReady, memory_order_acquire)) {
         return JNI_TRUE;
     }
-    dropGlobalClass(env, &class_CTCClipboard);
-    method_SystemClipboardDataReceived = NULL;
 
     global = (*env)->NewGlobalRef(env, clazz);
     if (global == NULL) {
@@ -346,8 +339,15 @@ static jboolean ensureClipboardCallback(JNIEnv* env, jclass clazz) {
         (*env)->DeleteGlobalRef(env, global);
         return JNI_FALSE;
     }
-    class_CTCClipboard = global;
-    method_SystemClipboardDataReceived = method;
+    pthread_mutex_lock(&bindingLock);
+    if (!atomic_load_explicit(&clipboardBindingReady, memory_order_relaxed)) {
+        class_CTCClipboard = global;
+        method_SystemClipboardDataReceived = method;
+        atomic_store_explicit(&clipboardBindingReady, true, memory_order_release);
+        global = NULL;
+    }
+    pthread_mutex_unlock(&bindingLock);
+    if (global != NULL) (*env)->DeleteGlobalRef(env, global);
     return JNI_TRUE;
 }
 
@@ -355,21 +355,9 @@ static jboolean ensureMoveWindowIds(JNIEnv* env) {
     jclass frame;
     jclass rectangle;
 
-    if (class_Frame != NULL && class_Rectangle != NULL &&
-        method_GetFrames != NULL && method_GetBounds != NULL &&
-        method_SetBounds != NULL && constructor_Rectangle != NULL &&
-        field_x != NULL && field_y != NULL) {
+    if (atomic_load_explicit(&windowBindingReady, memory_order_acquire)) {
         return JNI_TRUE;
     }
-
-    dropGlobalClass(env, &class_Frame);
-    dropGlobalClass(env, &class_Rectangle);
-    method_GetFrames = NULL;
-    method_GetBounds = NULL;
-    method_SetBounds = NULL;
-    constructor_Rectangle = NULL;
-    field_x = NULL;
-    field_y = NULL;
 
     frame = newGlobalClass(env, "java/awt/Frame", 1);
     rectangle = newGlobalClass(env, "java/awt/Rectangle", 1);
@@ -384,27 +372,35 @@ static jboolean ensureMoveWindowIds(JNIEnv* env) {
         return JNI_FALSE;
     }
 
-    method_GetFrames = lookupStaticMethod(env, frame, "getFrames", "()[Ljava/awt/Frame;");
-    method_GetBounds = lookupMethod(env, frame, "getBounds", "(Ljava/awt/Rectangle;)Ljava/awt/Rectangle;");
-    method_SetBounds = lookupMethod(env, frame, "setBounds", "(Ljava/awt/Rectangle;)V");
-    constructor_Rectangle = lookupMethod(env, rectangle, "<init>", "()V");
-    field_x = lookupField(env, rectangle, "x", "I");
-    field_y = lookupField(env, rectangle, "y", "I");
-    if (method_GetFrames == NULL || method_GetBounds == NULL || method_SetBounds == NULL ||
-        constructor_Rectangle == NULL || field_x == NULL || field_y == NULL) {
+    jmethodID frames = lookupStaticMethod(env, frame, "getFrames", "()[Ljava/awt/Frame;");
+    jmethodID bounds = lookupMethod(env, frame, "getBounds", "(Ljava/awt/Rectangle;)Ljava/awt/Rectangle;");
+    jmethodID setBounds = lookupMethod(env, frame, "setBounds", "(Ljava/awt/Rectangle;)V");
+    jmethodID constructor = lookupMethod(env, rectangle, "<init>", "()V");
+    jfieldID x = lookupField(env, rectangle, "x", "I");
+    jfieldID y = lookupField(env, rectangle, "y", "I");
+    if (frames == NULL || bounds == NULL || setBounds == NULL ||
+        constructor == NULL || x == NULL || y == NULL) {
         (*env)->DeleteGlobalRef(env, frame);
         (*env)->DeleteGlobalRef(env, rectangle);
-        method_GetFrames = NULL;
-        method_GetBounds = NULL;
-        method_SetBounds = NULL;
-        constructor_Rectangle = NULL;
-        field_x = NULL;
-        field_y = NULL;
         return JNI_FALSE;
     }
 
-    class_Frame = frame;
-    class_Rectangle = rectangle;
+    pthread_mutex_lock(&bindingLock);
+    if (!atomic_load_explicit(&windowBindingReady, memory_order_relaxed)) {
+        class_Frame = frame;
+        class_Rectangle = rectangle;
+        method_GetFrames = frames;
+        method_GetBounds = bounds;
+        method_SetBounds = setBounds;
+        constructor_Rectangle = constructor;
+        field_x = x;
+        field_y = y;
+        atomic_store_explicit(&windowBindingReady, true, memory_order_release);
+        frame = rectangle = NULL;
+    }
+    pthread_mutex_unlock(&bindingLock);
+    if (frame != NULL) (*env)->DeleteGlobalRef(env, frame);
+    if (rectangle != NULL) (*env)->DeleteGlobalRef(env, rectangle);
     return JNI_TRUE;
 }
 
@@ -415,7 +411,7 @@ static void* clipboardCallbackThread(void* arg) {
     int detachAfter = 0;
     jint status = JNI_ERR;
 
-    if (vm == NULL || class_CTCClipboard == NULL || method_SystemClipboardDataReceived == NULL) {
+    if (vm == NULL || !atomic_load_explicit(&clipboardBindingReady, memory_order_acquire)) {
         fprintf(stderr, "awt_bridge: clipboard callback unavailable\n");
     } else {
         status = (*vm)->GetEnv(vm, (void**)&gameEnv, JNI_VERSION_1_4);
@@ -425,43 +421,53 @@ static void* clipboardCallbackThread(void* arg) {
                 detachAfter = 1;
             }
         }
-        if (status != JNI_OK || gameEnv == NULL || method_SystemClipboardDataReceived == NULL) {
-            fprintf(stderr, "awt_bridge: clipboard callback attach failed: %d\n", status);
-        } else {
-            jstring data = NULL;
-            jstring mime = NULL;
-            if (payload->data != NULL) {
-                data = (*gameEnv)->NewStringUTF(gameEnv, payload->data);
-            }
-            if (payload->mime != NULL && !(*gameEnv)->ExceptionCheck(gameEnv)) {
-                mime = (*gameEnv)->NewStringUTF(gameEnv, payload->mime);
-            }
-            if ((payload->data != NULL && data == NULL) || (payload->mime != NULL && mime == NULL)) {
-                fprintf(stderr, "awt_bridge: clipboard callback string creation failed\n");
-                clearJniException(gameEnv, "clipboard NewStringUTF");
-                if (data != NULL) {
-                    (*gameEnv)->DeleteLocalRef(gameEnv, data);
-                }
-                if (mime != NULL) {
-                    (*gameEnv)->DeleteLocalRef(gameEnv, mime);
-                }
-                data = NULL;
-                mime = NULL;
-            }
-            (*gameEnv)->CallStaticVoidMethod(
-                    gameEnv,
-                    class_CTCClipboard,
-                    method_SystemClipboardDataReceived,
-                    data,
-                    mime
-            );
-            clearJniException(gameEnv, "systemClipboardDataReceived");
+    }
+    int attachedSuccessfully = status == JNI_OK && gameEnv != NULL;
+    if (!attachedSuccessfully) {
+        fprintf(stderr, "awt_bridge: clipboard callback attach failed: %d\n", status);
+    }
+    /* Confirm attachment, not callback completion. The query still holds the
+     * Java clipboard monitor, so waiting for the callback here would deadlock. */
+    pthread_mutex_lock(&payload->lock);
+    payload->attachSucceeded = attachedSuccessfully;
+    payload->attachDone = 1;
+    pthread_cond_signal(&payload->ready);
+    while (!payload->acknowledged) pthread_cond_wait(&payload->ready, &payload->lock);
+    pthread_mutex_unlock(&payload->lock);
+    if (attachedSuccessfully) {
+        jstring data = NULL;
+        jstring mime = NULL;
+        if (payload->data != NULL) {
+            data = (*gameEnv)->NewStringUTF(gameEnv, payload->data);
+        }
+        if (payload->mime != NULL && !(*gameEnv)->ExceptionCheck(gameEnv)) {
+            mime = (*gameEnv)->NewStringUTF(gameEnv, payload->mime);
+        }
+        if ((payload->data != NULL && data == NULL) || (payload->mime != NULL && mime == NULL)) {
+            fprintf(stderr, "awt_bridge: clipboard callback string creation failed\n");
+            clearJniException(gameEnv, "clipboard NewStringUTF");
             if (data != NULL) {
                 (*gameEnv)->DeleteLocalRef(gameEnv, data);
             }
             if (mime != NULL) {
                 (*gameEnv)->DeleteLocalRef(gameEnv, mime);
             }
+            data = NULL;
+            mime = NULL;
+        }
+        (*gameEnv)->CallStaticVoidMethod(
+                gameEnv,
+                class_CTCClipboard,
+                method_SystemClipboardDataReceived,
+                data,
+                mime
+        );
+        clearJniException(gameEnv, "systemClipboardDataReceived");
+        if (data != NULL) {
+            (*gameEnv)->DeleteLocalRef(gameEnv, data);
+        }
+        if (mime != NULL) {
+            (*gameEnv)->DeleteLocalRef(gameEnv, mime);
         }
         if (detachAfter) {
             status = (*vm)->DetachCurrentThread(vm);
@@ -473,6 +479,8 @@ static void* clipboardCallbackThread(void* arg) {
 
     free(payload->data);
     free(payload->mime);
+    pthread_cond_destroy(&payload->ready);
+    pthread_mutex_destroy(&payload->lock);
     free(payload);
     return NULL;
 }
@@ -489,6 +497,19 @@ static int startClipboardCallback(char* dataOwned, const char* mime) {
         return 0;
     }
     payload->data = dataOwned;
+    rc = pthread_mutex_init(&payload->lock, NULL);
+    if (rc != 0) {
+        free(payload->data);
+        free(payload);
+        return 0;
+    }
+    rc = pthread_cond_init(&payload->ready, NULL);
+    if (rc != 0) {
+        pthread_mutex_destroy(&payload->lock);
+        free(payload->data);
+        free(payload);
+        return 0;
+    }
     if (mime != NULL) {
         payload->mime = dupUtf(mime);
         if (payload->mime == NULL) {
@@ -503,11 +524,22 @@ static int startClipboardCallback(char* dataOwned, const char* mime) {
         fprintf(stderr, "awt_bridge: pthread_create clipboard callback failed: %s\n", strerror(rc));
         free(payload->data);
         free(payload->mime);
+        pthread_cond_destroy(&payload->ready);
+        pthread_mutex_destroy(&payload->lock);
         free(payload);
         return 0;
     }
-    pthread_detach(thread);
-    return 1;
+    pthread_mutex_lock(&payload->lock);
+    while (!payload->attachDone) pthread_cond_wait(&payload->ready, &payload->lock);
+    int success = payload->attachSucceeded;
+    if (success) pthread_detach(thread);
+    payload->acknowledged = 1;
+    pthread_cond_signal(&payload->ready);
+    pthread_mutex_unlock(&payload->lock);
+    /* On failure the worker cannot call Java; join it before throwing on the
+     * query thread, so Cacio never enters its unconditional wait. */
+    if (!success) pthread_join(thread, NULL);
+    return success;
 }
 
 static char* readAndroidClipboard() {
@@ -903,7 +935,7 @@ JNIEXPORT void JNICALL Java_net_kdt_pojavlaunch_AWTInputBridge_nativeClipboardRe
     jstring mime = NULL;
     (void) clazz;
 
-    if (method_SystemClipboardDataReceived == NULL || class_CTCClipboard == NULL) {
+    if (!atomic_load_explicit(&clipboardBindingReady, memory_order_acquire)) {
         return;
     }
     if (readUtfOrAbort(env, clipboardData, &dataChars, "nativeClipboardReceived") != NULL) {

@@ -71,6 +71,20 @@ python3 -m unittest discover -s scripts/build/tests -v
 ./gradlew -p gradle/build-logic test
 ```
 
+## JNI Host Regression Tests
+
+```bash
+python3 scripts/tests/jni/main.py
+```
+
+Requires Linux, GCC and a JDK. Compiles the production JNI code into host fixtures
+and checks clipboard UTF-8/argv boundaries, ffmpeg inherited versus explicit
+environments, actual bundled Cacio wait/notify completion under injected thread
+failures, and concurrent/reentrant AWT cache publication. JVM tests use
+`-Xcheck:jni`; the cache test uses ASan/UBSan. Outputs stay under
+`agent-tmp/jni-regression/`. See `scripts/tests/jni/README.md` for coverage and
+limitations; this command does not install or change anything on a device.
+
 ## Tools Entrypoint
 
 Use `scripts/tools/main.py` for debugging and device automation tools. The `harness` alias is equivalent to `sts-harness`.

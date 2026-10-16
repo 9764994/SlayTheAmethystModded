@@ -313,6 +313,75 @@ static int copy_prog_basename(JNIEnv *env, jbyteArray prog, char **out_basename)
     return 0;
 }
 
+/* ProcessEnvironment.environ snapshots the native process environment, unlike
+ * System.getenv's cached map (which can predate the launcher's setenv calls).
+ * Use the JVM's snapshot instead of traversing a concurrently mutable environ. */
+static jbyteArray inherited_env_array(JNIEnv *env) {
+    jclass environment = (*env)->FindClass(env, "java/lang/ProcessEnvironment");
+    if (environment == NULL) return NULL;
+    jmethodID environ_method = (*env)->GetStaticMethodID(env, environment, "environ", "()[[B");
+    if (environ_method == NULL) {
+        (*env)->DeleteLocalRef(env, environment);
+        return NULL;
+    }
+    jobjectArray entries = (*env)->CallStaticObjectMethod(env, environment, environ_method);
+    (*env)->DeleteLocalRef(env, environment);
+    if ((*env)->ExceptionCheck(env) || entries == NULL) return NULL;
+    jsize size = (*env)->GetArrayLength(env, entries);
+    if ((*env)->ExceptionCheck(env) || size % 2 != 0) {
+        (*env)->DeleteLocalRef(env, entries);
+        return NULL;
+    }
+    size_t length = 0;
+    /* entries contains alternating name and value byte arrays. */
+    for (jsize i = 0; i < size; i++) {
+        jbyteArray entry = (*env)->GetObjectArrayElement(env, entries, i);
+        if (entry == NULL || (*env)->ExceptionCheck(env)) {
+            (*env)->DeleteLocalRef(env, entries);
+            return NULL;
+        }
+        jsize part_length = (*env)->GetArrayLength(env, entry);
+        (*env)->DeleteLocalRef(env, entry);
+        if ((*env)->ExceptionCheck(env) || (size_t)part_length + 1 > (size_t)INT_MAX - length) {
+            (*env)->DeleteLocalRef(env, entries);
+            return NULL;
+        }
+        length += (size_t)part_length + 1;
+    }
+    jbyteArray array = (*env)->NewByteArray(env, (jsize)length);
+    char* snapshot = malloc(length == 0 ? 1 : length);
+    if (array == NULL || snapshot == NULL) {
+        free(snapshot);
+        if (array != NULL) (*env)->DeleteLocalRef(env, array);
+        (*env)->DeleteLocalRef(env, entries);
+        return NULL;
+    }
+    size_t offset = 0;
+    for (jsize i = 0; i < size; i++) {
+        jbyteArray entry = (*env)->GetObjectArrayElement(env, entries, i);
+        if (entry == NULL || (*env)->ExceptionCheck(env)) goto snapshot_failed;
+        jsize part_length = (*env)->GetArrayLength(env, entry);
+        if ((*env)->ExceptionCheck(env)) {
+            (*env)->DeleteLocalRef(env, entry);
+            goto snapshot_failed;
+        }
+        (*env)->GetByteArrayRegion(env, entry, 0, part_length, (jbyte*)snapshot + offset);
+        (*env)->DeleteLocalRef(env, entry);
+        if ((*env)->ExceptionCheck(env)) goto snapshot_failed;
+        offset += (size_t)part_length;
+        snapshot[offset++] = (i % 2 == 0) ? '=' : '\0';
+    }
+    (*env)->SetByteArrayRegion(env, array, 0, (jsize)length, (const jbyte*)snapshot);
+snapshot_failed:
+    free(snapshot);
+    (*env)->DeleteLocalRef(env, entries);
+    if ((*env)->ExceptionCheck(env) || offset != length) {
+        (*env)->DeleteLocalRef(env, array);
+        return NULL;
+    }
+    return array;
+}
+
 static int rebuild_env_array(JNIEnv *env, jbyteArray envBlock, const char *directory,
                              jbyteArray *out_block, jint *out_count) {
     jbyte *elements = NULL;
@@ -326,6 +395,14 @@ static int rebuild_env_array(JNIEnv *env, jbyteArray envBlock, const char *direc
     jbyteArray array;
 
     *out_block = NULL;
+    /* NULL means inherit, not an explicitly empty environment block. */
+    if (envBlock == NULL) {
+        jbyteArray inherited = inherited_env_array(env);
+        if (inherited == NULL) return -1;
+        int result = rebuild_env_array(env, inherited, directory, out_block, out_count);
+        (*env)->DeleteLocalRef(env, inherited);
+        return result;
+    }
     if (envBlock != NULL) {
         jsize len = (*env)->GetArrayLength(env, envBlock);
         if ((*env)->ExceptionCheck(env) || len < 0) {

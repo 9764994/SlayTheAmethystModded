@@ -876,6 +876,11 @@ JNIEXPORT jstring JNICALL Java_org_lwjgl_glfw_CallbackBridge_nativeClipboard(JNI
         if (bytes == NULL) goto cleanup;
         (*env)->GetByteArrayRegion(env, copySrc, 0, length, (jbyte*)bytes);
         if ((*env)->ExceptionCheck(env)) goto cleanup;
+        /* GLFW passes a C string; xdg-open passes a NUL-delimited argv block.
+         * Decode only the first bounded string, not its terminator or later args.
+         * A byte array without a terminator is also accepted without reading past it. */
+        const char* terminator = memchr(bytes, '\0', (size_t)length);
+        if (terminator != NULL) length = (jsize)(terminator - bytes);
         targetBytes = (*dalvikEnv)->NewByteArray(dalvikEnv, length);
         if (targetBytes == NULL) goto cleanup;
         (*dalvikEnv)->SetByteArrayRegion(dalvikEnv, targetBytes, 0, length, (jbyte*)bytes);
