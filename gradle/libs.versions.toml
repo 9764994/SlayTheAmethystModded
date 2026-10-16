@@ -95,6 +95,7 @@ log4j-api = { module = "org.apache.logging.log4j:log4j-api", version.ref = "log4
 log4j-core = { module = "org.apache.logging.log4j:log4j-core", version.ref = "log4j" }
 ow2-asm = { module = "org.ow2.asm:asm", version.ref = "asm" }
 ow2-asm-tree = { module = "org.ow2.asm:asm-tree", version.ref = "asm" }
+ow2-asm-analysis = { module = "org.ow2.asm:asm-analysis", version.ref = "asm" }
 ow2-asm-util = { module = "org.ow2.asm:asm-util", version.ref = "asm" }
 eclipse-ecj = { module = "org.eclipse.jdt:ecj", version.ref = "ecj" }
 cfr-decompiler = { module = "org.benf:cfr", version.ref = "cfr" }

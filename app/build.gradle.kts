@@ -575,6 +575,7 @@ dependencies {
     implementation(libs.android.zstd)
     implementation(libs.ow2.asm)
     implementation(libs.ow2.asm.tree)
+    implementation(libs.ow2.asm.analysis)
     implementation(libs.eclipse.ecj)
     implementation(libs.cfr.decompiler)
     implementation(libs.lottie.compose)

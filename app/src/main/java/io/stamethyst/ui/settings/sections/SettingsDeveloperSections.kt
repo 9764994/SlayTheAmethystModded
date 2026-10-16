@@ -164,6 +164,14 @@ internal fun LauncherDeveloperSettingsScreenContent(
         mutableStateOf(uiState.localTestEntryNodeUrl)
     }
     var localTestEndpointInputInvalid by rememberSaveable { mutableStateOf(false) }
+    var showModConfigDialog by rememberSaveable { mutableStateOf(false) }
+
+    if (showModConfigDialog) {
+        DeveloperModConfigDialog(
+            controlsEnabled = !uiState.busy,
+            onDismiss = { showModConfigDialog = false },
+        )
+    }
 
     LaunchedEffect(showWarningDialog) {
         if (showWarningDialog) {
@@ -379,6 +387,13 @@ internal fun LauncherDeveloperSettingsScreenContent(
         item {
             SettingsSectionCard(title = stringResource(R.string.settings_developer_experiments_title)) {
                 var showClearSlingBreakDialog by rememberSaveable { mutableStateOf(false) }
+
+                SettingsActionListItem(
+                    title = stringResource(R.string.mod_config_developer_title),
+                    supportingText = stringResource(R.string.mod_config_developer_description),
+                    enabled = !uiState.busy,
+                    onClick = { showModConfigDialog = true },
+                )
 
                 SettingsSwitchItem(
                     SettingsSwitchSpec(
