@@ -2753,7 +2753,7 @@ class MainScreenViewModel : ViewModel() {
 
     fun onUpgradeWorkshopImportPatches(host: Activity, mod: ModItemUi) {
         if (
-            (!mod.hasOutdatedImportPatches && mod.importPatches.none { it.isOutdated }) ||
+            !mod.needsImportPatchUpdate ||
             mod.workshop == null
         ) {
             return

@@ -13,7 +13,7 @@ import io.stamethyst.backend.mods.importing.patches.ImportPatchModule
 import java.io.File
 
 internal object FirstPersonViewImportPatchModule : ImportPatchModule {
-    private const val TARGET_MOD_ID = "firstperson"
+    override val targetModId = "firstperson"
 
     override val id = "mod.firstperson.gyro_camera"
     override val version = 2
@@ -26,7 +26,7 @@ internal object FirstPersonViewImportPatchModule : ImportPatchModule {
     override val failurePolicy = ImportPatchFailurePolicy.SkipPatchContinueImport
 
     override fun plan(context: Context, item: ModImportItemPlan): ImportPatchPlan? {
-        if (item.normalizedModId != TARGET_MOD_ID) return null
+        if (item.normalizedModId != targetModId) return null
         return basePlan(applicable = true)
     }
 

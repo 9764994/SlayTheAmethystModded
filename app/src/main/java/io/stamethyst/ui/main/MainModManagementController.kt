@@ -1878,10 +1878,16 @@ internal class MainModManagementController(
             val importPatchDetails = importPatchInfo?.let { patchInfo ->
                 SettingsFileService.buildModImportPatchDetailMessage(host, patchInfo)
             }
-            val importPatches = importPatchInfo?.let { patchInfo ->
-                ImportPatchRegistry.moduleStates(host, patchInfo)
+            val importPatches = if (mod.required) emptyList() else {
+                val relevantModuleIds = ImportPatchRegistry.modulesForInstalledMod(
+                    ModManager.normalizeModId(mod.manifestModId),
+                    importPatchInfo
+                ).mapTo(HashSet()) { it.id }
+                ImportPatchRegistry.moduleStates(host, importPatchInfo)
                     .asSequence()
-                    .filter { state -> state.appliedVersion != null }
+                    .filter { state ->
+                        state.id in relevantModuleIds && (state.appliedVersion != null || state.available)
+                    }
                     .map { state ->
                         ModImportPatchUi(
                             moduleId = state.id,
@@ -1895,7 +1901,7 @@ internal class MainModManagementController(
                         )
                     }
                     .toList()
-            }.orEmpty()
+            }
             ModItemUi(
                 modId = mod.modId,
                 manifestModId = mod.manifestModId,

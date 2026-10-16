@@ -35,7 +35,10 @@ data class ModItemUi(
     val workshop: WorkshopModUi? = null,
     val alias: String = "",
     val agentPatchMods: List<AgentPatchModUi> = emptyList(),
-)
+) {
+    val needsImportPatchUpdate: Boolean
+        get() = hasOutdatedImportPatches || importPatches.any { it.appliedVersion == null || it.isOutdated }
+}
 
 @Stable
 data class ModImportPatchUi(

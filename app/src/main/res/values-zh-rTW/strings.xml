@@ -972,6 +972,12 @@
     <string name="mod_import_patch_jacketnoanoko_detail_version_directives">已移除 #version 指令：%1$d</string>
     <string name="mod_import_patch_jacketnoanoko_detail_precision_blocks">已插入 precision 塊：%1$d</string>
     <string name="mod_import_patch_ori_title">Ori 渲染 shader 優化</string>
+    <string name="mod_import_patch_spirebiomes_title">Spire Biomes 迷霧 shader 優化</string>
+    <string name="mod_import_patch_spirebiomes_summary">將每條滑鼠歷史重複執行的迷霧 FBM 改為每像素計算一次，保留迷霧互動和解析度。</string>
+    <string name="mod_import_patch_spirebiomes_applied">已優化 Spire Biomes 迷霧 shader。</string>
+    <string name="mod_import_patch_spirebiomes_noop">迷霧 shader 不存在或已優化，未作更改。</string>
+    <string name="mod_import_patch_spirebiomes_unsupported">無法識別此版本的迷霧 shader，已保留原始 shader。</string>
+    <string name="mod_import_patch_spirebiomes_detail">已修補迷霧 shader：%1$d；已修補過：%2$d；無法識別：%3$d</string>
     <string name="mod_import_patch_ori_summary">將 Ori 模糊 shader 替換為低取樣的全解析度等效實現。</string>
     <string name="mod_import_patch_ori_applied">已優化 Ori 渲染模糊 shader。</string>
     <string name="mod_import_patch_ori_noop">Ori 渲染 shader 無需修補。</string>
@@ -3121,6 +3127,9 @@
     <string name="settings_floating_tool_button_alt">顯示 Alt 按鈕</string>
     <string name="settings_floating_tool_button_lock">顯示輸入鎖定按鈕</string>
     <string name="settings_floating_tool_button_wheel">顯示虛擬滾輪按鈕</string>
+    <string name="main_mod_patch_dialog_unrecorded_version_format">無套用記錄 / 目前 v%1$d</string>
+    <string name="main_mod_patch_badge_attention_content_description">匯入修補程式有缺失記錄或新版本，查看詳情</string>
+    <string name="main_mod_patch_dialog_unrecorded_message">此模組有適用但無套用記錄的匯入修補程式，可能是在模組匯入後新增，或在匯入時被略過。請重新匯入原始模組以檢查並套用；沒有記錄不一定代表檔案未修補。已停用的修補程式仍會略過。</string>
     <string name="settings_mts_cache_optimizations_title">模組快取啟動最佳化</string>
     <string name="settings_mts_cache_optimizations_entry_desc">分別調整命中快取時的額外啟動最佳化</string>
     <string name="settings_mts_cache_optimizations_desc">預設全部關閉，按需開啟。僅在命中模組快取時生效，下次啟動遊戲套用，無需重建快取。</string>

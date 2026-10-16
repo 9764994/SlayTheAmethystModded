@@ -646,6 +646,7 @@ Do you still want to continue?</string>
     <string name="main_mod_suggestion_update_message">The mod notice list was updated. Mods with a circled exclamation mark now have notices you can open from their cards.</string>
     <string name="main_mod_suggestion_dialog_title_format">Notice</string>
     <string name="main_mod_patch_badge_content_description">Open import patch details</string>
+    <string name="main_mod_patch_badge_attention_content_description">Import patches have missing records or newer versions. Open details</string>
     <string name="main_mod_patch_dialog_title_format">Import patches</string>
     <string name="main_mod_patch_dialog_upgrade_message">One or more import patches have a newer version. Re-import this mod to apply the upgrade.</string>
     <string name="main_mod_patch_dialog_upgrade_from_market">Upgrade from market</string>
@@ -653,6 +654,8 @@ Do you still want to continue?</string>
     <string name="main_mod_patch_upgrade_confirm_message">Download the latest market version of %1$s, replace the current mod, and apply the latest import patches? Do not start the game while upgrading.</string>
     <string name="main_mod_patch_dialog_version_format">Applied v%1$d / current v%2$d</string>
     <string name="main_mod_patch_dialog_current_version_format">Current v%1$d</string>
+    <string name="main_mod_patch_dialog_unrecorded_version_format">No application record / current v%1$d</string>
+    <string name="main_mod_patch_dialog_unrecorded_message">This mod has applicable import patches without an application record. They may have been added after the mod was imported or skipped during import. Re-import the original mod to check and apply them; missing records do not necessarily mean the jar is unpatched. Disabled patches will remain skipped.</string>
     <string name="main_mod_patch_dialog_future_imports">Settings apply to future imports. Re-import this mod after changing a setting.</string>
     <string name="main_mod_patch_section_atlas_title">Atlas filter compatibility</string>
     <string name="main_mod_patch_section_downscale_title">Atlas offline downscale</string>
@@ -984,6 +987,12 @@ Patch rule: keep Ori full-resolution glow/bloom rendering, but replace the blur 
     <string name="mod_import_patch_jacketnoanoko_detail_version_directives">Removed #version directives: %1$d</string>
     <string name="mod_import_patch_jacketnoanoko_detail_precision_blocks">Inserted precision blocks: %1$d</string>
     <string name="mod_import_patch_ori_title">Ori render shader optimization</string>
+    <string name="mod_import_patch_spirebiomes_title">Spire Biomes fog shader optimization</string>
+    <string name="mod_import_patch_spirebiomes_summary">Compute fog FBM once per pixel instead of repeating it for each cursor history entry, retaining fog interaction and resolution.</string>
+    <string name="mod_import_patch_spirebiomes_applied">Optimized the Spire Biomes fog shader.</string>
+    <string name="mod_import_patch_spirebiomes_noop">Fog shader missing or already optimized; no changes made.</string>
+    <string name="mod_import_patch_spirebiomes_unsupported">Unrecognized fog shader version; kept the original shader.</string>
+    <string name="mod_import_patch_spirebiomes_detail">Fog shaders patched: %1$d; already patched: %2$d; unrecognized: %3$d</string>
     <string name="mod_import_patch_ori_summary">Replace Ori blur shaders with lower-sample full-resolution equivalents.</string>
     <string name="mod_import_patch_ori_applied">Optimized Ori render blur shaders.</string>
     <string name="mod_import_patch_ori_noop">Ori render shaders did not need patching.</string>

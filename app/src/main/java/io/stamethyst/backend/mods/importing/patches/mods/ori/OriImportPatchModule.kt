@@ -13,7 +13,7 @@ import io.stamethyst.backend.mods.importing.patches.ImportPatchModule
 import java.io.File
 
 internal object OriImportPatchModule : ImportPatchModule {
-    private const val TARGET_MOD_ID = "another ori mod"
+    override val targetModId = "another ori mod"
     override val id = "mod.ori.fast_blur"
     override val version = 1
     override val displayNameResId = R.string.mod_import_patch_ori_title
@@ -25,7 +25,7 @@ internal object OriImportPatchModule : ImportPatchModule {
     override val failurePolicy = ImportPatchFailurePolicy.SkipPatchContinueImport
 
     override fun plan(context: Context, item: ModImportItemPlan): ImportPatchPlan? {
-        if (item.normalizedModId != TARGET_MOD_ID) return null
+        if (item.normalizedModId != targetModId) return null
         return basePlan(applicable = true)
     }
 

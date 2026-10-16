@@ -9,6 +9,7 @@ import io.stamethyst.backend.mods.importing.patches.mods.frieren.FrierenImportPa
 import io.stamethyst.backend.mods.importing.patches.mods.firstperson.FirstPersonViewImportPatchModule
 import io.stamethyst.backend.mods.importing.patches.mods.jacketnoanoko.JacketNoAnoKoImportPatchModule
 import io.stamethyst.backend.mods.importing.patches.mods.ori.OriImportPatchModule
+import io.stamethyst.backend.mods.importing.patches.mods.spirebiomes.SpireBiomesImportPatchModule
 import io.stamethyst.backend.mods.importing.patches.mods.superfastmode.SuperFastModeImportPatchModule
 import io.stamethyst.backend.mods.importing.patches.mods.vupshion.VupShionImportPatchModule
 import io.stamethyst.backend.mods.importing.patches.structure.DuplicateZipEntryPatchModule
@@ -44,7 +45,8 @@ internal object ImportPatchRegistry {
         SuperFastModeImportPatchModule,
         VupShionImportPatchModule,
         ChaofanModImportPatchModule,
-        OriImportPatchModule
+        OriImportPatchModule,
+        SpireBiomesImportPatchModule
     )
 
     private val modulesById: Map<String, ImportPatchModule> = registrations.associateBy { it.id }
@@ -60,6 +62,17 @@ internal object ImportPatchRegistry {
     }
 
     fun currentVersion(moduleId: String?): Int? = moduleForId(moduleId)?.version
+
+    /** Keep recorded generic patches, but only infer unrecorded patches with explicit mod targets. */
+    fun modulesForInstalledMod(
+        normalizedModId: String,
+        patchInfo: ImportedModPatchInfo? = null,
+    ): List<ImportPatchModule> {
+        return registrations.sortedBy { it.order }.filter { module ->
+            patchInfo?.appliedPatchVersion(module.id) != null ||
+                module.targetModId == normalizedModId
+        }
+    }
 
     fun isEnabled(context: Context, moduleId: String): Boolean {
         return ImportPatchSettings.isEnabled(context, moduleId) ?: false

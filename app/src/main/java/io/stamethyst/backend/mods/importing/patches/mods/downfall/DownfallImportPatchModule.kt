@@ -13,7 +13,7 @@ import io.stamethyst.backend.mods.importing.patches.ImportPatchModule
 import java.io.File
 
 internal object DownfallImportPatchModule : ImportPatchModule {
-    private const val TARGET_MOD_ID = "downfall"
+    override val targetModId = "downfall"
     override val id = "mod.downfall.mobile_layout"
     override val version = 1
     override val displayNameResId = R.string.mod_import_patch_downfall_title
@@ -25,7 +25,7 @@ internal object DownfallImportPatchModule : ImportPatchModule {
     override val failurePolicy = ImportPatchFailurePolicy.SkipPatchContinueImport
 
     override fun plan(context: Context, item: ModImportItemPlan): ImportPatchPlan? {
-        if (item.normalizedModId != TARGET_MOD_ID) return null
+        if (item.normalizedModId != targetModId) return null
         return basePlan(applicable = true)
     }
 

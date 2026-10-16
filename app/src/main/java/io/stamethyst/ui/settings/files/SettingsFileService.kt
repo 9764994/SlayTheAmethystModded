@@ -496,6 +496,13 @@ internal object SettingsFileService {
                 rule = context.getString(R.string.mod_import_ori_message_rule)
             )
         }
+        if (patchInfo.appliedPatchVersion("mod.spirebiomes.fog_fbm") != null) {
+            addSection(
+                titleResId = R.string.mod_import_patch_spirebiomes_title,
+                detail = context.getString(R.string.mod_import_patch_spirebiomes_applied),
+                rule = context.getString(R.string.mod_import_patch_spirebiomes_summary)
+            )
+        }
         return sections.joinToString(separator = "\n\n")
     }
 

@@ -385,7 +385,7 @@ private fun ModCardBadges(
         }
         if (showImportPatch) {
             ModImportPatchBadge(
-                outdated = mod.hasOutdatedImportPatches,
+                outdated = mod.needsImportPatchUpdate,
                 enabled = importPatchBadgeEnabled,
                 onClick = onImportPatchClick
             )
@@ -568,7 +568,10 @@ private fun ModImportPatchBadge(
 ) {
     ModCardIconBadge(
         iconResId = R.drawable.ic_build,
-        contentDescription = stringResource(R.string.main_mod_patch_badge_content_description),
+        contentDescription = stringResource(
+            if (outdated) R.string.main_mod_patch_badge_attention_content_description
+            else R.string.main_mod_patch_badge_content_description
+        ),
         enabled = enabled,
         onClick = onClick,
         containerColor = if (outdated) {

@@ -41,7 +41,8 @@ internal fun ModImportPatchDialog(
         }
     }
     val hasOutdatedPatches = mod.hasOutdatedImportPatches || mod.importPatches.any { it.isOutdated }
-    val canUpgradeFromWorkshop = hasOutdatedPatches && mod.workshop != null
+    val hasUnrecordedPatches = mod.importPatches.any { it.appliedVersion == null }
+    val canUpgradeFromWorkshop = mod.needsImportPatchUpdate && mod.workshop != null
     var showWorkshopUpgradeConfirmation by remember(mod.storagePath) { mutableStateOf(false) }
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -63,6 +64,13 @@ internal fun ModImportPatchDialog(
                 if (hasOutdatedPatches) {
                     Text(
                         text = stringResource(R.string.main_mod_patch_dialog_upgrade_message),
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                }
+                if (hasUnrecordedPatches) {
+                    Text(
+                        text = stringResource(R.string.main_mod_patch_dialog_unrecorded_message),
                         color = MaterialTheme.colorScheme.error,
                         style = MaterialTheme.typography.bodyMedium
                     )
@@ -154,7 +162,7 @@ private fun ModImportPatchRow(
             Text(
                 text = patch.name,
                 style = MaterialTheme.typography.titleSmall,
-                fontWeight = if (patch.isOutdated) FontWeight.Bold else FontWeight.Normal
+                fontWeight = if (patch.isOutdated || patch.appliedVersion == null) FontWeight.Bold else FontWeight.Normal
             )
             Text(
                 text = patch.appliedVersion?.let { appliedVersion ->
@@ -164,11 +172,11 @@ private fun ModImportPatchRow(
                         patch.currentVersion
                     )
                 } ?: stringResource(
-                    R.string.main_mod_patch_dialog_current_version_format,
+                    R.string.main_mod_patch_dialog_unrecorded_version_format,
                     patch.currentVersion
                 ),
                 style = MaterialTheme.typography.bodySmall,
-                color = if (patch.isOutdated) {
+                color = if (patch.isOutdated || patch.appliedVersion == null) {
                     MaterialTheme.colorScheme.error
                 } else {
                     MaterialTheme.colorScheme.outline
