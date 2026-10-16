@@ -3163,4 +3163,18 @@
     <string name="settings_floating_tool_button_alt">显示 Alt 按钮</string>
     <string name="settings_floating_tool_button_lock">显示输入锁定按钮</string>
     <string name="settings_floating_tool_button_wheel">显示虚拟滚轮按钮</string>
+    <string name="settings_mts_cache_optimizations_title">模组缓存启动优化</string>
+    <string name="settings_mts_cache_optimizations_entry_desc">分别调整缓存命中时的额外启动优化</string>
+    <string name="settings_mts_cache_optimizations_desc">默认全部关闭，按需开启。仅在命中模组缓存时生效，下次启动游戏应用，无需重建缓存。</string>
+    <string name="settings_mts_cache_optimizations_inactive">模组缓存当前已关闭。可以预先调整以下选项；启用模组缓存并命中缓存后才会生效。</string>
+    <string name="settings_mts_cache_class_scan_title">复用模组类扫描</string>
+    <string name="settings_mts_cache_class_scan_desc">优点：减少 Downfall 重复扫描，加快启动。缺点：额外占用内存。</string>
+    <string name="settings_mts_cache_card_images_title">延迟加载卡牌图片</string>
+    <string name="settings_mts_cache_card_images_desc">优点：减少启动时图片加载。缺点：首次显示卡牌可能卡顿。</string>
+    <string name="settings_mts_cache_card_descriptions_title">延迟解析卡牌描述</string>
+    <string name="settings_mts_cache_card_descriptions_desc">优点：减少启动时描述解析。缺点：部分模组可能不兼容。</string>
+    <string name="settings_mts_cache_card_library_title">延迟初始化卡牌图鉴</string>
+    <string name="settings_mts_cache_card_library_desc">优点：更快进入主菜单。缺点：首次打开图鉴更慢。</string>
+    <string name="settings_mts_cache_splash_title">缩短启动标志动画</string>
+    <string name="settings_mts_cache_splash_desc">优点：缩短启动动画等待。缺点：标志展示时间更短。</string>
 </resources>

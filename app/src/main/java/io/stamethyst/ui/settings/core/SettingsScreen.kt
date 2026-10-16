@@ -223,6 +223,7 @@ fun LauncherSettingsPerformanceScreen(
         onMtsPatchCacheEnabledChanged = { enabled ->
             viewModel.onMtsPatchCacheEnabledChanged(activity, enabled)
         },
+        onOpenMtsCacheOptimizations = { navigator.push(Route.SettingsMtsCacheOptimizations) },
         onGamePerformanceOverlayChanged = { enabled ->
             viewModel.onGamePerformanceOverlayChanged(activity, enabled)
         },

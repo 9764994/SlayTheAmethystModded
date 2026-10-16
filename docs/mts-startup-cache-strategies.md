@@ -70,6 +70,14 @@ jar for `@SpireEnum` annotations.
 
 ## Runtime cache-hit optimizations
 
+The launcher exposes five persistent, independent switches under Settings →
+Performance → Mod cache startup optimizations, immediately below Enable mod cache.
+They control Downfall class-scan reuse, lazy card images, lazy card descriptions,
+lazy card library initialization, and the shortened splash. All default to disabled.
+Changes apply on the next game launch without rebuilding the patch cache. Options
+are shown below the main cache switch only when it is enabled and only take effect
+on a cache hit. Resetting launcher settings turns all five optimizations off.
+
 These patches live in `mods/amethyst-runtime-compat` and are gated by
 `amethyst.mts.patch_cache.current=true` unless noted otherwise. They are intentionally
 inactive for non-cache launches.

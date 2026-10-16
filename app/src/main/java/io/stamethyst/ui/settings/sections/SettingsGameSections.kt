@@ -63,6 +63,7 @@ internal data class PerformanceSettingsActions(
     val onVirtualResolutionModeChanged: (VirtualResolutionMode) -> Unit,
     val onRamSaverEnabledChanged: (Boolean) -> Unit,
     val onMtsPatchCacheEnabledChanged: (Boolean) -> Unit,
+    val onOpenMtsCacheOptimizations: () -> Unit = {},
 )
 
 
@@ -170,6 +171,15 @@ internal fun SettingsPerformanceSection(
             chipText = stringResource(R.string.settings_ram_saver_experimental_chip),
         )
     )
+
+    if (uiState.mtsPatchCacheEnabled) {
+        SettingsActionListItem(
+            title = stringResource(R.string.settings_mts_cache_optimizations_title),
+            supportingText = stringResource(R.string.settings_mts_cache_optimizations_entry_desc),
+            enabled = !uiState.busy,
+            onClick = actions.onOpenMtsCacheOptimizations,
+        )
+    }
 
     Row(
         modifier = Modifier.fillMaxWidth(),

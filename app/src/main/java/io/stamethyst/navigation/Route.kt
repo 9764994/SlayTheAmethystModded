@@ -38,6 +38,8 @@ sealed interface Route : NavKey {
     @Serializable
     data object SettingsPerformance : Route
     @Serializable
+    data object SettingsMtsCacheOptimizations : Route
+    @Serializable
     data object SettingsMarketCloud : Route
     @Serializable
     data object SettingsLlm : Route

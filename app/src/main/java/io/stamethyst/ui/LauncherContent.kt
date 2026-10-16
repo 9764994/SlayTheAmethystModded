@@ -140,6 +140,7 @@ import io.stamethyst.ui.settings.core.LauncherSettingsAboutScreen
 import io.stamethyst.ui.settings.core.LauncherSettingsFeedbackScreen
 import io.stamethyst.ui.settings.core.LauncherSettingsGameScreen
 import io.stamethyst.ui.settings.core.LauncherSettingsPerformanceScreen
+import io.stamethyst.ui.settings.core.LauncherSettingsMtsCacheOptimizationsScreen
 import io.stamethyst.ui.settings.core.LauncherSettingsLauncherScreen
 import io.stamethyst.ui.settings.core.LauncherSettingsMarketCloudScreen
 import io.stamethyst.ui.settings.core.LauncherSettingsScreen
@@ -818,6 +819,13 @@ fun LauncherContent(
 
                         entry<Route.SettingsPerformance> {
                             LauncherSettingsPerformanceScreen(
+                                viewModel = settingsViewModel,
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        }
+
+                        entry<Route.SettingsMtsCacheOptimizations> {
+                            LauncherSettingsMtsCacheOptimizationsScreen(
                                 viewModel = settingsViewModel,
                                 modifier = Modifier.fillMaxSize(),
                             )
@@ -1704,6 +1712,7 @@ private fun Route?.launcherDockRoute(): Route? {
          Route.SettingsLauncher,
          Route.SettingsGame,
          Route.SettingsPerformance,
+         Route.SettingsMtsCacheOptimizations,
           Route.SettingsMarketCloud,
            Route.SettingsLlm,
            Route.SettingsLlmTutorial,

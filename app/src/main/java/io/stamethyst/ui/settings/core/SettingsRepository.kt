@@ -118,6 +118,7 @@ internal object SettingsRepository {
         val cropScreenBottom: Boolean,
         val ramSaverEnabled: Boolean,
         val mtsPatchCacheEnabled: Boolean,
+        val mtsCacheStartupOptimizations: Map<io.stamethyst.config.MtsCacheStartupOptimization, Boolean>,
         val keepScreenOnTimeoutMinutes: Int,
         val touchscreenEnabled: Boolean,
         val cardPlayOptimizationMode: CardPlayOptimizationMode,
@@ -271,6 +272,7 @@ internal object SettingsRepository {
                 cropScreenBottom = LauncherPreferences.isScreenBottomCropEnabled(context),
                 ramSaverEnabled = LauncherPreferences.isRamSaverEnabled(context),
                 mtsPatchCacheEnabled = LauncherPreferences.isMtsPatchCacheEnabled(context),
+                mtsCacheStartupOptimizations = io.stamethyst.config.LauncherConfig.readMtsCacheStartupOptimizations(context),
                 keepScreenOnTimeoutMinutes = LauncherPreferences.readKeepScreenOnTimeoutMinutes(context),
                 touchscreenEnabled = GameplaySettingsService.readTouchscreenEnabled(context),
                 cardPlayOptimizationMode =
@@ -456,6 +458,9 @@ internal object SettingsRepository {
         )
         if (!LauncherPreferences.DEFAULT_MTS_PATCH_CACHE_ENABLED) {
             MtsPatchCacheCoordinator.clear(context)
+        }
+        io.stamethyst.config.MtsCacheStartupOptimization.entries.forEach {
+            io.stamethyst.config.LauncherConfig.setMtsCacheStartupOptimization(context, it, false)
         }
         LauncherPreferences.saveKeepScreenOnTimeoutMinutes(
             context,

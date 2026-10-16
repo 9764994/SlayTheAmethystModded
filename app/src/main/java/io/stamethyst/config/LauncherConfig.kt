@@ -1290,6 +1290,21 @@ object LauncherConfig {
         }
     }
 
+    fun readMtsCacheStartupOptimizations(context: Context): Map<MtsCacheStartupOptimization, Boolean> {
+        val preferences = prefs(context)
+        return MtsCacheStartupOptimization.entries.associateWith {
+            preferences.getBoolean(it.preferenceKey, false)
+        }
+    }
+
+    fun setMtsCacheStartupOptimization(
+        context: Context,
+        optimization: MtsCacheStartupOptimization,
+        enabled: Boolean,
+    ) {
+        prefs(context).edit { putBoolean(optimization.preferenceKey, enabled) }
+    }
+
     fun isSwappyFramePacingEnabled(context: Context): Boolean {
         return readFramePacingMode(context) == FramePacingMode.SWAPPY
     }

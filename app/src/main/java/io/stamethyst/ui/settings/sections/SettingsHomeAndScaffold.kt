@@ -532,6 +532,7 @@ internal fun LauncherSettingsPerformanceScreenContent(
     onVirtualResolutionModeChanged: (VirtualResolutionMode) -> Unit = {},
     onRamSaverEnabledChanged: (Boolean) -> Unit = {},
     onMtsPatchCacheEnabledChanged: (Boolean) -> Unit = {},
+    onOpenMtsCacheOptimizations: () -> Unit = {},
     onGamePerformanceOverlayChanged: (Boolean) -> Unit = {},
 ) {
     SettingsRouteScaffold(
@@ -551,6 +552,7 @@ internal fun LauncherSettingsPerformanceScreenContent(
                         onVirtualResolutionModeChanged = onVirtualResolutionModeChanged,
                         onRamSaverEnabledChanged = onRamSaverEnabledChanged,
                         onMtsPatchCacheEnabledChanged = onMtsPatchCacheEnabledChanged,
+                        onOpenMtsCacheOptimizations = onOpenMtsCacheOptimizations,
                     ),
                 )
                 SettingsSwitchItem(

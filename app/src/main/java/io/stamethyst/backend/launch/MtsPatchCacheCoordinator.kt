@@ -1,6 +1,8 @@
 package io.stamethyst.backend.launch
 
 import android.content.Context
+import io.stamethyst.config.LauncherConfig
+import io.stamethyst.config.MtsCacheStartupOptimization
 import io.stamethyst.backend.fs.FileTreeCleaner
 import io.stamethyst.config.RuntimePaths
 import java.io.File
@@ -66,6 +68,7 @@ internal object MtsPatchCacheCoordinator {
     @Throws(IOException::class)
     fun appendRuntimeProperties(context: Context, args: MutableList<String>, enabled: Boolean) {
         val expectedMarker = if (enabled) expectedMarker(context) else ""
+        appendStartupOptimizationProperties(args, LauncherConfig.readMtsCacheStartupOptimizations(context))
         appendRuntimeProperties(
             args = args,
             enabled = enabled,
@@ -82,6 +85,15 @@ internal object MtsPatchCacheCoordinator {
             expectedMarker = expectedMarker,
             gameDir = RuntimePaths.stsRoot(context)
         )
+    }
+
+    internal fun appendStartupOptimizationProperties(
+        args: MutableList<String>,
+        optimizations: Map<MtsCacheStartupOptimization, Boolean>,
+    ) {
+        MtsCacheStartupOptimization.entries.forEach { optimization ->
+            args.add("-D${optimization.propertyName}=${optimizations[optimization] ?: false}")
+        }
     }
 
     internal fun appendRuntimeProperties(

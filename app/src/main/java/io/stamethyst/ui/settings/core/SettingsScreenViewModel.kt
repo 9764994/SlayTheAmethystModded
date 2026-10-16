@@ -449,6 +449,8 @@ class SettingsScreenViewModel : ViewModel() {
         val cropScreenBottom: Boolean = LauncherPreferences.DEFAULT_CROP_SCREEN_BOTTOM,
         val ramSaverEnabled: Boolean = LauncherPreferences.DEFAULT_RAM_SAVER_ENABLED,
         val mtsPatchCacheEnabled: Boolean = LauncherPreferences.DEFAULT_MTS_PATCH_CACHE_ENABLED,
+        val mtsCacheStartupOptimizations: Map<io.stamethyst.config.MtsCacheStartupOptimization, Boolean> =
+            io.stamethyst.config.MtsCacheStartupOptimization.entries.associateWith { false },
         val keepScreenOnTimeoutMinutes: Int =
             LauncherPreferences.DEFAULT_KEEP_SCREEN_ON_TIMEOUT_MINUTES,
         val showGamePerformanceOverlay: Boolean = LauncherPreferences.DEFAULT_SHOW_GAME_PERFORMANCE_OVERLAY,
@@ -4031,6 +4033,18 @@ class SettingsScreenViewModel : ViewModel() {
         refreshStatus(host)
     }
 
+    fun onMtsCacheStartupOptimizationChanged(
+        host: Activity,
+        optimization: io.stamethyst.config.MtsCacheStartupOptimization,
+        enabled: Boolean,
+    ) {
+        if (uiState.busy) return
+        LauncherConfig.setMtsCacheStartupOptimization(host, optimization, enabled)
+        uiState = uiState.copy(
+            mtsCacheStartupOptimizations = uiState.mtsCacheStartupOptimizations + (optimization to enabled)
+        )
+    }
+
     fun onFramePacingModeChanged(host: Activity, mode: FramePacingMode) {
         if (uiState.busy) {
             return
@@ -4656,6 +4670,7 @@ class SettingsScreenViewModel : ViewModel() {
             cropScreenBottom = input.cropScreenBottom,
             ramSaverEnabled = input.ramSaverEnabled,
             mtsPatchCacheEnabled = input.mtsPatchCacheEnabled,
+            mtsCacheStartupOptimizations = input.mtsCacheStartupOptimizations,
             keepScreenOnTimeoutMinutes = input.keepScreenOnTimeoutMinutes,
             showGamePerformanceOverlay = diagnostics.showGamePerformanceOverlay,
             sustainedPerformanceModeEnabled = diagnostics.sustainedPerformanceModeEnabled,
