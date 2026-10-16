@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="steam_cloud_pull_connecting">正在連線 Steam…</string>
+    <string name="steam_cloud_pull_logging_on">正在驗證 Steam 帳號…</string>
+    <string name="steam_cloud_pull_backing_up">正在備份本機存檔…</string>
+    <string name="steam_cloud_pull_applying">正在將雲端存檔套用至本機…</string>
+    <string name="steam_cloud_pull_file_progress">目前階段：%1$d / %2$d 個檔案（%3$d%%）</string>
+    <string name="steam_cloud_pull_keep_open">請等待拉取完成，完成後此彈窗將自動關閉。</string>
+</resources>

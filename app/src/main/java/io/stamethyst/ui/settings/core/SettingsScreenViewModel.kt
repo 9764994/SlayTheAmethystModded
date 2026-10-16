@@ -60,6 +60,9 @@ import io.stamethyst.backend.steamcloud.SteamCloudOperationMutex
 import io.stamethyst.backend.steamcloud.SteamCloudProfileService
 import io.stamethyst.backend.steamcloud.SteamCloudSyncRepository
 import io.stamethyst.backend.steamcloud.SteamCloudPullResult
+import io.stamethyst.backend.steamcloud.SteamCloudSyncProgress
+import io.stamethyst.backend.steamcloud.SteamCloudSyncDirection
+import io.stamethyst.backend.steamcloud.SteamCloudSyncPhase
 import io.stamethyst.backend.steamcloud.SteamCloudRootKind
 import io.stamethyst.backend.steamcloud.SteamCloudSaveProfileManager
 import io.stamethyst.backend.steamcloud.SteamCloudSyncBlacklist
@@ -331,6 +334,7 @@ class SettingsScreenViewModel : ViewModel() {
         val busyOperation: UiBusyOperation = UiBusyOperation.NONE,
         val busyMessage: UiText? = null,
         val busyProgressPercent: Int? = null,
+        val steamCloudPullProgress: SteamCloudSyncProgress? = null,
         val quickStartSteamDownloadPhase: SteamStsJarDownloadPhase? = null,
         val quickStartSteamDownloadedBytes: Long = 0L,
         val quickStartSteamTotalBytes: Long? = null,
@@ -2307,7 +2311,7 @@ class SettingsScreenViewModel : ViewModel() {
             showToast(host, UiText.StringResource(R.string.settings_steam_cloud_credentials_missing))
             return
         }
-        setBusy(true, UiText.StringResource(R.string.settings_busy_steam_cloud_pull))
+        beginSteamCloudPull()
         executor.execute {
             try {
                 val result = SteamCloudOperationMutex.runExclusive(host) {
@@ -2319,6 +2323,7 @@ class SettingsScreenViewModel : ViewModel() {
                         host = host,
                         authMaterial = requireCurrentSteamCloudAuthMaterial(host, authMaterial),
                         saveModeAfterPull = SteamCloudSaveMode.STEAM_CLOUD,
+                        progressCallback = steamCloudPullProgressReporter(host),
                     )
                 }
                 host.runOnUiThread {
@@ -4559,12 +4564,7 @@ class SettingsScreenViewModel : ViewModel() {
         val authMaterial = runCatching { SteamCloudAuthStore.readAuthMaterial(host) }.getOrNull()
             ?: return null
         host.runOnUiThread {
-            setBusy(
-                busy = true,
-                message = UiText.StringResource(R.string.settings_busy_steam_cloud_pull),
-                operation = UiBusyOperation.STEAM_CLOUD_SYNC,
-                progressPercent = null,
-            )
+            beginSteamCloudPull()
         }
         return SteamCloudOperationMutex.runExclusive(host) {
             val currentAuthMaterial = requireCurrentSteamCloudAuthMaterial(host, authMaterial)
@@ -4576,6 +4576,7 @@ class SettingsScreenViewModel : ViewModel() {
                 host = host,
                 authMaterial = currentAuthMaterial,
                 saveModeAfterPull = SteamCloudSaveMode.STEAM_CLOUD,
+                progressCallback = steamCloudPullProgressReporter(host),
             )
         }
     }
@@ -4986,6 +4987,28 @@ class SettingsScreenViewModel : ViewModel() {
         }
     }
 
+    private fun beginSteamCloudPull() {
+        setBusy(
+            true,
+            UiText.StringResource(R.string.settings_busy_steam_cloud_pull),
+            UiBusyOperation.STEAM_CLOUD_SYNC,
+        )
+        uiState = uiState.copy(
+            steamCloudPullProgress = SteamCloudSyncProgress(
+                SteamCloudSyncDirection.PULL_CLOUD_TO_LOCAL,
+                SteamCloudSyncPhase.CONNECTING,
+            ),
+        )
+    }
+
+    private fun steamCloudPullProgressReporter(host: Activity): (SteamCloudSyncProgress) -> Unit = { progress ->
+        host.runOnUiThread {
+            if (uiState.busy && uiState.steamCloudPullProgress != null) {
+                uiState = uiState.copy(steamCloudPullProgress = progress)
+            }
+        }
+    }
+
     private fun setBusy(
         busy: Boolean,
         message: UiText?,
@@ -4996,6 +5019,7 @@ class SettingsScreenViewModel : ViewModel() {
             uiState.copy(
                 busy = true,
                 busyOperation = operation,
+                steamCloudPullProgress = null,
                 busyMessage = message,
                 busyProgressPercent = progressPercent?.coerceIn(0, 100)
             )
@@ -5003,6 +5027,7 @@ class SettingsScreenViewModel : ViewModel() {
             uiState.copy(
                 busy = false,
                 busyOperation = UiBusyOperation.NONE,
+                steamCloudPullProgress = null,
                 busyMessage = null,
                 busyProgressPercent = null
             )

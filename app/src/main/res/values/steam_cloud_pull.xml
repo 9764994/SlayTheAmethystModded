@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="steam_cloud_pull_connecting">Connecting to Steam…</string>
+    <string name="steam_cloud_pull_logging_on">Authenticating Steam account…</string>
+    <string name="steam_cloud_pull_backing_up">Backing up local saves…</string>
+    <string name="steam_cloud_pull_applying">Applying cloud saves locally…</string>
+    <string name="steam_cloud_pull_file_progress">Current phase: %1$d / %2$d files (%3$d%%)</string>
+    <string name="steam_cloud_pull_keep_open">Please wait until the pull completes. This window will close automatically.</string>
+</resources>

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="steam_cloud_pull_connecting">正在连接 Steam…</string>
+    <string name="steam_cloud_pull_logging_on">正在验证 Steam 账号…</string>
+    <string name="steam_cloud_pull_backing_up">正在备份本地存档…</string>
+    <string name="steam_cloud_pull_applying">正在将云存档应用到本地…</string>
+    <string name="steam_cloud_pull_file_progress">当前阶段：%1$d / %2$d 个文件（%3$d%%）</string>
+    <string name="steam_cloud_pull_keep_open">请等待拉取完成，完成后此弹窗将自动关闭。</string>
+</resources>

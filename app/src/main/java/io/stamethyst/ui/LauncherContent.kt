@@ -279,9 +279,10 @@ fun LauncherContent(
     val launcherDockHazeState = rememberHazeState()
     val mainBlockingBusy = mainUiState.busyOperation.locksInteraction(mainUiState.busy)
     val settingsBlockingBusy = settingsUiState.busyOperation.locksInteraction(settingsUiState.busy)
+    val cloudPullProgress = settingsUiState.steamCloudPullProgress.takeIf { settingsUiState.busy }
     val isBlockingBusyInteractionLocked = mainBlockingBusy || settingsBlockingBusy
     val shouldShowBlockingBusyWindow =
-        isBlockingBusyInteractionLocked &&
+        isBlockingBusyInteractionLocked && cloudPullProgress == null &&
             currentRoute != Route.QuickStart &&
             currentRoute != Route.QuickStartAutoImport &&
             currentRoute != Route.QuickStartJarImport &&
@@ -1123,6 +1124,9 @@ fun LauncherContent(
                             ?: stringResource(R.string.mod_import_busy_message),
                         progressPercent = blockingBusyProgressPercent
                     )
+                }
+                cloudPullProgress?.let { progress ->
+                    io.stamethyst.ui.settings.steamcloud.SteamCloudPullProgressDialog(progress)
                 }
                 ModImportHost(
                     onImportCompleted = {

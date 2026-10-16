@@ -71,6 +71,8 @@ internal class SteamCloudSyncEngine(
                 SteamCloudSyncPhase.DOWNLOADING, 0, downloads.size, "")
             downloads.forEachIndexed { index, change ->
                 checkCancelled()
+                report(SteamCloudSyncDirection.PULL_CLOUD_TO_LOCAL, SteamCloudSyncPhase.DOWNLOADING,
+                    index, downloads.size, change.localRelativePath)
                 change.currentRemote?.takeIf { it.isLive }?.let { entry ->
                     val target = File(work, "download/${change.localRelativePath}")
                     check(target.parentFile.mkdirs() || target.parentFile.isDirectory)
