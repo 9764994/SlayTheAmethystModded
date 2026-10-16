@@ -527,8 +527,16 @@ def _sling_break_source_url(values: dict[str, str]) -> str:
     return f"{repository}/archive/refs/heads/{ref}.tar.gz"
 
 
-def _has_sling_break_bundle(path: Path) -> bool:
-    return (path / "index.html").is_file() and (path / "launcher-mode.js").is_file()
+def _sling_break_bundle_dir(path: Path) -> Path | None:
+    # Keep in sync with SlingBreakBundle in gradle/build-logic: current upstream
+    # puts the standalone web runtime in game/, while older refs were flat.
+    for root in (path / "game", path):
+        if (root / "index.html").is_file() and any(
+            (root / script).is_file()
+            for script in ("src/ui/launcher-mode.js", "launcher-mode.js")
+        ):
+            return root
+    return None
 
 
 def _sling_break_cache_dir() -> Path:
@@ -555,10 +563,11 @@ def _sling_break_state() -> SlingBreakState:
 
     if override:
         path = (repo_root() / override).resolve()
-        if _has_sling_break_bundle(path):
+        bundle = _sling_break_bundle_dir(path)
+        if bundle is not None:
             return SlingBreakState(
                 "local",
-                f"local override ({path})",
+                f"local override ({bundle})",
                 [Finding("slingBreak.sourceDir is set; no network fetch for Sling Break.")],
                 url,
             )
@@ -567,7 +576,8 @@ def _sling_break_state() -> SlingBreakState:
             f"local override is missing the bundle ({path})",
             [
                 Finding(
-                    "slingBreak.sourceDir needs index.html and launcher-mode.js.",
+                    "slingBreak.sourceDir needs index.html and src/ui/launcher-mode.js "
+                    "(or legacy launcher-mode.js) in game/ or the source root.",
                     "Fix the path or unset slingBreak.sourceDir to fetch from the remote archive.",
                 )
             ],
@@ -576,7 +586,7 @@ def _sling_break_state() -> SlingBreakState:
         )
 
     cache = _sling_break_cache_dir()
-    if _has_sling_break_bundle(cache):
+    if _sling_break_bundle_dir(cache) is not None:
         return SlingBreakState(
             "cached",
             f"cached extraction ({cache})",

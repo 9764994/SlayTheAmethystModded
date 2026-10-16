@@ -22,8 +22,8 @@ import java.util.Base64
 import javax.inject.Inject
 
 /**
- * Downloads the Sling Break web bundle archive from its upstream repository and unpacks the
- * single top-level directory into [outputDirectory].
+ * Downloads the Sling Break repository archive and copies only its deployable web runtime
+ * (game/ on current upstream, the repository root on older refs) into [outputDirectory].
  *
  * The bundle is treated as a remote build input: the task always revalidates against the
  * upstream, so a new upstream commit is picked up without any manual step. Change detection
@@ -62,7 +62,7 @@ abstract class FetchSlingBreakSourceTask : DefaultTask() {
         val url = sourceUrl.get()
         val target = outputDirectory.get().asFile
         val state = readState(stateFile.get().asFile)
-        val hasBundle = hasBundle(target)
+        val hasBundle = SlingBreakBundle.resolve(target) != null
         // A cached validator is only meaningful for the exact URL it was issued for.
         val validators = state.takeIf { hasBundle && it.url == url && it.isUsable }
 
@@ -135,11 +135,11 @@ abstract class FetchSlingBreakSourceTask : DefaultTask() {
             )
         }
 
-        requireBundle(extractedRoot, url)
+        val bundleRoot = SlingBreakBundle.require(extractedRoot)
         target.deleteRecursively()
         target.mkdirs()
         fileSystemOperations.copy {
-            from(extractedRoot)
+            from(bundleRoot)
             into(target)
         }
         writeState(
@@ -266,17 +266,6 @@ abstract class FetchSlingBreakSourceTask : DefaultTask() {
             throw GradleException("Failed to download Sling Break archive: ${failure.message}", failure)
         }
     }
-
-    private fun requireBundle(root: File, url: String) {
-        if (!File(root, "index.html").isFile || !File(root, "launcher-mode.js").isFile) {
-            throw GradleException(
-                "Sling Break archive $url is missing index.html or launcher-mode.js."
-            )
-        }
-    }
-
-    private fun hasBundle(dir: File): Boolean =
-        File(dir, "index.html").isFile && File(dir, "launcher-mode.js").isFile
 
     private data class FetchState(
         val url: String = "",

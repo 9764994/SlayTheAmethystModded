@@ -53,8 +53,11 @@ changes, add this argument to the usual build command:
 -PslingBreak.sourceDir=/home/apricityx/workspaces/slingbreak
 ```
 
-The web source must include `audio-recipes.js`, `audio-native.js`, the updated
-`audio.js`, and their script entries in `index.html`. No manual asset copy is needed.
+The override accepts the repository root or its `game/` directory. Current upstream
+keeps `audio-recipes.js`, `audio-native.js`, and `audio.js` under `game/src/audio/`,
+with their script entries in `game/index.html`. The build packages only the web
+runtime into `assets/slingbreak/`, preserving relative paths. Older flat source
+layouts remain supported. No manual asset copy is needed.
 
 ## Diagnostics and verification status
 

@@ -38,7 +38,9 @@ The `Network` check probes the repositories a build pulls from (Maven Central, G
 
 Severity follows what the build actually needs: an endpoint is `[✗]` build-blocking only when the build cannot proceed without it. The dependency bundle is blocking while `build-deps/` is incomplete; the Sling Break archive is blocking only when there is no local `slingBreak.sourceDir` and no cached extraction under `app/build/generated/slingbreak-source/`. Everything else is a `[!]` warning that builds may still survive. If `slingBreak.sourceDir` is set, the Sling Break endpoint is not probed at all. It honours `HTTPS_PROXY`/`HTTP_PROXY` and reads `buildDeps.bundleUrl` from `gradle.properties` when set; use `--no-network` to skip it.
 
-The `Sling Break source` check reflects how packaging resolves the minigame bundle. By default `fetchSlingBreakSource` revalidates the upstream archive on every packaging build and only downloads it when the server's `ETag` / `Last-Modified` validators changed, so no local checkout is required and an unchanged upstream is cheap. The URL comes from `slingBreak.repository` + `slingBreak.ref`, or a full `slingBreak.sourceUrl`. The check reports the same three states the build uses: a valid `slingBreak.sourceDir` override, a cached extraction under `app/build/generated/slingbreak-source/` (which the fetch task reuses when the upstream is unreachable), or a pending remote fetch. When `slingBreak.sourceDir` is set but missing `index.html` or `launcher-mode.js`, it fails. The bundle is no longer stored under `app/src/main/assets/slingbreak/`; only `fetchSlingBreakSource` produces it.
+The `Sling Break source` check reflects how packaging resolves the minigame bundle. By default `fetchSlingBreakSource` revalidates the upstream archive on every packaging build and only downloads it when the server's `ETag` / `Last-Modified` validators changed, so no local checkout is required and an unchanged upstream is cheap. The URL comes from `slingBreak.repository` + `slingBreak.ref`, or a full `slingBreak.sourceUrl`. The check reports the same three states the build uses: a valid `slingBreak.sourceDir` override, a cached extraction under `app/build/generated/slingbreak-source/` (which the fetch task reuses when the upstream is unreachable), or a pending remote fetch.
+
+Current upstream keeps its standalone web runtime in `game/`, with the launcher bridge at `src/ui/launcher-mode.js`. Both archive extraction and local overrides select `game/` first, then fall back to the source root for direct runtime directories or older flat refs (`launcher-mode.js`). `slingBreak.sourceDir` therefore accepts either a repository checkout or its `game/` directory. A runtime must contain `index.html` and one of those launcher scripts; otherwise the build and doctor fail with a path hint. Only the selected web runtime is packaged into `assets/slingbreak/`, preserving its `src/`, `styles/`, `vendor/`, and other relative paths, so the host URL stays unchanged. Upstream `android/`, `tests/`, `bench/`, and repository tooling are not included for the current layout. The bundle is no longer stored under `app/src/main/assets/slingbreak/`; remote builds use the generated extraction, and local overrides bypass fetching entirely.
 
 - `--source-dir` / `-SourceDir` and `--output-zip` / `-OutputZip`: available on `package-cloud-function`.
 
@@ -61,6 +63,13 @@ Implementation files:
 - `scripts/build/lib/cli.py`: parses build command arguments and dispatches subcommands.
 - `scripts/build/lib/commands.py`: implements Gradle builds, release preparation, and cloud function packaging.
 - `scripts/build/lib/doctor.py`: implements the `doctor` environment checks and report rendering.
+
+Sling Break source-layout regression tests (current `game/`, direct runtime, legacy flat refs, and cache/override resolution):
+
+```bash
+python3 -m unittest discover -s scripts/build/tests -v
+./gradlew -p gradle/build-logic test
+```
 
 ## Tools Entrypoint
 

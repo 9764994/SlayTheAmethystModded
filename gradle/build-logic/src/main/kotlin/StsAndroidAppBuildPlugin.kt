@@ -328,6 +328,8 @@ private fun Project.registerPackagedRuntimeAssetTasks(
     val sourceAssetsDir = layout.projectDirectory.dir("src/main/assets")
     val resourcePackSourceDir = layout.projectDirectory.dir("src/main/resource-pack")
     val localSlingBreakOverride = providers.gradleProperty("slingBreak.sourceDir")
+        .map { it.trim() }
+        .filter { it.isNotEmpty() }
 
     // Remote fetch is the default; a local checkout is only used when explicitly requested.
     val fetchSlingBreakSource = tasks.register<FetchSlingBreakSourceTask>("fetchSlingBreakSource") {
@@ -340,6 +342,7 @@ private fun Project.registerPackagedRuntimeAssetTasks(
     } else {
         fetchSlingBreakSource.flatMap { it.outputDirectory }
     }
+    val slingBreakBundleDir = slingBreakSourceDir.map { SlingBreakBundle.require(it.asFile) }
 
     val prepareCommonAssets = tasks.register<Sync>("prepareCommonRuntimeAssets") {
         dependsOn(generatedAssetTasks)
@@ -347,7 +350,7 @@ private fun Project.registerPackagedRuntimeAssetTasks(
         from(sourceAssetsDir) {
             exclude(externalizedAssetPatterns + obsoleteCommonAssetPatterns + "slingbreak/**")
         }
-        from(slingBreakSourceDir) {
+        from(slingBreakBundleDir) {
             into("slingbreak")
             exclude(".git/**", "**/*.test.cjs", "**/*.txt", "libghostty")
         }
@@ -355,17 +358,6 @@ private fun Project.registerPackagedRuntimeAssetTasks(
             exclude(externalizedAssetPatterns + obsoleteCommonAssetPatterns)
         }
         into(packagedCommonAssetsDir)
-        doFirst {
-            val resolvedSlingBreakSource = slingBreakSourceDir.get().asFile
-            if (!File(resolvedSlingBreakSource, "index.html").isFile ||
-                !File(resolvedSlingBreakSource, "launcher-mode.js").isFile
-            ) {
-                throw GradleException(
-                    "Sling Break source is missing at $resolvedSlingBreakSource; " +
-                        "set -PslingBreak.sourceDir=<source-directory>"
-                )
-            }
-        }
     }
 
     val prepareExternalizedAssets = tasks.register<Sync>("prepareExternalizedRuntimeAssets") {
