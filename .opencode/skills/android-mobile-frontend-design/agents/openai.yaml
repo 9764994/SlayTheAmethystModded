@@ -1,4 +1,0 @@
-interface:
-  display_name: "Android Mobile Frontend Design"
-  short_description: "Design and review Android mobile UI flows"
-  default_prompt: "Use $android-mobile-frontend-design to design or review an Android mobile frontend flow with attention to ergonomics, adaptive layout, accessibility, and implementation guidance."

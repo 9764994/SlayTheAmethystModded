@@ -1,4 +1,0 @@
-interface:
-  display_name: "Compose Performance Audit"
-  short_description: "Audit Jetpack Compose performance risks"
-  default_prompt: "Use $compose-performance-audit to inspect Jetpack Compose code for recomposition, stability, lazy layout, effects, allocation, and measurement issues."
