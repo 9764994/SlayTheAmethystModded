@@ -9,6 +9,7 @@ import io.stamethyst.backend.steamcloud.SteamCloudAcceleratedHttp
 import io.stamethyst.backend.steamcloud.SteamCloudAuthStore
 import top.apricityx.workshop.steam.protocol.SharedSteamCmSession
 import top.apricityx.workshop.steam.protocol.SteamAccountSession
+import top.apricityx.workshop.steam.protocol.isSteamCmCredentialRejection
 
 /**
  * Holds the one process-wide shared CM connection.
@@ -76,7 +77,9 @@ internal object SharedSteamCmSessions {
                                 it.steamId == account.steamId && it.refreshToken == account.refreshToken
                             } == true
                     },
-                    onAccountLogonFailure = { account, _ -> SteamCmLoginFailureNotice.report(appContext, account) },
+                    onAccountLogonFailure = { account, error ->
+                        if (error.isSteamCmCredentialRejection()) SteamCmLoginFailureNotice.report(appContext, account)
+                    },
                     sessionValidator = { SteamCmAccountEpoch.read(appContext) == sessionEpoch },
                 )
             },

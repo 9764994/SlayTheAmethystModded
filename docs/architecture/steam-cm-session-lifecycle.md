@@ -20,13 +20,17 @@
 
 ## CM 登录失败提示
 
-带账号的 CM 登录最终失败（包括底层自动重连）上报 `SteamCmLoginFailureNotice`。匿名连接失败和主动取消不触发账号过期提示。失败事件保存在无 token 的小型文件中，使用跨进程锁去重，并按账号、凭据版本及 epoch 校验。
+带账号的 CM 登录（包括底层自动重连）只有在 Steam 明确返回凭据拒绝时，才上报 `SteamCmLoginFailureNotice`：ClientLogon 的 EResult 5（InvalidPassword）、27（Expired）、106（InvalidSignature）、109（ExpiredLoginAuthCode）。由 `isSteamCmCredentialRejection` 统一分类，不匹配异常文案，也不把泛化 AccessDenied 当成过期证据。DNS/TLS/握手/超时/断线/节点路由不可用、EResult 20、84/87 限流、未知错误、匿名连接失败和主动取消均不触发账号过期提示。失败事件保存在无 token 的小型文件中，使用跨进程锁去重，并按账号、凭据版本及 epoch 校验。
 
 启动器统一显示：**Steam CM 登录失败，Steam 账号登录状态疑似过期，建议重新登录账号。** 提供登录入口；同一凭据版本关闭后不重复弹出，重新登录/退出会清理旧提示。CM 登录失败不走云同步原有的强制退出分支，避免网络故障直接清除账号或覆盖专用提示。
+
+`SteamProtocolException.isCmLogonFailure` 仍只标记失败发生在登录阶段，不表示凭据失效；网络失败也保留该标记，避免云同步回落到旧强制退出逻辑。提示回调的触发条件与这个阶段标记独立。
+
+新提示带 `classificationVersion=1`；没有分类版本的旧持久化提示不再显示，避免升级后仍弹出历史网络故障误报。后续收到明确凭据拒绝时可以覆盖旧记录，正常去重和关闭逻辑不变。
 
 ## 验证
 
 - `SharedSteamCmSessionTest`：并发登录合并、旧账号快照、排队/进行中撤销、账号切换、匿名恢复、失败冷却。
-- `OkHttpSteamCmSessionLogonTest`：关闭后禁止复活、进行中 RPC/登录撤销、旧凭据禁止重连、账号登录/自动重连失败通知、匿名及取消不通知。
+- `OkHttpSteamCmSessionLogonTest`：关闭后禁止复活、进行中 RPC/登录撤销、旧凭据禁止重连、明确凭据拒绝才通知；DNS/TLS/reset/超时/路由不可用/限流/未知返回码及重连网络失败均不通知；匿名及取消不通知。
 - `UgcWorkshopDownloaderRateLimitTest`：撤销不可降级至公共 CDN。
-- `SteamAccountRevocationInstrumentedTest`：隔离目录验证持久化撤销、登录提交竞态、提示去重与清理；不使用真实账号、不请求 Steam。
+- `SteamAccountRevocationInstrumentedTest`：隔离目录验证持久化撤销、登录提交竞态、提示去重与清理、忽略旧未分类提示并允许明确拒绝替换；不使用真实账号、不请求 Steam。

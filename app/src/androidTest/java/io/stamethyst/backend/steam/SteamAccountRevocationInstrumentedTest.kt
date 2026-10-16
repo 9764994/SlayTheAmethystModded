@@ -69,6 +69,21 @@ class SteamAccountRevocationInstrumentedTest {
         commitAccount(context, SteamCloudAuthStore.beginLoginAttempt(context))
     }
 
+    @Test fun legacyUnclassifiedNoticeIsIgnoredAndCanBeReplacedByConfirmedRejection() = isolated { context ->
+        runBlocking {
+            saveAccount(context)
+            val auth = SteamCloudAuthStore.readCmAuthMaterial(context)!!
+            File(context.filesDir, "steam-cm-login-failure.json").writeText(
+                """{"steamId":"$steamId","credentialRevision":${auth.credentialRevision},"epoch":"${SteamCmAccountEpoch.read(context)}"}""",
+            )
+            assertNull(withTimeout(2_000) { SteamCmLoginFailureNotice.observe(context).first() })
+            SteamCmLoginFailureNotice.report(context, SteamAccountSession("test-account", steamId.toLong(), "test-token"))
+            val notice = withTimeout(2_000) { SteamCmLoginFailureNotice.observe(context).first() }
+            assertNotNull(notice)
+            assertEquals(1, notice!!.classificationVersion)
+        }
+    }
+
     private fun commitAccount(context: Context, attempt: String) {
         SteamCloudAuthStore.recordAuthSuccess(context, attempt, SteamCloudAuthCoordinator.CancellationHandle(),
             "test-account", "test-token", "test-guard", steamId)

@@ -22,12 +22,21 @@ internal object SteamCmLoginFailureNotice {
     private const val FILE_NAME = "steam-cm-login-failure.json"
 
     @Serializable
-    data class Notice(val steamId: String, val credentialRevision: Long, val epoch: String, val dismissed: Boolean = false)
+    data class Notice(
+        val steamId: String,
+        val credentialRevision: Long,
+        val epoch: String,
+        val dismissed: Boolean = false,
+        // Old writers persisted network failures without distinguishing credential rejection.
+        val classificationVersion: Int = 0,
+    )
 
     fun report(context: Context, account: SteamAccountSession) {
         val auth = SteamCloudAuthStore.readCmAuthMaterial(context) ?: return
         if (auth.steamId64 != account.steamId.toString() || auth.refreshToken != account.refreshToken) return
-        val notice = Notice(auth.steamId64, auth.credentialRevision, SteamCmAccountEpoch.read(context))
+        val notice = Notice(
+            auth.steamId64, auth.credentialRevision, SteamCmAccountEpoch.read(context), classificationVersion = 1,
+        )
         // At most one dialog per credential revision, even if several features fail together.
         locked(context) {
             if (read(context)?.copy(dismissed = false) != notice) write(context, notice)
@@ -45,7 +54,7 @@ internal object SteamCmLoginFailureNotice {
         trySend(Unit)
         awaitClose { observer.stopWatching() }
     }.map {
-        val notice = read(context)?.takeUnless { it.dismissed } ?: return@map null
+        val notice = read(context)?.takeIf { !it.dismissed && it.classificationVersion == 1 } ?: return@map null
         runCatching {
             val auth = SteamCloudAuthStore.readCmAuthMaterial(context)
             notice.takeIf { auth?.steamId64 == it.steamId && auth.credentialRevision == it.credentialRevision &&

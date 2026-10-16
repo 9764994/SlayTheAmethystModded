@@ -162,8 +162,9 @@ class OkHttpSteamCmSession(
             )
         } catch (error: Exception) {
             synchronized(transportLock) { reconnectPlan = null }
-            // Cancellation/revocation is expected during logout; never suggest re-login for it.
-            if (error !is CancellationException && error !is InterruptedException && !closed) {
+            // Reaching the logon stage is not evidence of expired credentials. Network,
+            // routing and rate-limit errors must retain the account without a re-login dialog.
+            if (error.isSteamCmCredentialRejection() && !closed) {
                 runCatching { if (accountValidator(account)) onAccountLogonFailure(account, error) }
             }
             if (error is CancellationException || error is InterruptedException) throw error

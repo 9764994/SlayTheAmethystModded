@@ -26,6 +26,75 @@ class OkHttpSteamCmSessionLogonTest {
     private val servers = (1..5).map { CmServer("cm$it.example:443", "websockets") }
     private val account = SteamAccountSession("test-account", 76561198000000001L, "test-token")
 
+    @Test fun connectionFailureNeverSuggestsExpiredCredentialsButKeepsLogonStage() = runBlocking {
+        val errors = listOf(
+            java.net.UnknownHostException("DNS failed"),
+            javax.net.ssl.SSLHandshakeException("TLS failed"),
+            java.net.SocketException("Connection reset"),
+            IOException("WebSocket failed"),
+        )
+        for (networkError in errors) {
+            var notices = 0
+            val factory = SteamWebSocketFactory { request, listener ->
+                FakeSocket(request, listener) {}.also { listener.onFailure(it, networkError, null) }
+            }
+            OkHttpSteamCmSession(webSocketFactory = factory, onAccountLogonFailure = { _, _ -> notices++ }).use { session ->
+                val error = runCatching { session.connectWithRefreshToken(servers.take(1), account) }.exceptionOrNull()
+                assertTrue(error is SteamProtocolException && error.isCmLogonFailure)
+                assertEquals(networkError.toString(), 0, notices)
+            }
+        }
+    }
+
+    @Test fun serviceErrorsRateLimitsAndUnknownLogonResultsDoNotSuggestRelogin() = runBlocking {
+        for (code in listOf(2, 8, 15, 20, 48, 63, 65, 84, 85, 87, 88, 999)) {
+            var notices = 0
+            val factory = FakeFactory(List(3) { Outcome.AuthError(code) })
+            OkHttpSteamCmSession(webSocketFactory = factory, onAccountLogonFailure = { _, _ -> notices++ }).use { session ->
+                val error = runCatching { session.connectWithRefreshToken(servers.take(1), account) }.exceptionOrNull()
+                assertTrue("EResult=$code", error is SteamProtocolException && error.isCmLogonFailure)
+                assertEquals("EResult=$code", 0, notices)
+            }
+        }
+    }
+
+    @Test fun onlyExplicitCredentialRejectionsSuggestRelogin() = runBlocking {
+        for (code in listOf(5, 27, 106, 109)) {
+            var notices = 0
+            val factory = FakeFactory(listOf(Outcome.AuthError(code)))
+            OkHttpSteamCmSession(webSocketFactory = factory, onAccountLogonFailure = { _, error ->
+                assertTrue(error.isSteamCmCredentialRejection())
+                notices++
+            }).use { session ->
+                assertTrue(runCatching { session.connectWithRefreshToken(servers, account) }.exceptionOrNull() is SteamAuthenticationException)
+                assertEquals("EResult=$code", 1, notices)
+                assertEquals(1, factory.logons)
+            }
+        }
+    }
+
+    @Test fun automaticReconnectNetworkFailureDoesNotSuggestRelogin() = runBlocking {
+        var notices = 0
+        val factory = FakeFactory(listOf(Outcome.Success, Outcome.HandshakeFailure))
+        OkHttpSteamCmSession(webSocketFactory = factory, onAccountLogonFailure = { _, _ -> notices++ }).use { session ->
+            session.connectWithRefreshToken(servers.take(1), account)
+            val rpc = async(start = CoroutineStart.UNDISPATCHED) { runCatching { session.requestDepotDecryptionKey(1u, 2u) } }
+            factory.sockets.first().let { it.listener.onFailure(it, IOException("offline"), null) }
+            assertTrue(rpc.await().isFailure)
+            assertEquals(0, notices)
+        }
+    }
+
+    @Test fun unavailableCmRoutingNeverSuggestsExpiredCredentials() = runBlocking {
+        var notices = 0
+        val factory = FakeFactory(listOf(Outcome.Unavailable))
+        OkHttpSteamCmSession(webSocketFactory = factory, onAccountLogonFailure = { _, _ -> notices++ }).use { session ->
+            val error = runCatching { session.connectWithRefreshToken(servers.take(1), account) }.exceptionOrNull()
+            assertTrue(error is SteamProtocolException && error.isCmLogonFailure)
+            assertEquals(0, notices)
+        }
+    }
+
     @Test fun unavailableAuthenticationRouteTriesTheNextCm() = runBlocking {
         val factory = FakeFactory(listOf(Outcome.Unavailable, Outcome.Success))
         OkHttpSteamCmSession(webSocketFactory = factory).use { session ->
