@@ -20,7 +20,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
+import io.stamethyst.ui.LauncherTopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
@@ -222,7 +222,7 @@ private fun LauncherCompatibilityScreenContent(
 
     Scaffold(
         topBar = {
-            TopAppBar(
+            LauncherTopAppBar(
                 title = { Text(stringResource(R.string.compat_settings_title)) },
                 navigationIcon = {
                     IconButton(onClick = onGoBack) {

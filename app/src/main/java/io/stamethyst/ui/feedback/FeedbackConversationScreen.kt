@@ -41,7 +41,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
+import io.stamethyst.ui.LauncherTopAppBar
 import androidx.compose.material3.contentColorFor
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -168,7 +168,7 @@ fun LauncherFeedbackConversationScreen(
     Scaffold(
         modifier = modifier,
         topBar = {
-            TopAppBar(
+            LauncherTopAppBar(
                 title = {
                     Text(
                         text = if (uiState.title.isBlank()) {

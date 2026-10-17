@@ -30,7 +30,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
+import io.stamethyst.ui.LauncherTopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -95,7 +95,7 @@ fun LauncherMobileGluesSettingsScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
+            LauncherTopAppBar(
                 title = { Text(stringResource(R.string.settings_mobileglues_entry_title)) },
                 navigationIcon = {
                     IconButton(onClick = navigator::goBack) {
@@ -448,4 +448,3 @@ private fun currentMobileGluesParameterLines(
         ),
     )
 }
-

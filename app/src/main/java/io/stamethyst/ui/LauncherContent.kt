@@ -115,7 +115,6 @@ import io.stamethyst.ui.main.LauncherModsScreen
 import io.stamethyst.ui.main.LauncherModsScreenContent
 import io.stamethyst.ui.main.LauncherUpdateNoticeUiState
 import io.stamethyst.ui.main.MainScreenViewModel
-import io.stamethyst.ui.main.RendererIcons
 import io.stamethyst.ui.modimport.ModImportHost
 import io.stamethyst.ui.workshop.WorkshopScreen
 import io.stamethyst.ui.workshop.WorkshopDownloadCenterScreen
@@ -277,6 +276,8 @@ fun LauncherContent(
     var modsBatchSelectionMode by remember { mutableStateOf(false) }
     val showAnimatedLauncherDock = showDockPager && !showOverlayNav && !modsBatchSelectionMode
     val launcherDockHazeState = rememberHazeState()
+    val launcherBannerHazeState = rememberHazeState()
+    val launcherBannerState = remember { LauncherBannerState() }
     val mainBlockingBusy = mainUiState.busyOperation.locksInteraction(mainUiState.busy)
     val settingsBlockingBusy = settingsUiState.busyOperation.locksInteraction(settingsUiState.busy)
     val cloudPullProgress = settingsUiState.steamCloudPullProgress.takeIf { settingsUiState.busy }
@@ -524,6 +525,7 @@ fun LauncherContent(
     CompositionLocalProvider(
         LocalNavigator provides navigator,
         LocalChromeBackgroundOpacity provides chromeBackgroundOpacity,
+        LocalLauncherBannerState provides launcherBannerState,
     ) {
         SettingsEffectsHandler(viewModel = settingsViewModel)
         LaunchedEffect(activity) {
@@ -569,7 +571,7 @@ fun LauncherContent(
         ) {
             Box(modifier = Modifier.fillMaxSize()) {
                 Scaffold(
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier.fillMaxSize().hazeSource(launcherBannerHazeState),
                     contentWindowInsets = WindowInsets(0, 0, 0, 0),
                 ) { scaffoldPadding ->
                     if (showDockPager) {
@@ -636,7 +638,10 @@ fun LauncherContent(
                                     horizontalPageTransition(forward = false)
                                 }
                             },
-                            entryProvider = entryProvider {
+                            entryProvider = launcherBannerEntryProvider(
+                                dockPagerVisible = showDockPager,
+                                dockKeys = LauncherDockRoutes,
+                                provider = entryProvider {
                         entry<Route.QuickStart> {
                             QuickStartScreen(
                                 viewModel = settingsViewModel,
@@ -1083,9 +1088,19 @@ fun LauncherContent(
                             )
                         }
 
-                    }
+                                },
+                            ),
                     )
                 }
+                LauncherBannerHost(
+                    state = launcherBannerState,
+                    hazeState = launcherBannerHazeState,
+                    activeKey = if (showDockPager && !showOverlayNav) DockBannerKey else currentRoute ?: initialRoute,
+                    dockKeys = LauncherDockRoutes,
+                    pagerState = dockPagerState,
+                    navigationDepth = navigator.stackSize,
+                    modifier = Modifier.align(Alignment.TopCenter),
+                )
                 AnimatedVisibility(
                     visible = showAnimatedLauncherDock,
                     modifier = Modifier.align(Alignment.BottomCenter),
@@ -1452,6 +1467,7 @@ private fun LauncherDockPager(
             userScrollEnabled = userScrollEnabled,
             key = { page -> LauncherDockRoutes[page].launcherDockTagSuffix() },
         ) { page ->
+            LauncherBannerPage(LauncherDockRoutes[page]) {
             when (LauncherDockRoutes[page]) {
                 Route.Main -> {
                     LauncherGameScreenContent(
@@ -1534,6 +1550,7 @@ private fun LauncherDockPager(
 
                 else -> Unit
             }
+            }
         }
     }
 }
@@ -1565,28 +1582,28 @@ private fun LauncherDockBar(
             LauncherDockItem(
                 selected = selectedRoute == Route.Main,
                 route = Route.Main,
-                icon = RendererIcons.Gamepad2,
+                icon = LauncherNavigationIcons.Game,
                 label = stringResource(R.string.main_dock_game),
                 onSelectRoute = onSelectRoute,
             )
             LauncherDockItem(
                 selected = selectedRoute == Route.Mods,
                 route = Route.Mods,
-                icon = RendererIcons.Package,
+                icon = LauncherNavigationIcons.Mods,
                 label = stringResource(R.string.main_dock_mods),
                 onSelectRoute = onSelectRoute,
             )
             LauncherDockItem(
                 selected = selectedRoute == Route.Workshop,
                 route = Route.Workshop,
-                icon = RendererIcons.Store,
+                icon = LauncherNavigationIcons.Workshop,
                 label = stringResource(R.string.main_dock_market),
                 onSelectRoute = onSelectRoute,
             )
             LauncherDockItem(
                 selected = selectedRoute == Route.Settings,
                 route = Route.Settings,
-                icon = RendererIcons.Settings2,
+                icon = LauncherNavigationIcons.Settings,
                 label = stringResource(R.string.main_dock_settings),
                 onSelectRoute = onSelectRoute,
             )

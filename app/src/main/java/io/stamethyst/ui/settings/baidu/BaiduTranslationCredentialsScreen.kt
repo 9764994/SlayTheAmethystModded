@@ -39,7 +39,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
+import io.stamethyst.ui.LauncherTopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -106,7 +106,7 @@ internal fun LauncherBaiduTranslationCredentialsScreen(
     Scaffold(
         modifier = modifier,
         topBar = {
-            TopAppBar(
+            LauncherTopAppBar(
                 title = { Text(stringResource(R.string.settings_baidu_translation_credentials_title)) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
@@ -389,5 +389,3 @@ private const val BAIDU_TRANSLATION_SAMPLE_TEXT =
 private const val BAIDU_TRANSLATION_SAMPLE_REFERENCE = "将内容视为 Steam 创意工坊模组说明进行翻译。"
 private const val BAIDU_AUTO_DETECT_LANGUAGE = "auto"
 private const val BAIDU_DEFAULT_TARGET_LANGUAGE = "zh"
-
-

@@ -28,7 +28,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
+import io.stamethyst.ui.LauncherTopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -151,7 +151,7 @@ fun LauncherSteamCloudLoginScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
+            LauncherTopAppBar(
                 title = { Text(stringResource(R.string.settings_steam_cloud_login_title)) },
                 navigationIcon = {
                     IconButton(

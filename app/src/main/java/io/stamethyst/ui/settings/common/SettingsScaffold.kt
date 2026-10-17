@@ -23,7 +23,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -49,6 +48,8 @@ import dev.chrisbanes.haze.hazeSource
 import dev.chrisbanes.haze.rememberHazeState
 import io.stamethyst.R
 import io.stamethyst.ui.FloatingGlassHeader
+import io.stamethyst.ui.LauncherBannerTitleRow
+import io.stamethyst.ui.launcherBannerExpandedHeight
 import io.stamethyst.ui.Icons
 import io.stamethyst.ui.feedback.FeedbackSubmissionNotice
 import io.stamethyst.ui.icon.ArrowBack
@@ -91,7 +92,7 @@ internal fun SettingsRouteScaffold(
 ) {
     val blockingInteractionLocked = uiState.busyOperation.locksInteraction(uiState.busy)
     val headerHazeState = rememberHazeState()
-    val headerContentTopInset = 88.dp + 16.dp
+    val headerContentTopInset = launcherBannerExpandedHeight(104.dp)
     val bottomContentInset = if (showBackButton) 32.dp else 132.dp
 
     Box(
@@ -260,57 +261,22 @@ internal fun SettingsHeaderPinnedContent(
     enabled: Boolean,
     onGoBack: () -> Unit,
 ) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .statusBarsPadding()
-            .padding(start = 16.dp, top = 18.dp, end = 16.dp, bottom = 16.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        if (showBackButton) {
-            HapticIconButton(
-                onClick = onGoBack,
-                enabled = enabled,
-            ) {
-                Icon(
-                    imageVector = Icons.ArrowBack,
-                    contentDescription = stringResource(R.string.common_content_desc_back),
-                )
+    LauncherBannerTitleRow(
+        title = title,
+        subtitle = subtitle,
+        iconResId = iconResId,
+        navigationIcon = if (showBackButton) {
+            {
+                HapticIconButton(
+                    onClick = onGoBack,
+                    enabled = enabled,
+                ) {
+                    Icon(
+                        imageVector = Icons.ArrowBack,
+                        contentDescription = stringResource(R.string.common_content_desc_back),
+                    )
+                }
             }
-        }
-        Surface(
-            modifier = Modifier.size(52.dp),
-            shape = RoundedCornerShape(18.dp),
-            color = MaterialTheme.colorScheme.secondaryContainer,
-            contentColor = MaterialTheme.colorScheme.primary,
-        ) {
-            Box(contentAlignment = Alignment.Center) {
-                Icon(
-                    painter = painterResource(iconResId),
-                    contentDescription = null,
-                    modifier = Modifier.size(28.dp),
-                )
-            }
-        }
-        Column(
-            modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(2.dp)
-        ) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.headlineSmall,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                text = subtitle,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-    }
+        } else null,
+    )
 }
-

@@ -71,7 +71,8 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
+import io.stamethyst.ui.LauncherTopAppBar
+import io.stamethyst.ui.LauncherBannerVisibility
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -234,11 +235,12 @@ internal fun WorkshopDetailScreen(
         }
     }
 
+    LauncherBannerVisibility(visible = fullscreenGalleryStartIndex < 0)
     Box(modifier = modifier.fillMaxSize()) {
         Scaffold(
             modifier = Modifier.fillMaxSize(),
             topBar = {
-                TopAppBar(
+                LauncherTopAppBar(
                     title = {
                         val originalTitle = state.selected
                             ?.takeIf { it.summary.publishedFileId == publishedFileId }

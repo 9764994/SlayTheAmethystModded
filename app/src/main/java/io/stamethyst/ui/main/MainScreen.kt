@@ -174,6 +174,9 @@ import io.stamethyst.backend.workshop.WorkshopService
 import io.stamethyst.backend.workshop.isActiveDownload
 import io.stamethyst.ui.CollapsibleFloatingGlassHeader
 import io.stamethyst.ui.FloatingGlassHeader
+import io.stamethyst.ui.LauncherBannerTitleRow
+import io.stamethyst.ui.LauncherTopAppBar
+import io.stamethyst.ui.launcherBannerExpandedHeight
 import io.stamethyst.ui.LauncherTransientNoticeBus
 import io.stamethyst.ui.LauncherTransientNoticeDuration
 import io.stamethyst.ui.LauncherTransientNoticeRequest
@@ -299,10 +302,8 @@ private fun LauncherGamePage(
     val headerActionsEnabled = !uiState.busy &&
         !steamCloudIndicator.operationInFlight
     val gameHeaderHazeState = rememberHazeState()
-    val density = LocalDensity.current
     val scrollState = rememberScrollState()
-    val gameHeaderCollapsed = scrollState.value > with(density) { 24.dp.roundToPx() }
-    val gameHeaderContentTopInset = 104.dp
+    val gameHeaderContentTopInset = launcherBannerExpandedHeight(104.dp)
 
     Box(
         modifier = modifier
@@ -427,7 +428,6 @@ private fun LauncherGamePage(
                 .align(Alignment.TopCenter)
                 .fillMaxWidth(),
             hazeState = gameHeaderHazeState,
-            collapsed = gameHeaderCollapsed,
             shape = RoundedCornerShape(bottomStart = 24.dp, bottomEnd = 24.dp),
             contentPadding = PaddingValues(0.dp),
             pinnedContent = {
@@ -563,49 +563,16 @@ private fun HeaderPinnedRow(
     iconSize: Dp,
     actions: @Composable RowScope.() -> Unit,
 ) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .statusBarsPadding()
-            .padding(start = 16.dp, top = 18.dp, end = 16.dp, bottom = 16.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        Surface(
-            modifier = Modifier.size(52.dp),
-            shape = RoundedCornerShape(18.dp),
-            color = iconContainerColor,
-            contentColor = iconContentColor,
-        ) {
-            Box(contentAlignment = Alignment.Center) {
-                Icon(
-                    painter = painterResource(iconResId),
-                    contentDescription = iconContentDescription,
-                    modifier = Modifier.size(iconSize),
-                )
-            }
-        }
-        Column(
-            modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(4.dp)
-        ) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.Bold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                text = subtitle,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-        actions()
-    }
+    LauncherBannerTitleRow(
+        iconResId = iconResId,
+        iconContentDescription = iconContentDescription,
+        iconContainerColor = iconContainerColor,
+        iconContentColor = iconContentColor,
+        title = title,
+        subtitle = subtitle,
+        iconSize = iconSize,
+        actions = actions,
+    )
 }
 
 @Composable
@@ -5278,18 +5245,16 @@ private fun LauncherMainScreenContent(
                     }
 
                     LauncherMainContentMode.MODS -> {
-                        var modsHeaderHeightPx by remember { mutableIntStateOf(0) }
-                        var modsHeaderCollapsed by remember { mutableStateOf(false) }
                         var modsContentMountReady by remember { mutableStateOf(false) }
                         var modsRefreshing by remember { mutableStateOf(false) }
                         var showEnabledModsOnly by rememberSaveable { mutableStateOf(false) }
                         var showUpdateAvailableModsOnly by rememberSaveable { mutableStateOf(false) }
                         val modsPullToRefreshState = rememberPullToRefreshState()
-                        val measuredModsHeaderHeight = with(density) { modsHeaderHeightPx.toDp() }
+                        val measuredModsHeaderHeight = launcherBannerExpandedHeight(232.dp)
                         val modsHeaderContentTopInset =
-                            (if (modsHeaderHeightPx == 0) 232.dp else measuredModsHeaderHeight) - 20.dp
+                            measuredModsHeaderHeight
                         val modsRefreshIndicatorTopInset =
-                            (if (modsHeaderHeightPx == 0) 232.dp else measuredModsHeaderHeight) + 8.dp
+                            measuredModsHeaderHeight + 8.dp
 
                         LaunchedEffect(Unit) {
                             delay(MODS_CONTENT_MOUNT_DELAY_MS)
@@ -5350,7 +5315,6 @@ private fun LauncherMainScreenContent(
                                         actionBarBottomPadding = launcherDockContentPadding + batchEditBarContentPadding,
                                         showEnabledModsOnly = showEnabledModsOnly,
                                         showUpdateAvailableModsOnly = showUpdateAvailableModsOnly,
-                                        onHeaderCollapsedChange = { modsHeaderCollapsed = it },
                                         onBatchEditBarStateChange = { batchEditBarState = it },
                                         actions = actions
                                     )
@@ -5362,14 +5326,8 @@ private fun LauncherMainScreenContent(
                                     .align(Alignment.TopCenter)
                                     .fillMaxWidth(),
                                 hazeState = hazeState,
-                                collapsed = modsHeaderCollapsed,
                                 shape = RoundedCornerShape(bottomStart = 24.dp, bottomEnd = 24.dp),
                                 contentPadding = PaddingValues(0.dp),
-                                onHeightChanged = {
-                                    if (!modsHeaderCollapsed) {
-                                        modsHeaderHeightPx = maxOf(modsHeaderHeightPx, it)
-                                    }
-                                },
                                 pinnedContent = {
                                     ModsHeaderPinnedContent(
                                         folderControlsEnabled = uiState.controlsEnabled && !batchSelectionMode,
@@ -6047,31 +6005,27 @@ private fun CrashRecoveryScreen(
         }
     }
 
+    Scaffold(
+        modifier = modifier,
+        topBar = {
+            LauncherTopAppBar(
+                title = { Text(stringResource(R.string.sts_crash_page_title)) },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.ArrowBack, stringResource(R.string.common_content_desc_back))
+                    }
+                },
+            )
+        },
+    ) { padding ->
     Column(
-        modifier = modifier
+        modifier = Modifier.fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
-            .statusBarsPadding()
+            .padding(padding)
             .verticalScroll(rememberScrollState())
             .padding(horizontal = 20.dp, vertical = 18.dp),
-        verticalArrangement = Arrangement.spacedBy(18.dp)
+        verticalArrangement = Arrangement.spacedBy(18.dp),
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            IconButton(onClick = onBack) {
-                Icon(
-                    imageVector = Icons.ArrowBack,
-                    contentDescription = stringResource(R.string.common_content_desc_back)
-                )
-            }
-            Text(
-                text = stringResource(R.string.sts_crash_page_title),
-                style = MaterialTheme.typography.headlineMedium,
-                fontWeight = FontWeight.Bold
-            )
-        }
         Text(
             text = stringResource(R.string.sts_crash_page_subtitle),
             style = MaterialTheme.typography.titleMedium,
@@ -6246,6 +6200,7 @@ private fun CrashRecoveryScreen(
                 }
             }
         }
+    }
     }
 }
 
@@ -6551,7 +6506,6 @@ private fun ColumnScope.MainContentSwitcher(
     actionBarBottomPadding: Dp,
     showEnabledModsOnly: Boolean,
     showUpdateAvailableModsOnly: Boolean,
-    onHeaderCollapsedChange: (Boolean) -> Unit = {},
     onBatchEditBarStateChange: (BatchEditBarState?) -> Unit,
     actions: MainScreenActions
 ) {
@@ -6613,7 +6567,6 @@ private fun ColumnScope.MainContentSwitcher(
                     hostAvailable = actions.isHostAvailable,
                     showEnabledModsOnly = showEnabledModsOnly,
                     showUpdateAvailableModsOnly = showUpdateAvailableModsOnly,
-                    onHeaderCollapsedChange = onHeaderCollapsedChange,
                     onBatchEditBarStateChange = onBatchEditBarStateChange,
                     callbacks = ModFolderSectionCallbacks(
                         onToggleMod = actions.onToggleMod,

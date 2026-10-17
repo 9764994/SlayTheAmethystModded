@@ -37,7 +37,6 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.lazy.LazyColumn
@@ -70,12 +69,11 @@ import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
+import io.stamethyst.ui.LauncherTopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -119,6 +117,9 @@ import io.stamethyst.backend.workshop.WorkshopPreviewCacheStore
 import io.stamethyst.backend.workshop.isActiveDownload
 import io.stamethyst.ui.AppSearchBar
 import io.stamethyst.ui.CollapsibleFloatingGlassHeader
+import io.stamethyst.ui.LauncherBannerTitleRow
+import io.stamethyst.ui.launcherBannerExpandedHeight
+import io.stamethyst.ui.LocalLauncherBannerPage
 import io.stamethyst.ui.Icons
 import io.stamethyst.ui.LoadingSkeletonBlock
 import io.stamethyst.ui.SearchHistoryStore
@@ -169,24 +170,12 @@ internal fun WorkshopScreen(
         }
     }
     val listState = rememberLazyListState()
+    val bannerPage = LocalLauncherBannerPage.current
     val coroutineScope = rememberCoroutineScope()
     val density = LocalDensity.current
     val headerHazeState = rememberHazeState()
-    var headerBaseHeightPx by remember { mutableIntStateOf(0) }
-    var headerSearchExpandedHeightPx by remember { mutableIntStateOf(0) }
-    var headerSearchHistoryExpanded by remember { mutableStateOf(false) }
-    val headerCollapseOffsetPx = with(density) { 24.dp.roundToPx() }
     val backToTopButtonScrollThresholdPx = with(density) {
         WorkshopBackToTopButtonScrollThreshold.roundToPx()
-    }
-    val headerPastCollapseOffset by remember(listState, headerCollapseOffsetPx) {
-        derivedStateOf {
-            listState.firstVisibleItemIndex > 0 ||
-                listState.firstVisibleItemScrollOffset > headerCollapseOffsetPx
-        }
-    }
-    val headerCollapsed by remember {
-        derivedStateOf { headerPastCollapseOffset }
     }
     val showBackToTopButton by remember(listState, backToTopButtonScrollThresholdPx) {
         derivedStateOf {
@@ -194,32 +183,16 @@ internal fun WorkshopScreen(
                 listState.firstVisibleItemScrollOffset > backToTopButtonScrollThresholdPx
         }
     }
-    val effectiveHeaderHeightPx = if (
-        headerSearchHistoryExpanded &&
-        headerSearchExpandedHeightPx > 0
-    ) {
-        headerSearchExpandedHeightPx
-    } else {
-        headerBaseHeightPx
-    }
     val headerPlaceholderHeight = if (useFloatingHeader && state.listMode == WorkshopListMode.Browse) 250.dp else 102.dp
-    val headerContentHeight = if (effectiveHeaderHeightPx == 0) {
-        headerPlaceholderHeight
-    } else {
-        with(density) { effectiveHeaderHeightPx.toDp() }
-    }
     val showHeaderLoadProgress = useFloatingHeader &&
         state.listMode == WorkshopListMode.Browse &&
         state.browseLoading
-    // One animation owns the progress row's height. The row renders at this height and the list inset
-    // adds the same value, so both move together. Deriving the inset from the row's measured size
-    // instead would put the list a frame behind the header and read as a stutter.
     val headerProgressHeight by animateDpAsState(
         targetValue = if (showHeaderLoadProgress) workshopLoadProgressBarHeight() else 0.dp,
         animationSpec = tween(durationMillis = 260, easing = FastOutSlowInEasing),
         label = "workshopHeaderProgressHeight",
     )
-    val headerMeasuredHeight = headerContentHeight + headerProgressHeight
+    val headerMeasuredHeight = launcherBannerExpandedHeight(headerPlaceholderHeight)
     val headerContentTopInset = headerMeasuredHeight + 16.dp
     val refreshIndicatorTopInset = headerMeasuredHeight + 8.dp
     val pullToRefreshState = rememberPullToRefreshState()
@@ -254,6 +227,7 @@ internal fun WorkshopScreen(
     }
 
     LaunchedEffect(state.listMode) {
+        launch { bannerPage?.expand() }
         listState.animateScrollToItem(0)
     }
 
@@ -446,26 +420,8 @@ internal fun WorkshopScreen(
                     .align(Alignment.TopCenter)
                     .fillMaxWidth(),
                 hazeState = headerHazeState,
-                collapsed = headerCollapsed,
                 shape = RoundedCornerShape(bottomStart = 24.dp, bottomEnd = 24.dp),
                 contentPadding = PaddingValues(0.dp),
-                onHeightChanged = {
-                    if (!headerCollapsed) {
-                        // Subtract the animating progress row so the cached card height stays stable.
-                        // Folding a transient height in here would leave a gap above the list after
-                        // loading ends, and would also feed layout back into layout.
-                        val progressHeightPx = with(density) { headerProgressHeight.roundToPx() }
-                        val cardHeightWithoutProgress = (it - progressHeightPx).coerceAtLeast(0)
-                        when {
-                            headerSearchHistoryExpanded -> {
-                                headerSearchExpandedHeightPx = cardHeightWithoutProgress
-                            }
-                            headerBaseHeightPx == 0 || headerSearchExpandedHeightPx == 0 -> {
-                                headerBaseHeightPx = maxOf(headerBaseHeightPx, cardHeightWithoutProgress)
-                            }
-                        }
-                    }
-                },
                 pinnedContent = {
                     WorkshopHeaderPinnedContent(
                         showBackButton = showBackButton,
@@ -504,12 +460,6 @@ internal fun WorkshopScreen(
                                 category = selectedCategory
                                 viewModel.search(context.applicationContext, query, sort, timeFilter, selectedCategory)
                             },
-                            onSearchHistoryExpandedChange = { expanded ->
-                                if (expanded) {
-                                    headerSearchExpandedHeightPx = 0
-                                }
-                                headerSearchHistoryExpanded = expanded
-                            },
                             contained = false,
                         )
                     }
@@ -536,6 +486,7 @@ internal fun WorkshopScreen(
             FloatingActionButton(
                 onClick = {
                     coroutineScope.launch {
+                        launch { bannerPage?.expand() }
                         listState.animateScrollToItem(0)
                     }
                 },
@@ -631,47 +582,11 @@ private fun WorkshopHeaderPinnedContent(
     } else {
         stringResource(R.string.workshop_download_center_title)
     }
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .statusBarsPadding()
-            .padding(start = 16.dp, top = 18.dp, end = 16.dp, bottom = 6.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        verticalAlignment = Alignment.CenterVertically,
+    LauncherBannerTitleRow(
+        iconResId = R.drawable.ic_dock_market,
+        title = title,
+        subtitle = subtitle,
     ) {
-        Surface(
-            modifier = Modifier.size(52.dp),
-            shape = RoundedCornerShape(18.dp),
-            color = MaterialTheme.colorScheme.secondaryContainer,
-            contentColor = MaterialTheme.colorScheme.primary,
-        ) {
-            Box(contentAlignment = Alignment.Center) {
-                Icon(
-                    painter = painterResource(R.drawable.ic_dock_market),
-                    contentDescription = null,
-                    modifier = Modifier.size(28.dp),
-                )
-            }
-        }
-        Column(
-            modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.Bold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                text = subtitle,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
         if (showSubscriptionsButton) {
             IconButton(
                 onClick = onOpenSubscriptions,
@@ -728,7 +643,7 @@ private fun WorkshopStandardTopBar(
     } else {
         stringResource(R.string.workshop_download_center_title)
     }
-    TopAppBar(
+    LauncherTopAppBar(
         title = {
             Column {
                 Text(

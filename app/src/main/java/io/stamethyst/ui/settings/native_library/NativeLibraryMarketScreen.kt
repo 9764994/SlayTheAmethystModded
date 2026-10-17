@@ -52,6 +52,8 @@ import io.stamethyst.backend.nativelib.NativeLibraryMarketPackageState
 import io.stamethyst.navigation.currentNavigator
 import io.stamethyst.ui.Icons
 import io.stamethyst.ui.FloatingGlassHeader
+import io.stamethyst.ui.LauncherBannerTitleRow
+import io.stamethyst.ui.launcherBannerExpandedHeight
 import io.stamethyst.ui.icon.ArrowBack
 
 @Composable
@@ -63,6 +65,7 @@ fun LauncherNativeLibraryMarketScreen(
     val navigator = currentNavigator
     val uiState = viewModel.uiState
     val headerHazeState = rememberHazeState()
+    val headerHeight = launcherBannerExpandedHeight(104.dp)
 
     LaunchedEffect(activity) {
         viewModel.onOpenNativeLibraryMarket(activity)
@@ -82,7 +85,7 @@ fun LauncherNativeLibraryMarketScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             item {
-                Spacer(modifier = Modifier.height(104.dp))
+                Spacer(modifier = Modifier.height(headerHeight))
             }
 
             item {
@@ -168,52 +171,19 @@ private fun NativeLibraryMarketHeader(
     onRefresh: () -> Unit,
     refreshEnabled: Boolean,
 ) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .statusBarsPadding()
-            .padding(start = 16.dp, top = 18.dp, end = 16.dp, bottom = 16.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        IconButton(onClick = onBack) {
-            Icon(
-                imageVector = Icons.ArrowBack,
-                contentDescription = stringResource(R.string.common_content_desc_back),
-            )
-        }
-        Surface(
-            modifier = Modifier.size(52.dp),
-            shape = RoundedCornerShape(18.dp),
-            color = MaterialTheme.colorScheme.secondaryContainer,
-            contentColor = MaterialTheme.colorScheme.primary,
-        ) {
-            Box(contentAlignment = Alignment.Center) {
+    LauncherBannerTitleRow(
+        iconResId = R.drawable.ic_settings_native_library,
+        title = stringResource(R.string.settings_native_library_market_title),
+        subtitle = stringResource(R.string.settings_native_library_market_desc),
+        navigationIcon = {
+            IconButton(onClick = onBack) {
                 Icon(
-                    painter = painterResource(R.drawable.ic_settings_native_library),
-                    contentDescription = null,
-                    modifier = Modifier.size(28.dp),
+                    imageVector = Icons.ArrowBack,
+                    contentDescription = stringResource(R.string.common_content_desc_back),
                 )
             }
-        }
-        Column(
-            modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(2.dp),
-        ) {
-            Text(
-                text = stringResource(R.string.settings_native_library_market_title),
-                style = MaterialTheme.typography.headlineSmall,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                text = stringResource(R.string.settings_native_library_market_desc),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
+        },
+    ) {
         IconButton(
             onClick = onRefresh,
             enabled = refreshEnabled,
@@ -304,5 +274,3 @@ private fun NativeLibraryMarketPackageCard(
         }
     }
 }
-
-

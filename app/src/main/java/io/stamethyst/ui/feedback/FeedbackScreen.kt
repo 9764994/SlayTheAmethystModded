@@ -43,7 +43,7 @@ import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
+import io.stamethyst.ui.LauncherTopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -269,7 +269,7 @@ private fun LauncherFeedbackScreenContent(
 
     Scaffold(
         topBar = {
-            TopAppBar(
+            LauncherTopAppBar(
                 title = { Text(stringResource(R.string.feedback_new_issue_title)) },
                 navigationIcon = {
                     IconButton(
@@ -446,7 +446,7 @@ private fun LauncherFeedbackSubscriptionsScreenContent(
 ) {
     Scaffold(
         topBar = {
-            TopAppBar(
+            LauncherTopAppBar(
                 title = {
                     Text(
                         if (inboxState.unreadIssueCount > 0) {
@@ -510,7 +510,7 @@ private fun LauncherFeedbackIssueBrowserScreenContent(
 ) {
     Scaffold(
         topBar = {
-            TopAppBar(
+            LauncherTopAppBar(
                 title = { Text(stringResource(R.string.feedback_issue_browser_title)) },
                 navigationIcon = {
                     IconButton(onClick = onGoBack) {

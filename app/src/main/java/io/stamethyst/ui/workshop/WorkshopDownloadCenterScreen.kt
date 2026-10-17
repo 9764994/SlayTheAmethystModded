@@ -42,7 +42,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
+import io.stamethyst.ui.LauncherTopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -117,7 +117,7 @@ internal fun WorkshopDownloadCenterScreen(
     Scaffold(
         modifier = modifier,
         topBar = {
-            TopAppBar(
+            LauncherTopAppBar(
                 title = {
                     Column {
                         Text(stringResource(R.string.workshop_download_center_title))

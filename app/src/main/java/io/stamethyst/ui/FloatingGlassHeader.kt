@@ -1,10 +1,5 @@
 package io.stamethyst.ui
 
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -31,6 +26,17 @@ fun FloatingGlassHeader(
     contentSpacing: Dp = 14.dp,
     content: @Composable ColumnScope.() -> Unit,
 ) {
+    if (LocalLauncherBannerPage.current != null) {
+        RegisterLauncherBanner {
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(contentPadding)
+                    .onSizeChanged { onHeightChanged(it.height) },
+                verticalArrangement = Arrangement.spacedBy(contentSpacing),
+                content = content,
+            )
+        }
+        return
+    }
     FrostedGlassChrome(
         modifier = modifier
             .fillMaxWidth()
@@ -52,7 +58,6 @@ fun FloatingGlassHeader(
 fun CollapsibleFloatingGlassHeader(
     modifier: Modifier = Modifier,
     hazeState: HazeState,
-    collapsed: Boolean,
     onHeightChanged: (Int) -> Unit = {},
     shape: Shape = RoundedCornerShape(24.dp),
     contentPadding: PaddingValues = PaddingValues(16.dp),
@@ -79,11 +84,7 @@ fun CollapsibleFloatingGlassHeader(
     ) {
         pinnedContent()
         if (expandedContent != null) {
-            AnimatedVisibility(
-                visible = !collapsed,
-                enter = fadeIn() + expandVertically(),
-                exit = shrinkVertically() + fadeOut(),
-            ) {
+            BannerReveal(LocalLauncherBannerCollapseFraction.current) {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()

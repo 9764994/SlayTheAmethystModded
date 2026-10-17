@@ -52,7 +52,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
@@ -110,7 +109,6 @@ internal fun ModFolderSection(
     hostAvailable: Boolean,
     showEnabledModsOnly: Boolean = false,
     showUpdateAvailableModsOnly: Boolean = false,
-    onHeaderCollapsedChange: (Boolean) -> Unit = {},
     onBatchEditBarStateChange: (BatchEditBarState?) -> Unit = {},
     callbacks: ModFolderSectionCallbacks
 ) {
@@ -222,13 +220,6 @@ internal fun ModFolderSection(
         if (normalizedQuery.isNotEmpty()) {
             modSearchHistory = SearchHistoryStore.recordModSearch(context, normalizedQuery)
         }
-    }
-    val headerCollapseThresholdPx = with(density) { 24.dp.roundToPx() }
-    LaunchedEffect(interactionState.listState, headerCollapseThresholdPx) {
-        snapshotFlow {
-            interactionState.listState.firstVisibleItemIndex > 0 ||
-                interactionState.listState.firstVisibleItemScrollOffset > headerCollapseThresholdPx
-        }.collect { onHeaderCollapsedChange(it) }
     }
     val batchSelectionControlsEnabled = organizationControlsEnabled && selectedBatchMods.isNotEmpty()
     fun exitBatchSelection() {
