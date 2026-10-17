@@ -322,6 +322,7 @@
     <string name="boot_overlay_button_enter_game">进入游戏</string>
     <string name="boot_overlay_art_hint_button">加载图说明</string>
     <string name="boot_overlay_art_hint_message">加载图由 Image2 生成，如有画师愿意提供更好的素材，欢迎投稿！</string>
+    <string name="boot_overlay_logs_title">加载日志</string>
     <string name="boot_overlay_logs_placeholder">等待 JVM 输出日志…</string>
     <string name="boot_overlay_status_starting_jvm">正在启动 JVM…</string>
     <string name="boot_overlay_status_starting_pipeline">正在准备启动流程…</string>
@@ -1460,7 +1461,7 @@
     <string name="settings_title">设置</string>
     <string name="settings_search_placeholder">搜索设置</string>
     <string name="settings_search_empty">没有匹配的设置项。</string>
-    <string name="settings_home_subtitle">选择要调整的设置板块</string>
+    <string name="settings_home_subtitle">自定义你的游戏体验</string>
     <string name="settings_category_launcher_title">启动器</string>
     <string name="settings_category_launcher_subtitle">新手教程、外观、更新和基础设置引导</string>
     <string name="settings_category_game_title">游戏</string>

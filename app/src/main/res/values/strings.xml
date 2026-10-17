@@ -263,7 +263,7 @@
     <string name="settings_touch_mouse_interaction_desc">Choose how the floating mouse opens shortcuts and switches left/right click.</string>
     <string name="settings_touch_double_click_as_right_click_enabled">Touch long-press as right click</string>
     <string name="settings_touch_double_click_as_right_click_disabled">Touch long-press as right click: Disabled</string>
-    <string name="settings_touch_double_click_as_right_click_desc">When enabled, holding the game surface for 0.5 seconds sends one right-click. Moving your finger before then cancels the right-click gesture.</string>
+    <string name="settings_touch_double_click_as_right_click_desc">When enabled, holding is treated as a right-click.</string>
     <string name="settings_ignore_long_press_right_click_while_playing_card_enabled">Ignore long-press right click while playing cards</string>
     <string name="settings_ignore_long_press_right_click_while_playing_card_disabled">Ignore long-press right click while playing cards: Disabled</string>
     <string name="settings_ignore_long_press_right_click_while_playing_card_desc">When enabled, holding a selected combat card will keep following your finger instead of converting the hold into a right-click.</string>
@@ -355,7 +355,7 @@
     <string name="resource_gate_title">Preparing runtime resources</string>
     <string name="resource_gate_progress_percent">%1$d%%</string>
     <string name="resource_gate_failure_title">Resource download failed</string>
-    <string name="resource_gate_full_release_fallback">If the resource pack cannot be downloaded, download the latest full release APK from GitHub. Its embedded resource archive avoids the extra network download.</string>
+    <string name="resource_gate_full_release_fallback">Try switching the mirror source above and retry the download. If all downloads fail, download the offline installer from GitHub.</string>
     <string name="resource_gate_full_release_quick_download">Cannot download? Tap to download the full APK.</string>
     <string name="resource_gate_fetching_latest_full_release">Fetching latest version</string>
     <string name="resource_gate_fetching_latest_full_release_description">Getting the latest offline APK download link...</string>
@@ -1067,7 +1067,7 @@ Patch rule: keep Ori full-resolution glow/bloom rendering, but replace the blur 
     <string name="sts_jar_integrity_force_confirm_back_action">Go back</string>
     <string name="settings_reimport_sts_jar_desc">Do not touch this when the game has no problems</string>
     <string name="settings_player_name_title">Player name</string>
-    <string name="settings_player_name_desc">Changes the Slay the Spire profile name. Takes effect after you enter the game again.</string>
+    <string name="settings_player_name_desc">Changes the Slay the Spire profile name.</string>
     <string name="settings_player_name_dialog_title">Set player name</string>
     <string name="settings_player_name_hint">Player name</string>
     <string name="settings_player_name_dialog_message">Leave it blank to restore the default name: player.</string>
@@ -1099,7 +1099,7 @@ Patch rule: keep Ori full-resolution glow/bloom rendering, but replace the blur 
     <string name="settings_boot_overlay_style_material_log">Compact log page</string>
     <string name="settings_boot_overlay_style_sling_break">SlingBreak minigame</string>
     <string name="settings_boot_overlay_custom_image_title">Custom loading image</string>
-    <string name="settings_boot_overlay_custom_image_desc">Choose local images for the full-screen art loading page. Single-image mode uses the same image for both loading layers.</string>
+    <string name="settings_boot_overlay_custom_image_desc">Customize the full-screen art loading page image.</string>
     <string name="settings_boot_overlay_custom_image_dialog_title">Custom loading image</string>
     <string name="settings_boot_overlay_custom_image_default">Default art</string>
     <string name="settings_boot_overlay_custom_image_single_summary">Single-image mode</string>
@@ -1179,7 +1179,7 @@ Patch rule: keep Ori full-resolution glow/bloom rendering, but replace the blur 
     <string name="update_dialog_action_download">Download</string>
     <string name="update_dialog_download_option_direct">GitHub Release (Direct)</string>
     <string name="update_download_choice_dialog_title">Choose update method</string>
-    <string name="update_download_choice_dialog_message">Development costs are too high, and tokens are no longer affordable 😭😭😭\nFor long-term maintenance, future downloads are moving to Quark (downloads may be a little slower, but should be more stable). Because Quark rate limiting can be mysterious, if the download really will not finish, join our group chat; releases will be posted in the group files. Users who can access GitHub can also download from Github Release. Thank you for the support!</string>
+    <string name="update_download_choice_dialog_message">To keep basic development costs covered, the launcher now downloads from Quark. It has been optimized to just 10MB, so even if Quark is slow, downloads still work fine. Please support development by downloading the launcher from Quark; friends downloading from GitHub can also re-save the file on each update to earn the same benefit. Thank you very much!</string>
     <string name="update_download_choice_dialog_image_description">Update download notice image</string>
     <string name="update_download_choice_dialog_source_label">Download source</string>
     <string name="update_download_choice_dialog_action_direct_download">Direct Download</string>
@@ -1227,10 +1227,10 @@ Patch rule: keep Ori full-resolution glow/bloom rendering, but replace the blur 
     <string name="settings_author_special_thanks_ram_saver_suffix"> provided major guidance on launcher memory optimization, making more mods usable in the launcher.</string>
     <string name="settings_author_special_thanks_ram_saver_url">https://github.com/Alchyr/sts-ram-saver</string>
     <string name="settings_author_special_thanks_footer">Many thanks to all friends above for their hard work.</string>
-    <string name="settings_author_release_notice">Official releases will include at least one non-throttled download source and will also be published on GitHub Releases.</string>
+    <string name="settings_author_release_notice">Because the official release needs to earn some revenue, it is published on Quark and also posted on GitHub Releases. Those who can access GitHub can go there to download.</string>
     <string name="settings_author_report_notice">If you downloaded this project from other sources, it is unauthorized third-party redistribution.</string>
     <string name="settings_author_follow_notice">Follow official release channels for the latest builds and announcements.</string>
-    <string name="settings_author_qq_group_prefix">欢迎加入官方互助交流QQ群：</string>
+    <string name="settings_author_qq_group_prefix">Join the official community QQ group:</string>
     <string name="settings_author_qq_group_number">675545914</string>
     <string name="settings_author_qq_group_url">mqqapi://card/show_pslcard?src_type=internal&amp;version=1&amp;uin=675545914&amp;card_type=group&amp;source=qrcode</string>
     <string name="settings_unplayable_mods_entry_title">Some mods not playable?</string>
@@ -1778,8 +1778,8 @@ Patch rule: keep Ori full-resolution glow/bloom rendering, but replace the blur 
     <string name="settings_steam_cloud_challenge_email_code_title">Enter Steam email code</string>
     <string name="settings_steam_cloud_challenge_email_code_retry_title">Enter a new Steam email code</string>
     <string name="settings_steam_cloud_challenge_device_confirmation_desc">Approve the Steam login on your trusted device. This screen will continue automatically after Steam accepts the confirmation.</string>
-    <string name="settings_steam_cloud_challenge_device_confirmation_remote_login_warning"></string>
-    <string name="settings_steam_cloud_challenge_device_confirmation_accelerator_tip"></string>
+    <string name="settings_steam_cloud_challenge_device_confirmation_remote_login_warning">If you are prompted about a login from an unusual location, choose to sign in with the Steam client, enter the address of your accelerator/VPN as the location, and select "Other" as the login reason. If the unusual/risky login verification cannot be passed, look for a guide on another platform.</string>
+    <string name="settings_steam_cloud_challenge_device_confirmation_accelerator_tip">If Steam does not show a login request, use an accelerator (VPN) and then sign in again.</string>
     <string name="settings_steam_cloud_challenge_device_code_desc">Enter the current 2FA code from Steam Guard.</string>
     <string name="settings_steam_cloud_challenge_email_code_desc">Enter the email code sent by Steam.</string>
     <string name="settings_steam_cloud_challenge_email_code_desc_with_hint">Enter the email code sent by Steam to %1$s.</string>
@@ -1809,7 +1809,7 @@ Patch rule: keep Ori full-resolution glow/bloom rendering, but replace the blur 
     <string name="settings_steam_cloud_force_independent_override_succeeded">Independent saves overwrote Steam Cloud. Uploaded %1$d file(s), deleted %2$d cloud file(s). Backups are in %3$s.</string>
     <string name="settings_steam_cloud_force_independent_override_failed">Failed to overwrite Steam Cloud with independent saves: %1$s</string>
     <string name="settings_steam_cloud_switch_prompt_title">Use Steam Cloud saves?</string>
-    <string name="settings_steam_cloud_switch_prompt_message">Steam Cloud login succeeded for %1$s. Do you want to switch to Steam Cloud saves now? Your current Independent saves stay stored locally, and you can switch back in Settings > Cloud save settings.</string>
+    <string name="settings_steam_cloud_switch_prompt_message">Steam Cloud login succeeded for %1$s. Do you want to switch to Steam Cloud saves now? Your current Independent saves stay stored locally, and you can switch back in Settings > Cloud save settings. Also, if you did not purchase Slay the Spire on Steam, using cloud saves may cause problems.</string>
     <string name="settings_steam_cloud_switch_prompt_confirm">Switch to Steam Cloud</string>
     <string name="settings_steam_cloud_switch_prompt_keep_independent">Keep Independent saves</string>
     <string name="settings_steam_cloud_login_succeeded">Steam Cloud login succeeded for %1$s.</string>
@@ -1953,8 +1953,8 @@ Patch rule: keep Ori full-resolution glow/bloom rendering, but replace the blur 
     <string name="main_steam_cloud_cloud_override_succeeded">Local saves now follow Steam Cloud: %1$d file(s) applied.</string>
     <string name="main_steam_cloud_auto_sync_succeeded">Steam Cloud changes were synced.</string>
     <string name="main_steam_cloud_sync_completed_toast">Steam Cloud sync completed.</string>
-    <string name="main_steam_cloud_background_check_conflict_toast">出现冲突，同步未完成</string>
-    <string name="main_steam_cloud_background_check_failed_toast">网络故障，同步失败</string>
+    <string name="main_steam_cloud_background_check_conflict_toast">Conflict detected. Sync did not complete.</string>
+    <string name="main_steam_cloud_background_check_failed_toast">Network error. Sync failed.</string>
     <string name="main_steam_cloud_override_failed">Steam Cloud sync failed: %1$s</string>
     <string name="settings_steam_cloud_login_cancelled_summary">Cancelled by user.</string>
     <string name="settings_feedback_entry_title">Issue feedback</string>
@@ -1973,8 +1973,8 @@ Patch rule: keep Ori full-resolution glow/bloom rendering, but replace the blur 
     <string name="settings_export_saves">Export saves</string>
     <string name="settings_save_export_source_dialog_title">Choose save source</string>
     <string name="settings_save_export_source_dialog_message">Choose the save slot you want to export</string>
-    <string name="settings_save_export_source_cloud_action">Steam Cloud saves</string>
-    <string name="settings_save_export_source_independent_action">Independent local saves</string>
+    <string name="settings_save_export_source_cloud_action">Cloud saves</string>
+    <string name="settings_save_export_source_independent_action">Independent saves</string>
     <string name="settings_export_error_logs">Export error logs</string>
     <string name="settings_system_game_mode_title">System Game Mode</string>
     <string name="settings_system_game_mode_acknowledge">I understand</string>
@@ -2066,11 +2066,11 @@ Patch rule: keep Ori full-resolution glow/bloom rendering, but replace the blur 
     <string name="settings_crop_screen_bottom_enabled">Crop screen bottom</string>
     <string name="settings_crop_screen_bottom_disabled">Crop screen bottom: Disabled</string>
     <string name="settings_crop_screen_bottom_desc">When enabled, a black margin is reserved on the right side in landscape to improve taps near the edge on full-screen displays.</string>
-    <string name="settings_ram_saver_title">启用内存优化</string>
-    <string name="settings_ram_saver_desc">启用后，可以大幅降低内存，但是会小幅增加功耗，建议打开，如果遇到卡顿、发热严重等问题，可以关闭。</string>
-    <string name="settings_ram_saver_experimental_chip">实验性</string>
-    <string name="settings_mts_patch_cache_title">启用模组缓存</string>
-    <string name="settings_mts_patch_cache_desc">启用后，每次启动游戏会建立缓存，只要不改变模组，即可大幅提升启动游戏的时间。</string>
+    <string name="settings_ram_saver_title">Enable memory optimization</string>
+    <string name="settings_ram_saver_desc">When enabled, memory usage drops significantly, but power consumption rises slightly. Recommended on. If you run into stutter or severe overheating, you can turn it off.</string>
+    <string name="settings_ram_saver_experimental_chip">Experimental</string>
+    <string name="settings_mts_patch_cache_title">Enable mod caching</string>
+    <string name="settings_mts_patch_cache_desc">When enabled, a cache is built each time you launch the game. As long as the mods do not change, launch time is greatly reduced. The more mods you have, the more noticeable the effect. After enabling this, the first launch after changing mods takes more time and some storage space.</string>
     <string name="settings_frame_pacing_mode_title">Frame pacing</string>
     <string name="settings_frame_pacing_mode_built_in">Built-in pacing</string>
     <string name="settings_frame_pacing_mode_swappy">Swappy pacing</string>
@@ -2198,7 +2198,7 @@ Patch rule: keep Ori full-resolution glow/bloom rendering, but replace the blur 
     <string name="settings_save_import_target_dialog_title">Choose save import target</string>
     <string name="settings_save_import_target_dialog_message">Choose the save slot you want to import into</string>
     <string name="settings_save_import_target_cloud_action">Import to Steam Cloud saves</string>
-    <string name="settings_save_import_target_cloud_action_disabled">Steam Cloud saves (log in first)</string>
+    <string name="settings_save_import_target_cloud_action_disabled">Cloud saves (log in first)</string>
     <string name="settings_save_import_target_independent_action">Import to independent saves</string>
     <string name="settings_save_imported_to_target">Imported %1$d save files to %2$s</string>
     <string name="settings_save_imported_with_backup_to_target">Imported %1$d save files to %2$s (backup: %3$s)</string>
@@ -2437,7 +2437,7 @@ Patch rule: keep Ori full-resolution glow/bloom rendering, but replace the blur 
     <string name="quick_start_start_from_steam_title">Start with Steam login</string>
     <string name="quick_start_start_from_steam_subtitle">After sign-in, download game files from Steam and enable full cloud save and Workshop support. Steam credentials are saved locally and are not uploaded to a server.</string>
     <string name="quick_start_auto_import_page_title">Automatically importing. Please wait</string>
-    <string name="quick_start_auto_import_page_subtitle">Trying to download game files from Steam without account authorization, then import them. You can return to choose another method.</string>
+    <string name="quick_start_auto_import_page_subtitle">Trying to download game files from Steam and import them.</string>
     <string name="quick_start_auto_import_requires_login">Steam anonymous access cannot download this encrypted game depot. Use Steam sign-in import, or manually import a local desktop-1.0.jar.\n\nDetails: %1$s</string>
     <string name="quick_start_auto_import_use_steam_login">Use Steam sign-in import</string>
     <string name="quick_start_auto_import_choose_other_mode">Choose another import method</string>
@@ -2454,7 +2454,7 @@ Patch rule: keep Ori full-resolution glow/bloom rendering, but replace the blur 
     <string name="quick_start_steam_download_page_subtitle">Do not leave this page</string>
     <string name="quick_start_steam_acceleration_enabled_title">Steam acceleration link</string>
     <string name="quick_start_steam_acceleration_disabled_title">Steam acceleration link: Off</string>
-    <string name="quick_start_steam_acceleration_desc">如果你不在中国地区，请关闭该加速链路！</string>
+    <string name="quick_start_steam_acceleration_desc">If you are not in mainland China, disable this acceleration route!</string>
     <string name="quick_start_steam_acceleration_confirm_title">Switch Steam download link?</string>
     <string name="quick_start_steam_acceleration_confirm_enable_message">The current download will be paused, then resumed through the acceleration link.</string>
     <string name="quick_start_steam_acceleration_confirm_disable_message">The current download will be paused, then resumed through the official Steam source.</string>
@@ -2971,7 +2971,7 @@ Patch rule: keep Ori full-resolution glow/bloom rendering, but replace the blur 
     <string name="workshop_detail_load_failed">Failed to load details</string>
     <string name="workshop_action_retry_detail">Retry loading</string>
     <string name="workshop_detail_loading">Loading mod details</string>
-    <string name="workshop_comments_summary_loading">Comments are loading. 5 comments are shown per page.</string>
+    <string name="workshop_comments_summary_loading">Comments are loading</string>
     <string name="workshop_comments_summary_empty">No comments yet.</string>
     <string name="workshop_comments_summary_pages">Page %1$d / %2$d. Steam has %3$s comments.</string>
     <string name="workshop_comments_summary_page">Page %1$d. Steam has %2$s comments.</string>
@@ -2994,7 +2994,7 @@ Patch rule: keep Ori full-resolution glow/bloom rendering, but replace the blur 
     <string name="main_game_mod_size">Mod size</string>
     <string name="main_steam_cloud_status_title">Steam Cloud status</string>
     <string name="main_steam_cloud_not_enabled_or_signed_in">Not enabled or not signed in</string>
-    <string name="main_steam_cloud_disabled_summary">Sign in to Steam and enable cloud saves in Settings to show sync status here.</string>
+    <string name="main_steam_cloud_disabled_summary">Sign in to Steam in Settings to enable cloud saves</string>
     <string name="main_easytier_notification_title">Virtual network</string>
     <string name="main_easytier_notification_connecting">Connecting to EasyTier…</string>
     <string name="main_easytier_notification_connected">EasyTier connected</string>
@@ -3020,11 +3020,11 @@ Patch rule: keep Ori full-resolution glow/bloom rendering, but replace the blur 
     <string name="main_easytier_status_reconnecting">Reconnecting</string>
     <string name="main_easytier_status_disconnecting">Disconnecting</string>
     <string name="main_easytier_status_failed">Connection failed</string>
-    <string name="main_easytier_summary_not_connected">Create or choose a room to play together over a virtual LAN.</string>
+    <string name="main_easytier_summary_not_connected">Play together with other players.</string>
     <string name="main_easytier_summary_permission_required">Grant the system VPN permission to establish the room connection.</string>
     <string name="main_easytier_summary_connecting">Joining the room…</string>
     <string name="main_easytier_summary_session_ready">Room confirmed. Establishing the network connection…</string>
-    <string name="main_easytier_summary_connected">Connected to the room. You can now launch the game and open multiplayer.</string>
+    <string name="main_easytier_summary_connected">Joined the room. Install Steam Mutiple Player - Together in Spire to play online.</string>
     <string name="main_easytier_summary_reconnecting">The connection was interrupted. Reconnecting…</string>
     <string name="main_easytier_summary_disconnecting">Leaving the room…</string>
     <string name="main_easytier_summary_failed">EasyTier failed: %1$s</string>
@@ -3086,7 +3086,7 @@ Patch rule: keep Ori full-resolution glow/bloom rendering, but replace the blur 
     <string name="main_easytier_room_members_title">Room members</string>
     <string name="main_easytier_action_view_member_mods">View player mods</string>
     <string name="main_easytier_member_mods_title">Mods used by %1$s</string>
-    <string name="main_easytier_member_mods_summary">Reported enabled mods. Workshop mods can be viewed or downloaded.</string>
+    <string name="main_easytier_member_mods_summary">During a session, it is best to keep mods identical; otherwise unknown problems are very likely.</string>
     <string name="main_easytier_member_mods_empty">This player has not reported any enabled mods.</string>
     <string name="main_easytier_member_mods_workshop_title">Workshop mods</string>
     <string name="main_easytier_member_mods_local_title">Local mods</string>
@@ -3113,7 +3113,7 @@ Patch rule: keep Ori full-resolution glow/bloom rendering, but replace the blur 
     <string name="main_easytier_tutorial_title">Multiplayer tutorial</string>
     <string name="main_easytier_tutorial_summary">Set up the required mods, virtual room, and in-game multiplayer in three steps.</string>
     <string name="main_easytier_tutorial_step_mods_title">Install the multiplayer mods</string>
-    <string name="main_easytier_tutorial_step_mods_body">Install Together in Spire first. The Chinese patch is optional but recommended. Tap a card to open its Workshop page.</string>
+    <string name="main_easytier_tutorial_step_mods_body">Install Together in Spire. If you are a Chinese player, you can install the Chinese patch.</string>
     <string name="main_easytier_tutorial_together_in_spire_title">Steam Multiplayer - Together in Spire</string>
     <string name="main_easytier_tutorial_chinese_patch_title">Together in Spire Chinese Patch</string>
     <string name="main_easytier_tutorial_workshop_id">Workshop ID: %1$s</string>
@@ -3212,18 +3212,18 @@ Patch rule: keep Ori full-resolution glow/bloom rendering, but replace the blur 
     <string name="settings_floating_tool_button_wheel">Show virtual wheel button</string>
     <string name="steam_cm_login_failed_title">Steam CM login failed</string>
     <string name="steam_cm_login_failed_message">Steam CM login failed. Your Steam account session may have expired. We recommend logging in again.</string>
-    <string name="settings_mts_cache_optimizations_title">模组缓存启动优化</string>
-    <string name="settings_mts_cache_optimizations_entry_desc">分别调整缓存命中时的额外启动优化</string>
-    <string name="settings_mts_cache_optimizations_desc">默认全部关闭，按需开启。仅在命中模组缓存时生效，下次启动游戏应用，无需重建缓存。</string>
-    <string name="settings_mts_cache_optimizations_inactive">模组缓存当前已关闭。可以预先调整以下选项；启用模组缓存并命中缓存后才会生效。</string>
-    <string name="settings_mts_cache_class_scan_title">复用模组类扫描</string>
-    <string name="settings_mts_cache_class_scan_desc">优点：减少 Downfall 重复扫描，加快启动。缺点：额外占用内存。</string>
-    <string name="settings_mts_cache_card_images_title">延迟加载卡牌图片</string>
-    <string name="settings_mts_cache_card_images_desc">优点：减少启动时图片加载。缺点：首次显示卡牌可能卡顿。</string>
-    <string name="settings_mts_cache_card_descriptions_title">延迟解析卡牌描述</string>
-    <string name="settings_mts_cache_card_descriptions_desc">优点：减少启动时描述解析。缺点：部分模组可能不兼容。</string>
-    <string name="settings_mts_cache_card_library_title">延迟初始化卡牌图鉴</string>
-    <string name="settings_mts_cache_card_library_desc">优点：更快进入主菜单。缺点：首次打开图鉴更慢。</string>
-    <string name="settings_mts_cache_splash_title">缩短启动标志动画</string>
-    <string name="settings_mts_cache_splash_desc">优点：缩短启动动画等待。缺点：标志展示时间更短。</string>
+    <string name="settings_mts_cache_optimizations_title">Mod cache startup optimizations</string>
+    <string name="settings_mts_cache_optimizations_entry_desc">Tune the extra startup optimizations applied on a cache hit</string>
+    <string name="settings_mts_cache_optimizations_desc">All off by default; enable as needed. They take effect only on a mod cache hit, so the next launch needs no cache rebuild.</string>
+    <string name="settings_mts_cache_optimizations_inactive">Mod caching is currently disabled. You can adjust the options below in advance; they take effect only after mod caching is enabled and the cache is hit.</string>
+    <string name="settings_mts_cache_class_scan_title">Reuse mod class scanning</string>
+    <string name="settings_mts_cache_class_scan_desc">Pros: reduces repeated Downfall scanning and speeds up startup. Cons: uses extra memory.</string>
+    <string name="settings_mts_cache_card_images_title">Defer card image loading</string>
+    <string name="settings_mts_cache_card_images_desc">Pros: less image loading at startup. Cons: the first time a card is shown may stutter.</string>
+    <string name="settings_mts_cache_card_descriptions_title">Defer card description parsing</string>
+    <string name="settings_mts_cache_card_descriptions_desc">Pros: less description parsing at startup. Cons: some mods may be incompatible.</string>
+    <string name="settings_mts_cache_card_library_title">Defer card library initialization</string>
+    <string name="settings_mts_cache_card_library_desc">Pros: reach the main menu faster. Cons: the library opens more slowly the first time.</string>
+    <string name="settings_mts_cache_splash_title">Shorten the startup logo animation</string>
+    <string name="settings_mts_cache_splash_desc">Pros: shorter wait for the startup animation. Cons: the logo is shown for less time.</string>
 </resources>
