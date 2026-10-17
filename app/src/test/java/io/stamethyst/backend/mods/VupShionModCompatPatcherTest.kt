@@ -26,27 +26,59 @@ class VupShionModCompatPatcherTest {
     fun patchInPlace_appliesAllKnownCompatibilityFixesAndIsIdempotent() {
         val tempDir = Files.createTempDirectory("vupshion-patcher-test")
         val jarFile = tempDir.resolve("VUPShionMod.jar").toFile()
-        createVupShionJar(jarFile)
+        createVupShionJar(jarFile, "VUPShionMod/ui/CharPanel")
 
         val firstPatch = VupShionModCompatPatcher.patchInPlace(jarFile)
         assertTrue(firstPatch.patchedWebButtonConstructor)
         assertTrue(firstPatch.patchedSaveTenkoDataMethod)
         assertTrue(firstPatch.patchedSaveSleyntaPanelMethod)
+        assertTrue(firstPatch.patchedModPanelNullElementGuard)
+        assertTrue(firstPatch.patchedLowVramDetection)
         assertTrue(firstPatch.hasAnyPatch)
         assertFalse(hasWorkshopSubscriptionGuard(jarFile))
         assertTrue(hasUrlAssignment(jarFile))
         assertTrue(hasSaveTenkoPanelGuard(jarFile))
         assertTrue(hasSaveSleyntaPanelGuard(jarFile))
+        assertTrue(hasModPanelNullElementGuard(jarFile))
+        assertTrue(hasLowVramDetectionPatch(jarFile))
 
         val secondPatch = VupShionModCompatPatcher.patchInPlace(jarFile)
         assertFalse(secondPatch.patchedWebButtonConstructor)
         assertFalse(secondPatch.patchedSaveTenkoDataMethod)
         assertFalse(secondPatch.patchedSaveSleyntaPanelMethod)
+        assertFalse(secondPatch.patchedModPanelNullElementGuard)
+        assertFalse(secondPatch.patchedLowVramDetection)
         assertFalse(secondPatch.hasAnyPatch)
         assertFalse(hasWorkshopSubscriptionGuard(jarFile))
         assertTrue(hasUrlAssignment(jarFile))
         assertTrue(hasSaveTenkoPanelGuard(jarFile))
         assertTrue(hasSaveSleyntaPanelGuard(jarFile))
+        assertTrue(hasModPanelNullElementGuard(jarFile))
+        assertTrue(hasLowVramDetectionPatch(jarFile))
+    }
+
+    @Test
+    fun patchInPlace_stillSupportsLegacyPanelPaths() {
+        val tempDir = Files.createTempDirectory("vupshion-patcher-legacy-test")
+        val jarFile = tempDir.resolve("VUPShionMod.jar").toFile()
+        createVupShionJar(jarFile, "VUPShionMod/ui")
+
+        val patchResult = VupShionModCompatPatcher.patchInPlace(jarFile)
+        assertTrue(patchResult.patchedSaveTenkoDataMethod)
+        assertTrue(patchResult.patchedSaveSleyntaPanelMethod)
+        assertTrue(hasSaveTenkoPanelGuard(jarFile))
+        assertTrue(hasSaveSleyntaPanelGuard(jarFile))
+    }
+
+    @Test
+    fun patchInPlace_disablesLowVramDetection() {
+        val tempDir = Files.createTempDirectory("vupshion-patcher-low-vram")
+        val jarFile = tempDir.resolve("VUPShionMod.jar").toFile()
+        createVupShionJar(jarFile, "VUPShionMod/ui/CharPanel")
+
+        val patchResult = VupShionModCompatPatcher.patchInPlace(jarFile)
+        assertTrue(patchResult.patchedLowVramDetection)
+        assertTrue(hasLowVramDetectionPatch(jarFile))
     }
 
     @Test
@@ -63,10 +95,12 @@ class VupShionModCompatPatcherTest {
         assertFalse(patchResult.patchedWebButtonConstructor)
         assertFalse(patchResult.patchedSaveTenkoDataMethod)
         assertFalse(patchResult.patchedSaveSleyntaPanelMethod)
+        assertFalse(patchResult.patchedModPanelNullElementGuard)
+        assertFalse(patchResult.patchedLowVramDetection)
         assertFalse(patchResult.hasAnyPatch)
     }
 
-    private fun createVupShionJar(jarFile: File) {
+    private fun createVupShionJar(jarFile: File, panelRoot: String) {
         ZipOutputStream(jarFile.outputStream()).use { zipOut ->
             zipOut.putNextEntry(ZipEntry("VUPShionMod/ui/WebButton.class"))
             zipOut.write(buildWebButtonClassBytes())
@@ -75,9 +109,89 @@ class VupShionModCompatPatcherTest {
             zipOut.write(buildShionConfigClassBytes())
             zipOut.closeEntry()
             zipOut.putNextEntry(ZipEntry("VUPShionMod/util/SaveHelper.class"))
-            zipOut.write(buildSaveHelperClassBytes())
+            zipOut.write(buildSaveHelperClassBytes(panelRoot))
+            zipOut.closeEntry()
+            zipOut.putNextEntry(ZipEntry("VUPShionMod/util/ShionModPanel.class"))
+            zipOut.write(buildShionModPanelClassBytes())
+            zipOut.closeEntry()
+            zipOut.putNextEntry(ZipEntry("VUPShionMod/util/ShionImageMaster.class"))
+            zipOut.write(buildShionImageMasterClassBytes())
             zipOut.closeEntry()
         }
+    }
+
+    private fun buildShionModPanelClassBytes(): ByteArray {
+        val classWriter = ClassWriter(ClassWriter.COMPUTE_MAXS or ClassWriter.COMPUTE_FRAMES)
+        classWriter.visit(
+            Opcodes.V1_8,
+            Opcodes.ACC_PUBLIC,
+            "VUPShionMod/util/ShionModPanel",
+            null,
+            "basemod/ModPanel",
+            null
+        )
+
+        classWriter.visitMethod(Opcodes.ACC_PUBLIC, "<init>", "()V", null, null).apply {
+            visitCode()
+            visitVarInsn(Opcodes.ALOAD, 0)
+            visitMethodInsn(Opcodes.INVOKESPECIAL, "basemod/ModPanel", "<init>", "()V", false)
+            visitInsn(Opcodes.RETURN)
+            visitMaxs(0, 0)
+            visitEnd()
+        }
+
+        classWriter.visitEnd()
+        return classWriter.toByteArray()
+    }
+
+    private fun buildShionImageMasterClassBytes(): ByteArray {
+        val classWriter = ClassWriter(ClassWriter.COMPUTE_MAXS or ClassWriter.COMPUTE_FRAMES)
+        classWriter.visit(
+            Opcodes.V1_8,
+            Opcodes.ACC_PUBLIC,
+            "VUPShionMod/util/ShionImageMaster",
+            null,
+            "java/lang/Object",
+            null
+        )
+
+        classWriter.visitMethod(
+            Opcodes.ACC_PRIVATE or Opcodes.ACC_STATIC,
+            "isLowVRAM",
+            "(Z)Z",
+            null,
+            null
+        ).apply {
+            visitCode()
+            visitInsn(Opcodes.ICONST_1)
+            visitInsn(Opcodes.IRETURN)
+            visitMaxs(1, 1)
+            visitEnd()
+        }
+
+        classWriter.visitMethod(
+            Opcodes.ACC_PUBLIC or Opcodes.ACC_STATIC,
+            "isLowVRAM",
+            "()Z",
+            null,
+            null
+        ).apply {
+            visitCode()
+            visitInsn(Opcodes.ICONST_0)
+            visitMethodInsn(
+                Opcodes.INVOKESTATIC,
+                "VUPShionMod/util/ShionImageMaster",
+                "isLowVRAM",
+                "(Z)Z",
+                false
+            )
+            visitInsn(Opcodes.IRETURN)
+            visitMaxs(1, 0)
+            visitEnd()
+        }
+
+        classWriter.visitEnd()
+        return classWriter.toByteArray()
     }
 
     private fun buildWebButtonClassBytes(): ByteArray {
@@ -92,11 +206,28 @@ class VupShionModCompatPatcherTest {
         )
         classWriter.visitField(Opcodes.ACC_PUBLIC, "url", "Ljava/lang/String;", null, null).visitEnd()
 
+        visitGuardedWebButtonConstructor(
+            classWriter,
+            "(Ljava/lang/String;FFFFFLcom/badlogic/gdx/graphics/Color;" +
+                "Lcom/badlogic/gdx/graphics/Texture;)V"
+        )
+        visitGuardedWebButtonConstructor(
+            classWriter,
+            "(Ljava/lang/String;FFFFFZLjava/lang/String;)V"
+        )
+
+        classWriter.visitEnd()
+        return classWriter.toByteArray()
+    }
+
+    private fun visitGuardedWebButtonConstructor(
+        classWriter: ClassWriter,
+        descriptor: String
+    ) {
         val constructor = classWriter.visitMethod(
             Opcodes.ACC_PUBLIC,
             "<init>",
-            "(Ljava/lang/String;FFFFFLcom/badlogic/gdx/graphics/Color;" +
-                "Lcom/badlogic/gdx/graphics/Texture;)V",
+            descriptor,
             null,
             null
         )
@@ -146,9 +277,6 @@ class VupShionModCompatPatcherTest {
         constructor.visitInsn(Opcodes.RETURN)
         constructor.visitMaxs(0, 0)
         constructor.visitEnd()
-
-        classWriter.visitEnd()
-        return classWriter.toByteArray()
     }
 
     private fun buildShionConfigClassBytes(): ByteArray {
@@ -173,7 +301,7 @@ class VupShionModCompatPatcherTest {
         return classWriter.toByteArray()
     }
 
-    private fun buildSaveHelperClassBytes(): ByteArray {
+    private fun buildSaveHelperClassBytes(panelRoot: String): ByteArray {
         val classWriter = ClassWriter(ClassWriter.COMPUTE_MAXS or ClassWriter.COMPUTE_FRAMES)
         classWriter.visit(
             Opcodes.V1_8,
@@ -207,16 +335,16 @@ class VupShionModCompatPatcherTest {
             visitVarInsn(Opcodes.ASTORE, 0)
             visitMethodInsn(
                 Opcodes.INVOKESTATIC,
-                "VUPShionMod/ui/TenkoPanel/TenkoPanel",
+                "$panelRoot/TenkoPanel/TenkoPanel",
                 "getPanel",
-                "()LVUPShionMod/ui/TenkoPanel/TenkoPanel;",
+                "()L$panelRoot/TenkoPanel/TenkoPanel;",
                 false
             )
             visitVarInsn(Opcodes.ASTORE, 1)
             visitVarInsn(Opcodes.ALOAD, 1)
             visitFieldInsn(
                 Opcodes.GETFIELD,
-                "VUPShionMod/ui/TenkoPanel/TenkoPanel",
+                "$panelRoot/TenkoPanel/TenkoPanel",
                 "spL",
                 "I"
             )
@@ -246,16 +374,16 @@ class VupShionModCompatPatcherTest {
             visitVarInsn(Opcodes.ASTORE, 0)
             visitMethodInsn(
                 Opcodes.INVOKESTATIC,
-                "VUPShionMod/ui/SleyntaUI/CriticalShotPanel",
+                "$panelRoot/SleyntaUI/CriticalShotPanel",
                 "getPanel",
-                "()LVUPShionMod/ui/SleyntaUI/CriticalShotPanel;",
+                "()L$panelRoot/SleyntaUI/CriticalShotPanel;",
                 false
             )
             visitVarInsn(Opcodes.ASTORE, 1)
             visitVarInsn(Opcodes.ALOAD, 1)
             visitMethodInsn(
                 Opcodes.INVOKEVIRTUAL,
-                "VUPShionMod/ui/SleyntaUI/CriticalShotPanel",
+                "$panelRoot/SleyntaUI/CriticalShotPanel",
                 "getBaseCriticalDamageRate",
                 "()F",
                 false
@@ -263,16 +391,16 @@ class VupShionModCompatPatcherTest {
             visitInsn(Opcodes.POP)
             visitMethodInsn(
                 Opcodes.INVOKESTATIC,
-                "VUPShionMod/ui/SleyntaUI/StarDustPanel",
+                "$panelRoot/SleyntaUI/StarDustPanel",
                 "getPanel",
-                "()LVUPShionMod/ui/SleyntaUI/StarDustPanel;",
+                "()L$panelRoot/SleyntaUI/StarDustPanel;",
                 false
             )
             visitVarInsn(Opcodes.ASTORE, 2)
             visitVarInsn(Opcodes.ALOAD, 2)
             visitMethodInsn(
                 Opcodes.INVOKEVIRTUAL,
-                "VUPShionMod/ui/SleyntaUI/StarDustPanel",
+                "$panelRoot/SleyntaUI/StarDustPanel",
                 "getAmount",
                 "()I",
                 false
@@ -288,28 +416,30 @@ class VupShionModCompatPatcherTest {
     }
 
     private fun hasWorkshopSubscriptionGuard(jarFile: File): Boolean {
-        val constructor = readWebButtonConstructor(jarFile)
-        return meaningfulInstructions(constructor).any { node ->
-            (node is MethodInsnNode &&
-                node.owner == "com/codedisaster/steamworks/SteamApps" &&
-                node.name == "isSubscribedApp" &&
-                node.desc == "(I)Z") ||
-                (node is TypeInsnNode &&
-                    node.opcode == Opcodes.NEW &&
-                    node.desc == "VUPShionMod/msic/NullApiException")
+        return readWebButtonConstructors(jarFile).any { constructor ->
+            meaningfulInstructions(constructor).any { node ->
+                (node is MethodInsnNode &&
+                    node.owner == "com/codedisaster/steamworks/SteamApps" &&
+                    node.name == "isSubscribedApp" &&
+                    node.desc == "(I)Z") ||
+                    (node is TypeInsnNode &&
+                        node.opcode == Opcodes.NEW &&
+                        node.desc == "VUPShionMod/msic/NullApiException")
+            }
         }
     }
 
     private fun hasUrlAssignment(jarFile: File): Boolean {
-        val constructor = readWebButtonConstructor(jarFile)
-        val instructions = meaningfulInstructions(constructor)
-        return instructions.zipWithNext().any { (first, second) ->
-            first.opcode == Opcodes.ALOAD &&
-                second is org.objectweb.asm.tree.FieldInsnNode &&
-                second.opcode == Opcodes.PUTFIELD &&
-                second.owner == "VUPShionMod/ui/WebButton" &&
-                second.name == "url" &&
-                second.desc == "Ljava/lang/String;"
+        return readWebButtonConstructors(jarFile).any { constructor ->
+            val instructions = meaningfulInstructions(constructor)
+            instructions.zipWithNext().any { (first, second) ->
+                first.opcode == Opcodes.ALOAD &&
+                    second is org.objectweb.asm.tree.FieldInsnNode &&
+                    second.opcode == Opcodes.PUTFIELD &&
+                    second.owner == "VUPShionMod/ui/WebButton" &&
+                    second.name == "url" &&
+                    second.desc == "Ljava/lang/String;"
+            }
         }
     }
 
@@ -325,19 +455,59 @@ class VupShionModCompatPatcherTest {
             hasLocalNullGuard(method, 2)
     }
 
-    private fun readWebButtonConstructor(jarFile: File): MethodNode {
+    private fun hasModPanelNullElementGuard(jarFile: File): Boolean {
+        val classBytes = JarFileIoUtils.readJarEntryBytes(
+            jarFile,
+            "VUPShionMod/util/ShionModPanel.class"
+        )
+        assertNotNull(classBytes)
+        val classNode = ClassNode()
+        ClassReader(classBytes!!).accept(classNode, 0)
+        val method = classNode.methods.firstOrNull { candidate ->
+            candidate.name == "addUIElement" &&
+                candidate.desc == "(Lbasemod/IUIElement;)V"
+        } ?: return false
+        val instructions = meaningfulInstructions(method)
+        if (instructions.size < 7) {
+            return false
+        }
+        val superCall = instructions[5] as? MethodInsnNode ?: return false
+        return instructions[0].opcode == Opcodes.ALOAD &&
+            instructions[1].opcode == Opcodes.IFNONNULL &&
+            instructions[2].opcode == Opcodes.RETURN &&
+            instructions[3].opcode == Opcodes.ALOAD &&
+            instructions[4].opcode == Opcodes.ALOAD &&
+            superCall.opcode == Opcodes.INVOKESPECIAL &&
+            superCall.owner == "basemod/ModPanel" &&
+            superCall.name == "addUIElement" &&
+            superCall.desc == "(Lbasemod/IUIElement;)V"
+    }
+
+    private fun hasLowVramDetectionPatch(jarFile: File): Boolean {
+        val classBytes = JarFileIoUtils.readJarEntryBytes(
+            jarFile,
+            "VUPShionMod/util/ShionImageMaster.class"
+        )
+        assertNotNull(classBytes)
+        val classNode = ClassNode()
+        ClassReader(classBytes!!).accept(classNode, 0)
+        val method = classNode.methods.firstOrNull { candidate ->
+            candidate.name == "isLowVRAM" && candidate.desc == "(Z)Z"
+        } ?: return false
+        val instructions = meaningfulInstructions(method)
+        return instructions.size == 2 &&
+            instructions[0].opcode == Opcodes.ICONST_0 &&
+            instructions[1].opcode == Opcodes.IRETURN
+    }
+
+    private fun readWebButtonConstructors(jarFile: File): List<MethodNode> {
         val classBytes = JarFileIoUtils.readJarEntryBytes(jarFile, "VUPShionMod/ui/WebButton.class")
         assertNotNull(classBytes)
         val classNode = ClassNode()
         ClassReader(classBytes!!).accept(classNode, 0)
-        val constructor = classNode.methods.firstOrNull { method ->
-            method.name == "<init>" &&
-                method.desc ==
-                "(Ljava/lang/String;FFFFFLcom/badlogic/gdx/graphics/Color;" +
-                "Lcom/badlogic/gdx/graphics/Texture;)V"
-        }
-        assertNotNull(constructor)
-        return constructor!!
+        val constructors = classNode.methods.filter { method -> method.name == "<init>" }
+        assertTrue(constructors.isNotEmpty())
+        return constructors
     }
 
     private fun readSaveHelperMethod(jarFile: File, methodName: String): MethodNode {

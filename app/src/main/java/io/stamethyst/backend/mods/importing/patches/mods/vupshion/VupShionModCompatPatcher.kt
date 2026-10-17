@@ -19,44 +19,76 @@ import org.objectweb.asm.tree.AbstractInsnNode
 import org.objectweb.asm.tree.ClassNode
 import org.objectweb.asm.tree.FrameNode
 import org.objectweb.asm.tree.InsnList
+import org.objectweb.asm.tree.InsnNode
 import org.objectweb.asm.tree.JumpInsnNode
 import org.objectweb.asm.tree.LabelNode
 import org.objectweb.asm.tree.LineNumberNode
 import org.objectweb.asm.tree.MethodInsnNode
 import org.objectweb.asm.tree.MethodNode
 import org.objectweb.asm.tree.TypeInsnNode
+import org.objectweb.asm.tree.VarInsnNode
 
 internal data class VupShionModCompatPatchResult(
     val patchedWebButtonConstructor: Boolean,
     val patchedSaveTenkoDataMethod: Boolean,
-    val patchedSaveSleyntaPanelMethod: Boolean
+    val patchedSaveSleyntaPanelMethod: Boolean,
+    val patchedModPanelNullElementGuard: Boolean = false,
+    val patchedLowVramDetection: Boolean = false
 ) {
     val hasAnyPatch: Boolean
         get() = patchedWebButtonConstructor ||
             patchedSaveTenkoDataMethod ||
-            patchedSaveSleyntaPanelMethod
+            patchedSaveSleyntaPanelMethod ||
+            patchedModPanelNullElementGuard ||
+            patchedLowVramDetection
 }
 
 internal object VupShionModCompatPatcher {
     private const val TARGET_CLASS_ENTRY = "VUPShionMod/ui/WebButton.class"
+    private const val SHION_MOD_PANEL_CLASS_ENTRY = "VUPShionMod/util/ShionModPanel.class"
+    private const val SHION_IMAGE_MASTER_CLASS_ENTRY = "VUPShionMod/util/ShionImageMaster.class"
     private const val SAVE_HELPER_CLASS_ENTRY = "VUPShionMod/util/SaveHelper.class"
-    private const val TARGET_CONSTRUCTOR_DESC =
-        "(Ljava/lang/String;FFFFFLcom/badlogic/gdx/graphics/Color;" +
-            "Lcom/badlogic/gdx/graphics/Texture;)V"
+    private const val LOW_VRAM_METHOD_NAME = "isLowVRAM"
+    private const val LOW_VRAM_METHOD_DESC = "(Z)Z"
     private const val VOID_METHOD_DESC = "()V"
     private const val STEAM_APPS_INTERNAL_NAME = "com/codedisaster/steamworks/SteamApps"
     private const val NULL_API_EXCEPTION_INTERNAL_NAME = "VUPShionMod/msic/NullApiException"
     private const val SAVE_TENKO_DATA_METHOD_NAME = "saveTenkoData"
     private const val SAVE_SLEYNTA_PANEL_METHOD_NAME = "saveSleyntaPanel"
-    private const val TENKO_PANEL_INTERNAL_NAME = "VUPShionMod/ui/TenkoPanel/TenkoPanel"
-    private const val TENKO_GET_PANEL_METHOD_NAME = "getPanel"
-    private const val TENKO_GET_PANEL_METHOD_DESC = "()LVUPShionMod/ui/TenkoPanel/TenkoPanel;"
-    private const val CRITICAL_SHOT_PANEL_INTERNAL_NAME = "VUPShionMod/ui/SleyntaUI/CriticalShotPanel"
-    private const val CRITICAL_SHOT_GET_PANEL_METHOD_DESC =
-        "()LVUPShionMod/ui/SleyntaUI/CriticalShotPanel;"
-    private const val STAR_DUST_PANEL_INTERNAL_NAME = "VUPShionMod/ui/SleyntaUI/StarDustPanel"
-    private const val STAR_DUST_GET_PANEL_METHOD_DESC =
-        "()LVUPShionMod/ui/SleyntaUI/StarDustPanel;"
+    private const val PANEL_GETTER_METHOD_NAME = "getPanel"
+    private const val MOD_PANEL_INTERNAL_NAME = "basemod/ModPanel"
+    private const val ADD_UI_ELEMENT_METHOD_NAME = "addUIElement"
+    private const val ADD_UI_ELEMENT_METHOD_DESC = "(Lbasemod/IUIElement;)V"
+    private val TENKO_PANEL_GETTERS = listOf(
+        PanelGetter(
+            "VUPShionMod/ui/CharPanel/TenkoPanel/TenkoPanel",
+            "()LVUPShionMod/ui/CharPanel/TenkoPanel/TenkoPanel;"
+        ),
+        PanelGetter(
+            "VUPShionMod/ui/TenkoPanel/TenkoPanel",
+            "()LVUPShionMod/ui/TenkoPanel/TenkoPanel;"
+        )
+    )
+    private val CRITICAL_SHOT_PANEL_GETTERS = listOf(
+        PanelGetter(
+            "VUPShionMod/ui/CharPanel/SleyntaUI/CriticalShotPanel",
+            "()LVUPShionMod/ui/CharPanel/SleyntaUI/CriticalShotPanel;"
+        ),
+        PanelGetter(
+            "VUPShionMod/ui/SleyntaUI/CriticalShotPanel",
+            "()LVUPShionMod/ui/SleyntaUI/CriticalShotPanel;"
+        )
+    )
+    private val STAR_DUST_PANEL_GETTERS = listOf(
+        PanelGetter(
+            "VUPShionMod/ui/CharPanel/SleyntaUI/StarDustPanel",
+            "()LVUPShionMod/ui/CharPanel/SleyntaUI/StarDustPanel;"
+        ),
+        PanelGetter(
+            "VUPShionMod/ui/SleyntaUI/StarDustPanel",
+            "()LVUPShionMod/ui/SleyntaUI/StarDustPanel;"
+        )
+    )
     private const val ABSTRACT_DUNGEON_INTERNAL_NAME =
         "com/megacrit/cardcrawl/dungeons/AbstractDungeon"
     private const val OVERLAY_MENU_INTERNAL_NAME = "com/megacrit/cardcrawl/core/OverlayMenu"
@@ -64,6 +96,11 @@ internal object VupShionModCompatPatcher {
     private const val OVERLAY_MENU_FIELD_DESC = "Lcom/megacrit/cardcrawl/core/OverlayMenu;"
     private const val ENERGY_PANEL_FIELD_NAME = "energyPanel"
     private const val ENERGY_PANEL_FIELD_DESC = "Lcom/megacrit/cardcrawl/ui/panels/EnergyPanel;"
+
+    private data class PanelGetter(
+        val owner: String,
+        val desc: String
+    )
 
     @Throws(IOException::class)
     fun patchInPlace(modJar: File): VupShionModCompatPatchResult {
@@ -75,6 +112,8 @@ internal object VupShionModCompatPatcher {
         var patchedWebButtonConstructor = false
         var patchedSaveTenkoDataMethod = false
         var patchedSaveSleyntaPanelMethod = false
+        var patchedModPanelNullElementGuard = false
+        var patchedLowVramDetection = false
         ZipFile(modJar).use { zipFile ->
             val hierarchyResolver = ClassHierarchyResolver(zipFile)
             patchClassEntry(zipFile, TARGET_CLASS_ENTRY) { classBytes ->
@@ -91,6 +130,18 @@ internal object VupShionModCompatPatcher {
                 patchedSaveTenkoDataMethod = patchResult.first
                 patchedSaveSleyntaPanelMethod = patchResult.second
             }
+            patchClassEntry(zipFile, SHION_MOD_PANEL_CLASS_ENTRY) { classBytes ->
+                patchShionModPanelClassBytes(classBytes, hierarchyResolver)
+            }?.let { (entryName, patchedBytes) ->
+                replacements[entryName] = patchedBytes
+                patchedModPanelNullElementGuard = true
+            }
+            patchClassEntry(zipFile, SHION_IMAGE_MASTER_CLASS_ENTRY) { classBytes ->
+                patchShionImageMasterClassBytes(classBytes)
+            }?.let { (entryName, patchedBytes) ->
+                replacements[entryName] = patchedBytes
+                patchedLowVramDetection = true
+            }
         }
 
         if (replacements.isNotEmpty()) {
@@ -100,7 +151,9 @@ internal object VupShionModCompatPatcher {
         return VupShionModCompatPatchResult(
             patchedWebButtonConstructor = patchedWebButtonConstructor,
             patchedSaveTenkoDataMethod = patchedSaveTenkoDataMethod,
-            patchedSaveSleyntaPanelMethod = patchedSaveSleyntaPanelMethod
+            patchedSaveSleyntaPanelMethod = patchedSaveSleyntaPanelMethod,
+            patchedModPanelNullElementGuard = patchedModPanelNullElementGuard,
+            patchedLowVramDetection = patchedLowVramDetection
         )
     }
 
@@ -125,14 +178,124 @@ internal object VupShionModCompatPatcher {
         hierarchyResolver: ClassHierarchyResolver
     ): ByteArray? {
         val classNode = readClassNode(classBytes)
-        val constructor = classNode.methods.firstOrNull { method ->
-            method.name == "<init>" && method.desc == TARGET_CONSTRUCTOR_DESC
-        } ?: return null
-
-        if (!removeWorkshopSubscriptionGate(constructor)) {
+        var modified = false
+        for (method in classNode.methods) {
+            if (method.name == "<init>" && removeWorkshopSubscriptionGate(method)) {
+                modified = true
+            }
+        }
+        if (!modified) {
             return null
         }
         return writeClass(classNode, hierarchyResolver)
+    }
+
+    /**
+     * The mod skips creating the special-UI toggle when it detects a low-VRAM GPU but still
+     * registers the field unconditionally. On Android the detection reports low VRAM, so a null
+     * element reaches ModPanel.addUIElement and the next element sort throws an NPE. Override
+     * addUIElement on the mod's panel and ignore null elements.
+     */
+    @Throws(IOException::class)
+    private fun patchShionModPanelClassBytes(
+        classBytes: ByteArray,
+        hierarchyResolver: ClassHierarchyResolver
+    ): ByteArray? {
+        val classNode = readClassNode(classBytes)
+        if (classNode.superName != MOD_PANEL_INTERNAL_NAME) {
+            return null
+        }
+        val alreadyOverridden = classNode.methods.any { method ->
+            method.name == ADD_UI_ELEMENT_METHOD_NAME &&
+                method.desc == ADD_UI_ELEMENT_METHOD_DESC
+        }
+        if (alreadyOverridden) {
+            return null
+        }
+
+        val continueLabel = LabelNode()
+        val method = MethodNode(
+            Opcodes.ACC_PUBLIC,
+            ADD_UI_ELEMENT_METHOD_NAME,
+            ADD_UI_ELEMENT_METHOD_DESC,
+            null,
+            null
+        )
+        method.instructions.apply {
+            add(VarInsnNode(Opcodes.ALOAD, 1))
+            add(JumpInsnNode(Opcodes.IFNONNULL, continueLabel))
+            add(InsnNode(Opcodes.RETURN))
+            add(continueLabel)
+            add(VarInsnNode(Opcodes.ALOAD, 0))
+            add(VarInsnNode(Opcodes.ALOAD, 1))
+            add(
+                MethodInsnNode(
+                    Opcodes.INVOKESPECIAL,
+                    MOD_PANEL_INTERNAL_NAME,
+                    ADD_UI_ELEMENT_METHOD_NAME,
+                    ADD_UI_ELEMENT_METHOD_DESC,
+                    false
+                )
+            )
+            add(InsnNode(Opcodes.RETURN))
+        }
+        method.maxStack = 2
+        method.maxLocals = 2
+        classNode.methods.add(method)
+        return writeClass(classNode, hierarchyResolver)
+    }
+
+    /**
+     * Android exposes no usable VRAM information to oshi, so the mod's 4GB check always reports
+     * low VRAM and forces Low Spec Mode. Replace the private detection method with a constant false,
+     * which keeps the mod's Low Spec Mode toggle available and leaves the choice to the player.
+     * Frames of the other methods are preserved because this class is written with COMPUTE_MAXS.
+     */
+    @Throws(IOException::class)
+    private fun patchShionImageMasterClassBytes(
+        classBytes: ByteArray
+    ): ByteArray? {
+        val classNode = readClassNode(classBytes)
+        val methodIndex = classNode.methods.indexOfFirst { method ->
+            method.name == LOW_VRAM_METHOD_NAME &&
+                method.desc == LOW_VRAM_METHOD_DESC
+        }
+        if (methodIndex < 0) {
+            return null
+        }
+        val existing = classNode.methods[methodIndex]
+        if (isAlwaysFalse(existing)) {
+            return null
+        }
+
+        val replacement = MethodNode(
+            existing.access,
+            LOW_VRAM_METHOD_NAME,
+            LOW_VRAM_METHOD_DESC,
+            null,
+            null
+        )
+        replacement.instructions.apply {
+            add(InsnNode(Opcodes.ICONST_0))
+            add(InsnNode(Opcodes.IRETURN))
+        }
+        replacement.maxStack = 1
+        replacement.maxLocals = 1
+        classNode.methods[methodIndex] = replacement
+        return writeClassPreservingFrames(classNode)
+    }
+
+    private fun isAlwaysFalse(method: MethodNode): Boolean {
+        val instructions = meaningfulInstructions(method)
+        return instructions.size == 2 &&
+            instructions[0].opcode == Opcodes.ICONST_0 &&
+            instructions[1].opcode == Opcodes.IRETURN
+    }
+
+    private fun writeClassPreservingFrames(classNode: ClassNode): ByteArray {
+        val classWriter = ClassWriter(ClassWriter.COMPUTE_MAXS)
+        classNode.accept(classWriter)
+        return classWriter.toByteArray()
     }
 
     @Throws(IOException::class)
@@ -152,25 +315,19 @@ internal object VupShionModCompatPatcher {
         if (saveTenkoDataMethod != null) {
             modified = addPanelAvailabilityGuards(
                 method = saveTenkoDataMethod,
-                getterOwner = TENKO_PANEL_INTERNAL_NAME,
-                getterName = TENKO_GET_PANEL_METHOD_NAME,
-                getterDesc = TENKO_GET_PANEL_METHOD_DESC,
+                panelGetters = TENKO_PANEL_GETTERS,
                 guardedLocalIndexes = intArrayOf(1)
             ) || modified
         }
         if (saveSleyntaPanelMethod != null) {
             modified = addPanelAvailabilityGuards(
                 method = saveSleyntaPanelMethod,
-                getterOwner = CRITICAL_SHOT_PANEL_INTERNAL_NAME,
-                getterName = TENKO_GET_PANEL_METHOD_NAME,
-                getterDesc = CRITICAL_SHOT_GET_PANEL_METHOD_DESC,
+                panelGetters = CRITICAL_SHOT_PANEL_GETTERS,
                 guardedLocalIndexes = intArrayOf(1)
             ) || modified
             modified = addPanelAvailabilityGuards(
                 method = saveSleyntaPanelMethod,
-                getterOwner = STAR_DUST_PANEL_INTERNAL_NAME,
-                getterName = TENKO_GET_PANEL_METHOD_NAME,
-                getterDesc = STAR_DUST_GET_PANEL_METHOD_DESC,
+                panelGetters = STAR_DUST_PANEL_GETTERS,
                 guardedLocalIndexes = intArrayOf(2)
             ) || modified
         }
@@ -206,9 +363,7 @@ internal object VupShionModCompatPatcher {
 
     private fun addPanelAvailabilityGuards(
         method: MethodNode,
-        getterOwner: String,
-        getterName: String,
-        getterDesc: String,
+        panelGetters: List<PanelGetter>,
         guardedLocalIndexes: IntArray
     ): Boolean {
         var modified = false
@@ -218,10 +373,10 @@ internal object VupShionModCompatPatcher {
         }
 
         if (guardedLocalIndexes.isNotEmpty()) {
-            val calls = findPanelGetterStores(method, getterOwner, getterName, getterDesc)
-            if (calls.size != guardedLocalIndexes.size) {
-                return modified
-            }
+            val calls = panelGetters
+                .map { getter -> findPanelGetterStores(method, getter) }
+                .firstOrNull { stores -> stores.size == guardedLocalIndexes.size }
+                ?: return modified
             for (index in calls.indices) {
                 val storeNode = calls[index]
                 val localIndex = guardedLocalIndexes[index]
@@ -277,21 +432,19 @@ internal object VupShionModCompatPatcher {
 
     private fun findPanelGetterStores(
         method: MethodNode,
-        getterOwner: String,
-        getterName: String,
-        getterDesc: String
-    ): List<org.objectweb.asm.tree.VarInsnNode> {
-        val result = ArrayList<org.objectweb.asm.tree.VarInsnNode>()
+        getter: PanelGetter
+    ): List<VarInsnNode> {
+        val result = ArrayList<VarInsnNode>()
         var current: AbstractInsnNode? = method.instructions.first
         while (current != null) {
             val call = current as? MethodInsnNode
             if (call != null &&
                 call.opcode == Opcodes.INVOKESTATIC &&
-                call.owner == getterOwner &&
-                call.name == getterName &&
-                call.desc == getterDesc
+                call.owner == getter.owner &&
+                call.name == PANEL_GETTER_METHOD_NAME &&
+                call.desc == getter.desc
             ) {
-                val next = nextMeaningful(call) as? org.objectweb.asm.tree.VarInsnNode
+                val next = nextMeaningful(call) as? VarInsnNode
                 if (next != null && next.opcode == Opcodes.ASTORE) {
                     result += next
                 }
