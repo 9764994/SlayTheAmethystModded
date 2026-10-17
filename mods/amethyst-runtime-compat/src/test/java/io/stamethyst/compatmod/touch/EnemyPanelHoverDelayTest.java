@@ -4,82 +4,131 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 public class EnemyPanelHoverDelayTest {
-    private static final long TWO_SECONDS = 2_000_000_000L;
+    private static final long SECOND = 1_000_000_000L;
 
     @Test
-    public void draggingAnyCardHidesPanelForTwoSeconds() {
+    public void ordinaryHoverWithoutDragIsUnaffected() {
         EnemyPanelHoverDelay delay = new EnemyPanelHoverDelay();
-        assertTrue("pointer enters enemy during drag", delay.update(true, true, 10, 10, 0));
-        assertTrue("movement during the window stays hidden",
-            delay.update(true, true, 20, 10, 1_999_000_000L));
-        assertTrue("stationary pointer after the window stays hidden",
-            delay.update(true, true, 20, 10, 3_000_000_000L));
-        assertFalse("movement after the window reveals the panel",
-            delay.update(true, true, 21, 10, 3_100_000_000L));
-        assertFalse(delay.update(true, true, 21, 10, 4_000_000_000L));
+        delay.updatePointer(0, 0, 0);
+        delay.recordDrag(false, SECOND);
+        delay.updatePointer(10, 10, SECOND);
+        assertFalse(delay.isSuppressed());
     }
 
     @Test
-    public void nonTargetingCardDragAlsoStartsTheWindow() {
+    public void anyCardDragSuppressesEvenWithoutEnemyHover() {
         EnemyPanelHoverDelay delay = new EnemyPanelHoverDelay();
-        // The player is dragging a skill; the hovered monster must not show its buff panel.
-        assertTrue(delay.update(true, true, 0, 0, 0));
-        assertTrue(delay.update(true, true, 100, 100, 1_000_000_000L));
-        assertFalse(delay.update(true, true, 101, 100, TWO_SECONDS + 1));
+        delay.recordDrag(true, 0);
+        delay.updatePointer(10, 10, 0);
+        // A self/non-target card is released outside all enemy hitboxes.
+        delay.recordDrag(true, SECOND);
+        delay.recordDrag(false, SECOND);
+        delay.updatePointer(20, 20, SECOND);
+        // Pointer enters an enemy after the card has already been released.
+        delay.updatePointer(500, 500, SECOND + SECOND / 10);
+        assertTrue(delay.isSuppressed());
     }
 
     @Test
-    public void dragStartingOverHoveredEnemyStartsWindow() {
+    public void releaseFrameFirstHoverCannotLoseDragHistory() {
         EnemyPanelHoverDelay delay = new EnemyPanelHoverDelay();
-        assertFalse("plain hover is unaffected", delay.update(true, false, 0, 0, 0));
-        assertFalse(delay.update(true, false, 5, 0, 100));
-        assertTrue("starting a drag over the enemy hides the panel",
-            delay.update(true, true, 5, 0, 200));
-        assertTrue(delay.update(true, true, 6, 0, TWO_SECONDS));
-        assertFalse(delay.update(true, true, 7, 0, TWO_SECONDS + 201));
+        delay.recordDrag(true, 0);
+        delay.updatePointer(10, 10, 0);
+        // MonsterGroup now refreshes the hitbox to hovered=true. The input prefix
+        // captures dragging=true before the input handler clears it on release.
+        delay.recordDrag(true, SECOND / 10);
+        delay.recordDrag(false, SECOND / 10);
+        delay.updatePointer(500, 500, SECOND / 10);
+        assertTrue(delay.isSuppressed());
+        delay.updatePointer(500, 500, 10 * SECOND);
+        assertTrue("stationary pointer must stay hidden past vanilla's delay", delay.isSuppressed());
+        delay.updatePointer(501, 500, 11 * SECOND);
+        assertFalse(delay.isSuppressed());
     }
 
     @Test
-    public void releaseWithStationaryPointerStaysHiddenUntilMovement() {
+    public void continuingDragRefreshesTwoSecondWindow() {
         EnemyPanelHoverDelay delay = new EnemyPanelHoverDelay();
-        assertTrue(delay.update(true, true, 10, 10, 0));
-        assertTrue("release at the same point keeps the panel hidden",
-            delay.update(true, false, 10, 10, 3_000_000_000L));
-        assertTrue(delay.update(true, false, 10, 10, 9_000_000_000L));
-        assertFalse(delay.update(true, false, 10, 11, 9_100_000_000L));
+        delay.recordDrag(true, 0);
+        delay.updatePointer(0, 0, 0);
+        delay.recordDrag(true, 10 * SECOND);
+        delay.updatePointer(100, 100, 10 * SECOND);
+        assertTrue(delay.isSuppressed());
+        delay.recordDrag(false, 10 * SECOND);
+        delay.updatePointer(101, 100, 12 * SECOND - 1);
+        assertTrue(delay.isSuppressed());
+        delay.updatePointer(102, 100, 12 * SECOND);
+        assertFalse(delay.isSuppressed());
     }
 
     @Test
-    public void leavingAndReenteringResetsTheWindow() {
+    public void movementBeforeDeadlineDoesNotRevealStationaryPanelLater() {
         EnemyPanelHoverDelay delay = new EnemyPanelHoverDelay();
-        assertTrue(delay.update(true, true, 10, 10, 0));
-        assertFalse(delay.update(false, true, 50, 50, 3_000_000_000L));
-        assertTrue("re-entering during the same drag starts a fresh window",
-            delay.update(true, true, 50, 50, 3_100_000_000L));
-        assertTrue(delay.update(true, true, 51, 50, 4_000_000_000L));
-        assertFalse(delay.update(true, true, 52, 50, 5_100_000_000L));
+        delay.recordDrag(true, 0);
+        delay.updatePointer(10, 10, 0);
+        delay.updatePointer(20, 10, 2 * SECOND - 1);
+        assertTrue(delay.isSuppressed());
+        delay.updatePointer(20, 10, 60 * SECOND);
+        assertTrue(delay.isSuppressed());
+        delay.updatePointer(21, 10, 61 * SECOND);
+        assertFalse(delay.isSuppressed());
     }
 
     @Test
-    public void secondDragRestartsTheWindow() {
+    public void crossingEnemiesDoesNotRestartWindow() {
         EnemyPanelHoverDelay delay = new EnemyPanelHoverDelay();
-        assertTrue(delay.update(true, true, 0, 0, 0));
-        assertFalse(delay.update(true, true, 1, 0, TWO_SECONDS + 1));
-        assertFalse("release keeps the current state", delay.update(true, false, 1, 0, 9_000_000_000L));
-        assertTrue("a new drag re-hides the panel",
-            delay.update(true, true, 1, 0, 10_000_000_000L));
-        assertTrue(delay.update(true, true, 2, 0, 11_000_000_000L));
-        assertFalse(delay.update(true, true, 3, 0, 12_000_000_001L));
+        delay.recordDrag(true, 0);
+        delay.updatePointer(0, 0, 0);
+        delay.updatePointer(100, 100, SECOND);
+        delay.updatePointer(500, 500, 2 * SECOND);
+        assertFalse(delay.isSuppressed());
+        delay.updatePointer(100, 100, 3 * SECOND);
+        assertFalse(delay.isSuppressed());
     }
 
     @Test
-    public void monstersHaveIndependentWindows() {
-        EnemyPanelHoverDelay first = new EnemyPanelHoverDelay();
-        EnemyPanelHoverDelay second = new EnemyPanelHoverDelay();
-        assertTrue(first.update(true, true, 0, 0, 0));
-        assertFalse(first.update(false, true, 50, 50, 3_000_000_000L));
-        assertTrue(second.update(true, true, 50, 50, 3_000_000_000L));
-        assertTrue(second.update(true, true, 51, 50, 4_000_000_000L));
-        assertFalse(second.update(true, true, 52, 50, 5_100_000_000L));
+    public void movementOutsideEnemyAlsoReleasesExpiredSuppression() {
+        EnemyPanelHoverDelay delay = new EnemyPanelHoverDelay();
+        delay.recordDrag(true, 0);
+        delay.updatePointer(0, 0, 0);
+        delay.updatePointer(10, 0, 3 * SECOND);
+        assertFalse(delay.isSuppressed());
+        // Entering an enemy later does not re-hide the panel.
+        delay.updatePointer(500, 500, 4 * SECOND);
+        assertFalse(delay.isSuppressed());
+    }
+
+    @Test
+    public void nextDragRestartsWindowEvenAtSamePointerPosition() {
+        EnemyPanelHoverDelay delay = new EnemyPanelHoverDelay();
+        delay.recordDrag(true, 0);
+        delay.updatePointer(0, 0, 0);
+        delay.updatePointer(1, 0, 3 * SECOND);
+        assertFalse(delay.isSuppressed());
+        delay.recordDrag(true, 4 * SECOND);
+        delay.updatePointer(1, 0, 4 * SECOND);
+        assertTrue(delay.isSuppressed());
+        delay.updatePointer(2, 0, 5 * SECOND);
+        assertTrue(delay.isSuppressed());
+        delay.updatePointer(3, 0, 6 * SECOND);
+        assertFalse(delay.isSuppressed());
+    }
+
+    @Test
+    public void repeatedRenderReadsCannotConsumeMovementOrRevealPanel() {
+        EnemyPanelHoverDelay delay = new EnemyPanelHoverDelay();
+        delay.recordDrag(true, 0);
+        delay.updatePointer(0, 0, 0);
+        for (int i = 0; i < 10; i++) assertTrue(delay.isSuppressed());
+        delay.updatePointer(1, 0, 3 * SECOND);
+        for (int i = 0; i < 10; i++) assertFalse(delay.isSuppressed());
+    }
+
+    @Test
+    public void newPlayerHasNoPreviousPlayersDragState() {
+        EnemyPanelHoverDelay oldPlayer = new EnemyPanelHoverDelay();
+        oldPlayer.recordDrag(true, 0);
+        assertTrue(oldPlayer.isSuppressed());
+        assertFalse(new EnemyPanelHoverDelay().isSuppressed());
     }
 }

@@ -10,6 +10,7 @@ import com.megacrit.cardcrawl.characters.AbstractPlayer;
 import com.megacrit.cardcrawl.dungeons.AbstractDungeon;
 import com.megacrit.cardcrawl.helpers.input.InputHelper;
 import com.megacrit.cardcrawl.monsters.AbstractMonster;
+import com.megacrit.cardcrawl.rooms.AbstractRoom;
 
 public final class EnemyPanelWhileTargetingPatches {
     private static final boolean ENABLED =
@@ -19,36 +20,65 @@ public final class EnemyPanelWhileTargetingPatches {
     private EnemyPanelWhileTargetingPatches() {
     }
 
-    @SpirePatch2(clz = AbstractMonster.class, method = SpirePatch.CLASS)
-    public static class HoverState {
+    @SpirePatch2(clz = AbstractPlayer.class, method = SpirePatch.CLASS)
+    public static class DragState {
         public static SpireField<EnemyPanelHoverDelay> delay = new SpireField<>(EnemyPanelHoverDelay::new);
     }
 
-    @SpirePatch2(clz = AbstractMonster.class, method = "update")
-    public static class Update {
+    @SpirePatch2(clz = AbstractPlayer.class, method = "updateInput")
+    public static class PlayerInput {
+        @SpirePrefixPatch
+        public static void Prefix(AbstractPlayer __instance) {
+            recordDrag(__instance);
+        }
+
         @SpirePostfixPatch
-        public static void Postfix(AbstractMonster __instance) {
-            if (ENABLED) update(__instance);
+        public static void Postfix(AbstractPlayer __instance) {
+            recordDrag(__instance);
         }
     }
 
-    private static boolean update(AbstractMonster monster) {
-        AbstractPlayer player = AbstractDungeon.player;
-        // Any card drag (or an active target arrow) starts the suppression window, regardless of
-        // the dragged card's target type.
-        boolean dragActive = player != null && (player.isDraggingCard || player.inSingleTargetMode);
-        boolean hovered = !monster.isDeadOrEscaped() && (monster.hb.hovered
-            || monster.healthHb.hovered || monster.intentHb.hovered);
-        return HoverState.delay.get(monster).update(hovered, dragActive,
-            InputHelper.mX, InputHelper.mY, System.nanoTime());
+    // Capture the pre-cleanup state even when a card is played/released inside another patch.
+    @SpirePatch2(clz = AbstractPlayer.class, method = "releaseCard")
+    public static class ReleaseCard {
+        @SpirePrefixPatch
+        public static void Prefix(AbstractPlayer __instance) {
+            recordDrag(__instance);
+        }
+    }
+
+    @SpirePatch2(clz = AbstractPlayer.class, method = "playCard")
+    public static class PlayCard {
+        @SpirePrefixPatch
+        public static void Prefix(AbstractPlayer __instance) {
+            recordDrag(__instance);
+        }
+    }
+
+    @SpirePatch2(clz = AbstractRoom.class, method = "update")
+    public static class RoomUpdate {
+        @SpirePostfixPatch
+        public static void Postfix() {
+            AbstractPlayer player = AbstractDungeon.player;
+            if (!ENABLED || player == null) return;
+            recordDrag(player);
+            DragState.delay.get(player).updatePointer(InputHelper.mX, InputHelper.mY, System.nanoTime());
+        }
+    }
+
+    private static void recordDrag(AbstractPlayer player) {
+        if (!ENABLED) return;
+        DragState.delay.get(player).recordDrag(player.isDraggingCard || player.inSingleTargetMode,
+            System.nanoTime());
     }
 
     @SpirePatch2(clz = AbstractMonster.class, method = "renderTip")
     public static class RenderTip {
         @SpirePrefixPatch
-        public static SpireReturn<Void> Prefix(AbstractMonster __instance) {
-            // Also sample here: player drag state may change after monster.update.
-            return ENABLED && update(__instance) ? SpireReturn.Return() : SpireReturn.Continue();
+        public static SpireReturn<Void> Prefix() {
+            AbstractPlayer player = AbstractDungeon.player;
+            return ENABLED && player != null && DragState.delay.get(player).isSuppressed()
+                ? SpireReturn.Return() : SpireReturn.Continue();
         }
     }
 }

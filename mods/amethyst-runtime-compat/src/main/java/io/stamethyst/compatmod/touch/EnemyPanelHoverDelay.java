@@ -1,50 +1,40 @@
 package io.stamethyst.compatmod.touch;
 
 /**
- * Per-monster hover suppression window used while the player drags a card.
- *
- * <p>The window starts the moment a monster becomes hovered during a drag, or when a drag starts
- * over an already hovered monster, for any card regardless of its target type. It lasts at least
- * {@link #DELAY_NANOS}: moving the pointer during that period does not reveal the panel, and after
- * the period the pointer must move again. A pointer that stays still keeps the panel hidden even
- * after the card is released.
+ * Player-wide tooltip suppression, independent of monster hover and game initialization.
+ * Drag observations and pointer sampling are separate so input handlers cannot lose a release
+ * frame, and rendering never consumes a pointer movement a second time.
  */
 public final class EnemyPanelHoverDelay {
     static final long DELAY_NANOS = 2_000_000_000L;
 
-    private boolean wasHovered;
-    private boolean dragWasActive;
     private boolean suppressed;
-    private long startedAt;
+    private boolean pointerKnown;
+    private long lastDragAt;
     private int lastX;
     private int lastY;
 
-    /**
-     * @return {@code true} when the monster tooltip panel must stay hidden this frame.
-     */
-    public boolean update(boolean hovered, boolean dragActive, int x, int y, long now) {
-        if (!hovered) {
-            wasHovered = false;
-            dragWasActive = dragActive;
-            suppressed = false;
-            return false;
-        }
-        boolean newHover = !wasHovered;
-        boolean newDrag = dragActive && !dragWasActive;
-        wasHovered = true;
-        dragWasActive = dragActive;
-        if (dragActive && (newHover || newDrag)) {
+    /** Observe both before and after player input, including the frame that releases a card. */
+    public void recordDrag(boolean dragActive, long now) {
+        if (dragActive) {
             suppressed = true;
-            startedAt = now;
-            lastX = x;
-            lastY = y;
-            return true;
+            lastDragAt = now;
         }
-        if (suppressed && now - startedAt >= DELAY_NANOS && (x != lastX || y != lastY)) {
+    }
+
+    /** Sample once after room/input updates, even if no monster is currently hovered. */
+    public void updatePointer(int x, int y, long now) {
+        boolean moved = pointerKnown && (x != lastX || y != lastY);
+        if (suppressed && now - lastDragAt >= DELAY_NANOS && moved) {
             suppressed = false;
         }
+        pointerKnown = true;
         lastX = x;
         lastY = y;
+    }
+
+    /** Read-only: every monster rendered this frame sees the same suppression decision. */
+    public boolean isSuppressed() {
         return suppressed;
     }
 }
