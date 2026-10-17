@@ -126,7 +126,7 @@ scripts\prepare-release.bat
 What the script does:
 - Read `application.version.name` from `gradle.properties`.
 - Ask whether to release `v<version>`.
-- Run a local preflight before tagging: `:app:lintDebug` and `:app:assembleRelease`.
+- Run a local preflight before tagging: `:app:lintDebug`, `:app:assembleRelease`, and `:app:assembleFullRelease`.
 - Create `docs/release/note/v<version>.md` with `新特性` and `修复` sections if it does not already exist.
 - Wait for you to finish editing the release note.
 - Commit only the release note and `gradle.properties` when it has local changes.
@@ -140,6 +140,9 @@ Notes:
 - On Windows Command Prompt or PowerShell, you can use `scripts\prepare-release.bat`.
 - If you explicitly want to skip the preflight, use `scripts\prepare-release.bat -SkipLocalCheck` or `bash scripts/prepare-release.sh --skip-local-check`.
 - The canonical Python entrypoint is `scripts/build/main.py`; shell and batch scripts are compatibility wrappers.
+- To build locally without committing, tagging, pushing, or waiting for release-note input, run `python3 -u scripts/build/main.py release` (slim) or `release-full` (full).
+- Release builds reuse the native CMake cache, including between slim/full preflight builds. If troubleshooting a stale native build, pass `--clean-native-cache` to `release` or `release-full` to explicitly rebuild native code from scratch.
+- The build script prints each Gradle phase's elapsed time and a status line every 60 seconds while it runs. A status line alone does not indicate a hang: compilation, R8, network requests, and another Gradle build holding locks can all take time. Gradle HTML timing reports are saved under `build/reports/profile/`.
 
 Tag-based release (publishes GitHub Release automatically):
 
@@ -177,6 +180,10 @@ python .\scripts\build\main.py fast-release
 This builds `:app:assembleFastSlimRelease` with release signing inputs, but skips release preflight lint, lint vital, R8 minification, resource shrinking, and release native cache cleanup. Use it for local smoke testing only; official releases should still use `python scripts/build/main.py release` or the tag-based workflow.
 
 ## Troubleshooting
+
+`compileDebugKotlin ... Could not delete ... app/build/tmp/kotlin-classes/debug`
+- Do not run IDE builds, tests, or another release build concurrently in the same checkout. Separate Gradle processes can race while cleaning/writing Kotlin outputs; the release preflight also compiles debug sources for lint.
+- Wait for the other build to finish, then rerun the release script. Use separate checkouts/worktrees for parallel builds rather than deleting outputs while another compiler is running.
 
 `AAPT: resource mipmap/ic_launcher_amethyst not found`
 - Cause: icon files referenced by manifest are missing in committed `mipmap-*` resources.

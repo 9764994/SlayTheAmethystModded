@@ -14,6 +14,7 @@ def add_release_args(parser: argparse.ArgumentParser, *, fast_variant: bool = Fa
         parser.add_argument("--run-lint-check", "-RunLintCheck", action="store_true")
     else:
         parser.add_argument("--skip-lint-check", "-SkipLintCheck", action="store_true")
+        parser.add_argument("--clean-native-cache", action="store_true", help="Rebuild release native code from scratch (normally reuse the CMake cache).")
 
 
 def create_parser() -> argparse.ArgumentParser:
@@ -56,7 +57,7 @@ def main(argv: list[str] | None = None) -> int:
                 store_file=args.store_file,
                 key_alias=args.key_alias,
                 skip_lint_check=args.skip_lint_check,
-                skip_native_cache_cleanup=False,
+                skip_native_cache_cleanup=not args.clean_native_cache,
                 gradle_tasks=[":app:assembleRelease"],
                 output_dirs=["app/build/outputs/apk/release"],
                 display_name="Slim release build",
@@ -67,7 +68,7 @@ def main(argv: list[str] | None = None) -> int:
                 store_file=args.store_file,
                 key_alias=args.key_alias,
                 skip_lint_check=args.skip_lint_check,
-                skip_native_cache_cleanup=False,
+                skip_native_cache_cleanup=not args.clean_native_cache,
                 gradle_tasks=[":app:assembleFullRelease"],
                 output_dirs=["app/build/outputs/apk/fullRelease"],
                 display_name="Full release build",

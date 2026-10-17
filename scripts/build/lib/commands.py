@@ -4,6 +4,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import time
 import zipfile
 from datetime import date
 from pathlib import Path
@@ -137,9 +138,26 @@ def gradle_command(wrapper: Path, args: list[str]) -> list[str]:
 
 
 def run_gradle(tasks: list[str], *, env: dict[str, str] | None = None, failure_message: str = "Gradle task failed.") -> None:
-    args = [*tasks, "--stacktrace", "--console=plain"]
-    completed = run(gradle_command(resolve_gradle_wrapper(), args), cwd=repo_root(), env=env, check=False)
-    if completed.returncode != 0:
+    args = [*tasks, "--stacktrace", "--console=plain", "--profile"]
+    label = " ".join(tasks)
+    started = time.monotonic()
+    print(f"[build] Starting {label}", flush=True)
+    with subprocess.Popen(
+        gradle_command(resolve_gradle_wrapper(), args), cwd=str(repo_root()), env=env
+    ) as process:
+        while True:
+            try:
+                returncode = process.wait(timeout=60)
+                break
+            except subprocess.TimeoutExpired:
+                print(
+                    f"[build] Still running {label} ({time.monotonic() - started:.0f}s elapsed). "
+                    "Gradle may be compiling, downloading dependencies, or waiting for another build; "
+                    "see build/reports/profile for task timings after completion.",
+                    flush=True,
+                )
+    print(f"[build] Finished {label} in {time.monotonic() - started:.1f}s (exit {returncode})", flush=True)
+    if returncode != 0:
         raise RuntimeError(failure_message)
 
 
@@ -316,7 +334,7 @@ def local_release_check(store_file: str, key_alias: str) -> None:
             store_file=store_file,
             key_alias=key_alias,
             skip_lint_check=False,
-            skip_native_cache_cleanup=False,
+            skip_native_cache_cleanup=True,
             gradle_tasks=[":app:assembleRelease"],
             output_dirs=["app/build/outputs/apk/release"],
             display_name="Slim release build",
@@ -326,7 +344,7 @@ def local_release_check(store_file: str, key_alias: str) -> None:
             store_file=store_file,
             key_alias=key_alias,
             skip_lint_check=True,
-            skip_native_cache_cleanup=False,
+            skip_native_cache_cleanup=True,
             gradle_tasks=[":app:assembleFullRelease"],
             output_dirs=["app/build/outputs/apk/fullRelease"],
             display_name="Full release build",
