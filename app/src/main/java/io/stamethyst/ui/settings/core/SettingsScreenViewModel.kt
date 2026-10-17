@@ -484,7 +484,8 @@ class SettingsScreenViewModel : ViewModel() {
         val cardPlayOptimizationMode: CardPlayOptimizationMode =
             GameplaySettingsService.DEFAULT_CARD_PLAY_OPTIMIZATION_MODE,
         val touchIndicatorEnabled: Boolean = GameplaySettingsService.DEFAULT_TOUCH_INDICATOR_ENABLED,
-        val hideEnemyPanelWhileTargeting: Boolean = false,
+        val hideEnemyPanelWhileTargeting: Boolean =
+            GameplaySettingsService.DEFAULT_HIDE_ENEMY_PANEL_WHILE_TARGETING,
         val gameplayFontScale: Float = GameplaySettingsService.DEFAULT_FONT_SCALE,
         val gameplayLargerUiEnabled: Boolean = GameplaySettingsService.DEFAULT_LARGER_UI_ENABLED,
         val statusText: String = "",

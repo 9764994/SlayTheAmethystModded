@@ -66,6 +66,8 @@ object LauncherConfig {
     private const val PREF_KEY_TOUCHSCREEN_ENABLED = "touchscreen_enabled"
     private const val PREF_KEY_CARD_PLAY_OPTIMIZATION_MODE = "card_play_optimization_mode"
     private const val PREF_KEY_TOUCH_INDICATOR_ENABLED = "touch_indicator_enabled"
+    private const val PREF_KEY_HIDE_ENEMY_PANEL_WHILE_TARGETING =
+        "hide_enemy_panel_while_targeting"
     private const val PREF_KEY_RENDER_SURFACE_BACKEND = "render_surface_backend"
     private const val PREF_KEY_RENDERER_SELECTION_MODE = "renderer_selection_mode"
     private const val PREF_KEY_MANUAL_RENDERER_BACKEND = "manual_renderer_backend"
@@ -451,6 +453,7 @@ object LauncherConfig {
 
     const val DEFAULT_TOUCHSCREEN_ENABLED = true
     const val DEFAULT_TOUCH_INDICATOR_ENABLED = true
+    const val DEFAULT_HIDE_ENEMY_PANEL_WHILE_TARGETING = true
     private const val DEFAULT_BIGGER_TEXT_ENABLED = false
     const val DEFAULT_GAMEPLAY_FONT_SCALE = 1.00f
     const val MIN_GAMEPLAY_FONT_SCALE = 1.00f
@@ -2766,12 +2769,15 @@ object LauncherConfig {
     }
 
     fun readHideEnemyPanelWhileTargeting(context: Context): Boolean {
-        return prefs(context).getBoolean("hide_enemy_panel_while_targeting", false)
+        return prefs(context).getBoolean(
+            PREF_KEY_HIDE_ENEMY_PANEL_WHILE_TARGETING,
+            DEFAULT_HIDE_ENEMY_PANEL_WHILE_TARGETING
+        )
     }
 
     fun setHideEnemyPanelWhileTargeting(context: Context, enabled: Boolean) {
         prefs(context).edit {
-            putBoolean("hide_enemy_panel_while_targeting", enabled)
+            putBoolean(PREF_KEY_HIDE_ENEMY_PANEL_WHILE_TARGETING, enabled)
         }
     }
 

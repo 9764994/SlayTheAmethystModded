@@ -123,7 +123,8 @@ internal object SettingsRepository {
         val touchscreenEnabled: Boolean,
         val cardPlayOptimizationMode: CardPlayOptimizationMode,
         val touchIndicatorEnabled: Boolean,
-        val hideEnemyPanelWhileTargeting: Boolean = false,
+        val hideEnemyPanelWhileTargeting: Boolean =
+            GameplaySettingsService.DEFAULT_HIDE_ENEMY_PANEL_WHILE_TARGETING,
         val fontScale: Float,
         val largerUiEnabled: Boolean
     )

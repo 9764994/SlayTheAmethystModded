@@ -19,6 +19,8 @@ import java.io.IOException
 internal object GameplaySettingsService {
     const val DEFAULT_TOUCHSCREEN_ENABLED = LauncherConfig.DEFAULT_TOUCHSCREEN_ENABLED
     const val DEFAULT_TOUCH_INDICATOR_ENABLED = LauncherConfig.DEFAULT_TOUCH_INDICATOR_ENABLED
+    const val DEFAULT_HIDE_ENEMY_PANEL_WHILE_TARGETING =
+        LauncherConfig.DEFAULT_HIDE_ENEMY_PANEL_WHILE_TARGETING
     val DEFAULT_TOUCHSCREEN_INPUT_MODE: TouchscreenInputMode =
         LauncherConfig.DEFAULT_TOUCHSCREEN_INPUT_MODE
     val DEFAULT_CARD_PLAY_OPTIMIZATION_MODE: CardPlayOptimizationMode =
