@@ -22,16 +22,21 @@ The root package only contains the ModTheSpire initializer. Runtime fixes should
 
 0. `EnemyPanelWhileTargetingPatches` / `EnemyPanelHoverDelay`
 Implements the opt-in launcher Game setting “出牌指定敌人时，不显示敌人面板”, forwarded as
-`amethyst.runtime_compat.hide_enemy_panel_while_targeting` (default false). Large buff/intent
-tooltip panels otherwise obscure the fight when dragging a targeted card over an enemy.
+`amethyst.runtime_compat.hide_enemy_panel_while_targeting` (default true in both the launcher
+setting and the runtime property). Large buff/intent
+tooltip panels otherwise obscure the fight when dragging a card over an enemy, most visibly with
+ENEMY/SELF_AND_ENEMY cards but also with any other card dragged across the enemy row.
 The patch skips only `AbstractMonster.renderTip`, leaving hitboxes, targeting, intent icons,
 card validation and card play unchanged. Each enemy hover starts a two-second minimum
-suppression window while an ENEMY/SELF_AND_ENEMY card is dragged or in single-target mode.
+suppression window whenever any card is dragged (or a target arrow is being aimed): the window
+opens when the pointer enters the enemy or when the drag starts over an already hovered enemy,
+regardless of the dragged card's target type.
 Movement during those two seconds does not reveal the panel; after the window the pointer
 must move again. A stationary pointer remains suppressed even after release. Leaving the
-enemy resets its window; a new targeted card starts a fresh window. Normal non-card hover
-is unaffected. `EnemyPanelHoverDelayTest` covers timing, stationary release, re-entry,
-different cards and independent monster state. Settings take effect on the next game launch.
+enemy resets its window; starting a new drag over the same enemy starts a fresh window.
+Normal non-drag hover is unaffected. `EnemyPanelHoverDelayTest` covers timing, stationary
+release, re-entry, restarted drags, and independent monster state. Settings take effect on the
+next game launch.
 The bundled version is `1.0.41` so installed copies are refreshed by component validation.
 
 0.1. `JavaSoundBootstrap`, `AndroidMixerProvider`, `AndroidMixer`, `AndroidClip`, and `PcmWavWriter`

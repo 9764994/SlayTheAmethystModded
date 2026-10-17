@@ -1,34 +1,46 @@
 package io.stamethyst.compatmod.touch;
 
-/** Per-monster hover state, independent of game/graphics initialization. */
+/**
+ * Per-monster hover suppression window used while the player drags a card.
+ *
+ * <p>The window starts the moment a monster becomes hovered during a drag, or when a drag starts
+ * over an already hovered monster, for any card regardless of its target type. It lasts at least
+ * {@link #DELAY_NANOS}: moving the pointer during that period does not reveal the panel, and after
+ * the period the pointer must move again. A pointer that stays still keeps the panel hidden even
+ * after the card is released.
+ */
 public final class EnemyPanelHoverDelay {
     static final long DELAY_NANOS = 2_000_000_000L;
-    private boolean tracking;
+
+    private boolean wasHovered;
+    private boolean dragWasActive;
     private boolean suppressed;
-    private Object card;
     private long startedAt;
     private int lastX;
     private int lastY;
 
-    public boolean update(boolean hovered, Object targetingCard, int x, int y, long now) {
+    /**
+     * @return {@code true} when the monster tooltip panel must stay hidden this frame.
+     */
+    public boolean update(boolean hovered, boolean dragActive, int x, int y, long now) {
         if (!hovered) {
-            tracking = false;
+            wasHovered = false;
+            dragWasActive = dragActive;
             suppressed = false;
-            card = null;
             return false;
         }
-        if (targetingCard != null && (!tracking || card != targetingCard)) {
-            tracking = true;
+        boolean newHover = !wasHovered;
+        boolean newDrag = dragActive && !dragWasActive;
+        wasHovered = true;
+        dragWasActive = dragActive;
+        if (dragActive && (newHover || newDrag)) {
             suppressed = true;
-            card = targetingCard;
             startedAt = now;
             lastX = x;
             lastY = y;
             return true;
         }
-        // Releasing the card must not reveal a panel under a stationary pointer.
-        if (tracking && suppressed && now - startedAt >= DELAY_NANOS
-            && (x != lastX || y != lastY)) {
+        if (suppressed && now - startedAt >= DELAY_NANOS && (x != lastX || y != lastY)) {
             suppressed = false;
         }
         lastX = x;

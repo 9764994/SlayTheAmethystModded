@@ -6,15 +6,15 @@ import com.evacipated.cardcrawl.modthespire.lib.SpirePatch2;
 import com.evacipated.cardcrawl.modthespire.lib.SpirePostfixPatch;
 import com.evacipated.cardcrawl.modthespire.lib.SpirePrefixPatch;
 import com.evacipated.cardcrawl.modthespire.lib.SpireReturn;
-import com.megacrit.cardcrawl.cards.AbstractCard;
 import com.megacrit.cardcrawl.characters.AbstractPlayer;
 import com.megacrit.cardcrawl.dungeons.AbstractDungeon;
 import com.megacrit.cardcrawl.helpers.input.InputHelper;
 import com.megacrit.cardcrawl.monsters.AbstractMonster;
 
 public final class EnemyPanelWhileTargetingPatches {
-    private static final boolean ENABLED = Boolean.getBoolean(
-        "amethyst.runtime_compat.hide_enemy_panel_while_targeting");
+    private static final boolean ENABLED =
+        !"false".equalsIgnoreCase(System.getProperty(
+            "amethyst.runtime_compat.hide_enemy_panel_while_targeting", "true"));
 
     private EnemyPanelWhileTargetingPatches() {
     }
@@ -34,22 +34,20 @@ public final class EnemyPanelWhileTargetingPatches {
 
     private static boolean update(AbstractMonster monster) {
         AbstractPlayer player = AbstractDungeon.player;
-        AbstractCard card = player == null ? null : player.hoveredCard;
-        boolean targeting = card != null && (player.isDraggingCard || player.inSingleTargetMode)
-            && (card.target == AbstractCard.CardTarget.ENEMY
-                || card.target == AbstractCard.CardTarget.SELF_AND_ENEMY);
+        // Any card drag (or an active target arrow) starts the suppression window, regardless of
+        // the dragged card's target type.
+        boolean dragActive = player != null && (player.isDraggingCard || player.inSingleTargetMode);
         boolean hovered = !monster.isDeadOrEscaped() && (monster.hb.hovered
             || monster.healthHb.hovered || monster.intentHb.hovered);
-        boolean suppressed = HoverState.delay.get(monster).update(hovered,
-            targeting ? card : null, InputHelper.mX, InputHelper.mY, System.nanoTime());
-        return suppressed;
+        return HoverState.delay.get(monster).update(hovered, dragActive,
+            InputHelper.mX, InputHelper.mY, System.nanoTime());
     }
 
     @SpirePatch2(clz = AbstractMonster.class, method = "renderTip")
     public static class RenderTip {
         @SpirePrefixPatch
         public static SpireReturn<Void> Prefix(AbstractMonster __instance) {
-            // Also sample here: player targeting state may change after monster.update.
+            // Also sample here: player drag state may change after monster.update.
             return ENABLED && update(__instance) ? SpireReturn.Return() : SpireReturn.Continue();
         }
     }
