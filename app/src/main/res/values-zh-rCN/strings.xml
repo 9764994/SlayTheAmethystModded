@@ -507,6 +507,10 @@
     <string name="main_launch_unread_suggestions_cancel">取消启动</string>
     <string name="main_launch_unread_suggestions_continue">仍要启动</string>
     <string name="main_launch_unread_suggestions_illustration_description">示意图：点开模组卡片上的圆圈感叹号，查看该模组的注意事项。</string>
+    <string name="main_launch_import_patch_update_title">模组补丁可更新</string>
+    <string name="main_launch_import_patch_update_message">检测到以下启动器模组补丁存在更新，建议在模组卡片上点击修补按钮完成修补。</string>
+    <string name="main_launch_import_patch_update_continue">仍然启动</string>
+    <string name="main_launch_import_patch_update_dont_show_again">不再显示</string>
     <string name="main_launch_enabled_mod_size_warning_title">警告</string>
     <string name="main_launch_enabled_mod_size_warning_message">当前启用模组总大小约为 %1$s，大型模组过多时，很有可能给设备带来过大压力，造成崩溃卡顿等问题。
 

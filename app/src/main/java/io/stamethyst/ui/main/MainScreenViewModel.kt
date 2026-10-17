@@ -198,6 +198,13 @@ class MainScreenViewModel : ViewModel() {
         val forceRuntimeCrash: Boolean,
     )
 
+    data class PendingImportPatchUpdateLaunchWarning(
+        val mods: List<ModItemUi>,
+        val launchMode: String,
+        val forceJvmCrash: Boolean,
+        val forceRuntimeCrash: Boolean,
+    )
+
     data object PendingMtsComponentUpdate
 
     data class FailedModNameMigrationUi(
@@ -378,6 +385,7 @@ class MainScreenViewModel : ViewModel() {
         val pendingEasyTierKickDialog: EasyTierKickDialogUi? = null,
         val pendingWorkshopJarSelection: PendingWorkshopJarSelection? = null,
         val pendingEnabledModSizeLaunchWarning: PendingEnabledModSizeLaunchWarning? = null,
+        val pendingImportPatchUpdateLaunchWarning: PendingImportPatchUpdateLaunchWarning? = null,
         val pendingMtsComponentUpdate: PendingMtsComponentUpdate? = null,
         val rendererSelectionMode: RendererSelectionMode = RendererSelectionMode.AUTO,
         val effectiveRendererBackend: RendererBackend = RendererBackend.OPENGL_ES_MOBILEGLUES,
@@ -3075,11 +3083,23 @@ class MainScreenViewModel : ViewModel() {
         if (!tryBeginLaunchRequest()) {
             return
         }
-        val unreadSuggestionModNames = collectEnabledUnreadSuggestionModDisplayNames(
-            mods = modManagementController.currentOptionalMods(),
-            suggestions = currentModSuggestions,
-            readSuggestionKeys = currentReadModSuggestionKeys
+        val importPatchUpdateMods = collectImportPatchUpdateMods(
+            modManagementController.currentOptionalMods()
         )
+        if (importPatchUpdateMods.isNotEmpty() &&
+            ImportPatchUpdateIgnoreStore.hasUnignoredUpdates(host, importPatchUpdateMods)
+        ) {
+            uiState = uiState.copy(
+                pendingImportPatchUpdateLaunchWarning = PendingImportPatchUpdateLaunchWarning(
+                    mods = importPatchUpdateMods,
+                    launchMode = StsLaunchSpec.LAUNCH_MODE_MTS,
+                    forceJvmCrash = false,
+                    forceRuntimeCrash = false,
+                )
+            )
+            return
+        }
+        val unreadSuggestionModNames = collectPendingLaunchUnreadSuggestionModNames()
         if (unreadSuggestionModNames.isNotEmpty()) {
             pendingLaunchUnreadSuggestionModNames = unreadSuggestionModNames
             uiState = uiState.copy(pendingLaunchUnreadSuggestionModNames = unreadSuggestionModNames)
@@ -3112,6 +3132,53 @@ class MainScreenViewModel : ViewModel() {
     fun cancelLaunchWithUnreadSuggestions() {
         clearPendingLaunchUnreadSuggestionDialog()
         clearLaunchInFlightState()
+    }
+
+    fun confirmImportPatchUpdateWarning(host: Activity) {
+        val pending = uiState.pendingImportPatchUpdateLaunchWarning ?: return
+        if (!launchInFlight && !tryBeginLaunchRequest()) {
+            return
+        }
+        uiState = uiState.copy(pendingImportPatchUpdateLaunchWarning = null)
+        val unreadSuggestionModNames = collectPendingLaunchUnreadSuggestionModNames()
+        if (unreadSuggestionModNames.isNotEmpty()) {
+            pendingLaunchUnreadSuggestionModNames = unreadSuggestionModNames
+            uiState = uiState.copy(pendingLaunchUnreadSuggestionModNames = unreadSuggestionModNames)
+            return
+        }
+        dismissCrashRecovery()
+        beginLaunchFlow(
+            host = host,
+            launchMode = pending.launchMode,
+            forceJvmCrash = pending.forceJvmCrash,
+            forceRuntimeCrash = pending.forceRuntimeCrash,
+        )
+    }
+
+    fun dismissImportPatchUpdateWarning(host: Activity, dontShowAgain: Boolean) {
+        val pending = uiState.pendingImportPatchUpdateLaunchWarning ?: return
+        if (dontShowAgain) {
+            ImportPatchUpdateIgnoreStore.rememberIgnoredUpdates(host, pending.mods)
+        }
+        uiState = uiState.copy(pendingImportPatchUpdateLaunchWarning = null)
+        clearLaunchInFlightState()
+    }
+
+    private fun collectImportPatchUpdateMods(optionalMods: List<ModItemUi>): List<ModItemUi> {
+        return optionalMods.filter { mod ->
+            mod.enabled &&
+                mod.installed &&
+                !mod.required &&
+                mod.needsImportPatchUpdate
+        }
+    }
+
+    private fun collectPendingLaunchUnreadSuggestionModNames(): List<String> {
+        return collectEnabledUnreadSuggestionModDisplayNames(
+            mods = modManagementController.currentOptionalMods(),
+            suggestions = currentModSuggestions,
+            readSuggestionKeys = currentReadModSuggestionKeys,
+        )
     }
 
     fun confirmLaunchWithEnabledModSizeWarning(host: Activity, dontRemindAgain: Boolean) {

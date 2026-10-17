@@ -38,6 +38,9 @@ data class ModItemUi(
 ) {
     val needsImportPatchUpdate: Boolean
         get() = hasOutdatedImportPatches || importPatches.any { it.appliedVersion == null || it.isOutdated }
+
+    val updatableImportPatches: List<ModImportPatchUi>
+        get() = importPatches.filter { it.appliedVersion == null || it.isOutdated }
 }
 
 @Stable

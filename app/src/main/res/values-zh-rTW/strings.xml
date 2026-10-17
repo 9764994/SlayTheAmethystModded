@@ -530,6 +530,10 @@
     <string name="main_launch_unread_suggestions_cancel">取消啟動</string>
     <string name="main_launch_unread_suggestions_continue">仍要啟動</string>
     <string name="main_launch_unread_suggestions_illustration_description">示意圖：點開模組卡片上的圓圈感嘆號，查看該模組的注意事項。</string>
+    <string name="main_launch_import_patch_update_title">模組補丁可更新</string>
+    <string name="main_launch_import_patch_update_message">偵測到以下啟動器模組補丁存在更新，建議在模組卡片上點擊修補按鈕完成修補。</string>
+    <string name="main_launch_import_patch_update_continue">仍然啟動</string>
+    <string name="main_launch_import_patch_update_dont_show_again">不再顯示</string>
     <string name="main_launch_enabled_mod_size_warning_title">警告</string>
     <string name="main_launch_enabled_mod_size_warning_message">目前啟用模組總大小約為 %1$s，大型模組過多時，很有可能給裝置帶來過大壓力，造成崩潰卡頓等問題。
 

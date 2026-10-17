@@ -4671,6 +4671,23 @@ internal fun LauncherMainRoute(
         }
     }
 
+    uiState.pendingImportPatchUpdateLaunchWarning?.let { warning ->
+        val activity = hostActivity
+        if (activity != null) {
+            ImportPatchUpdateLaunchWarningDialog(
+                mods = warning.mods,
+                showModFileName = uiState.showModFileName,
+                onDismissRequest = {
+                    viewModel.dismissImportPatchUpdateWarning(activity, dontShowAgain = false)
+                },
+                onConfirm = { viewModel.confirmImportPatchUpdateWarning(activity) },
+                onDontShowAgain = {
+                    viewModel.dismissImportPatchUpdateWarning(activity, dontShowAgain = true)
+                },
+            )
+        }
+    }
+
     uiState.pendingWorkshopJarSelection?.let { selection ->
         val activity = hostActivity
         if (activity != null && selection.candidates.isNotEmpty()) {
