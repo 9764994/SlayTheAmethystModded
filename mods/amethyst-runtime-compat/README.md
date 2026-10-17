@@ -21,23 +21,31 @@ The root package only contains the ModTheSpire initializer. Runtime fixes should
 ## Included fixes
 
 0. `EnemyPanelWhileTargetingPatches` / `EnemyPanelHoverDelay`
-Implements the opt-in launcher Game setting “出牌指定敌人时，不显示敌人面板”, forwarded as
+Implements the configurable launcher Game setting “出牌指定敌人时，不显示敌人面板”, forwarded as
 `amethyst.runtime_compat.hide_enemy_panel_while_targeting` (default true in both the launcher
 setting and the runtime property). Large buff/intent
 tooltip panels otherwise obscure the fight when dragging a card over an enemy, most visibly with
 ENEMY/SELF_AND_ENEMY cards but also with any other card dragged across the enemy row.
 The patch skips only `AbstractMonster.renderTip`, leaving hitboxes, targeting, intent icons,
-card validation and card play unchanged. Each enemy hover starts a two-second minimum
-suppression window whenever any card is dragged (or a target arrow is being aimed): the window
-opens when the pointer enters the enemy or when the drag starts over an already hovered enemy,
-regardless of the dragged card's target type.
-Movement during those two seconds does not reveal the panel; after the window the pointer
-must move again. A stationary pointer remains suppressed even after release. Leaving the
-enemy resets its window; starting a new drag over the same enemy starts a fresh window.
-Normal non-drag hover is unaffected. `EnemyPanelHoverDelayTest` covers timing, stationary
-release, re-entry, restarted drags, and independent monster state. Settings take effect on the
-next game launch.
-The bundled version is `1.0.41` so installed copies are refreshed by component validation.
+card validation and card play unchanged. A player-owned `EnemyPanelHoverDelay` records any
+card drag or active target arrow, regardless of card target type or enemy hover. While dragging,
+and for two seconds after the last drag observation, enemy tooltip panels remain hidden.
+Movement within the window cannot reveal them; once the window expires, a subsequent pointer
+movement permits tooltips again. A stationary pointer stays suppressed even after release.
+Entering/leaving enemies does not reset the shared deadline; new players receive fresh state.
+
+Release-frame fix: `EnemyPanelWhileTargetingPatches.PlayerInput` samples before and after
+`AbstractPlayer.updateInput`; `ReleaseCard` and `PlayCard` also capture pre-cleanup state.
+This fixes fast releases that first enter an enemy on the release frame, where the old
+`AbstractMonster.update` hook saw stale hitboxes and render-time sampling saw an already
+cleared drag flag. It also fixes non-target cards released outside enemies followed by an
+enemy hover within two seconds. `RoomUpdate` samples pointer movement after room/input updates
+even without an enemy hover; `RenderTip` only reads the decision, so rendering multiple enemies
+cannot consume movement or change the deadline. Normal hover without a recent drag is unaffected.
+`EnemyPanelHoverDelayTest` covers these release/post-drag regressions, deadline boundaries,
+continued drags, stationary release, cross-enemy movement, repeated render reads and player reset.
+Settings take effect on the next game launch. The bundled version is `1.0.42` so installed
+copies are refreshed by component validation.
 
 0.1. `JavaSoundBootstrap`, `AndroidMixerProvider`, `AndroidMixer`, `AndroidClip`, and `PcmWavWriter`
 Provides the Java Sound `Clip` API expected by desktop-oriented mods, backed by the game's
