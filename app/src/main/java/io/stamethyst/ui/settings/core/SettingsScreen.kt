@@ -185,6 +185,9 @@ fun LauncherSettingsGameScreen(
         onGameplayLargerUiChanged = { enabled ->
             viewModel.onGameplayLargerUiChanged(activity, enabled)
         },
+        onHideEnemyPanelWhileTargetingChanged = { enabled ->
+            viewModel.onHideEnemyPanelWhileTargetingChanged(activity, enabled)
+        },
         onKeepScreenOnTimeoutSelected = { timeoutMinutes ->
             viewModel.onKeepScreenOnTimeoutSelected(activity, timeoutMinutes)
         },

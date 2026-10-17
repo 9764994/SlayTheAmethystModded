@@ -484,6 +484,7 @@ class SettingsScreenViewModel : ViewModel() {
         val cardPlayOptimizationMode: CardPlayOptimizationMode =
             GameplaySettingsService.DEFAULT_CARD_PLAY_OPTIMIZATION_MODE,
         val touchIndicatorEnabled: Boolean = GameplaySettingsService.DEFAULT_TOUCH_INDICATOR_ENABLED,
+        val hideEnemyPanelWhileTargeting: Boolean = false,
         val gameplayFontScale: Float = GameplaySettingsService.DEFAULT_FONT_SCALE,
         val gameplayLargerUiEnabled: Boolean = GameplaySettingsService.DEFAULT_LARGER_UI_ENABLED,
         val statusText: String = "",
@@ -4133,6 +4134,13 @@ class SettingsScreenViewModel : ViewModel() {
         refreshStatus(host)
     }
 
+    fun onHideEnemyPanelWhileTargetingChanged(host: Activity, enabled: Boolean) {
+        if (uiState.busy) return
+        GameplaySettingsService.setHideEnemyPanelWhileTargeting(host, enabled)
+        uiState = uiState.copy(hideEnemyPanelWhileTargeting = enabled)
+        refreshStatus(host)
+    }
+
     fun onGameplayFontScaleChanged(host: Activity, value: Float) {
         if (uiState.busy) {
             return
@@ -4705,6 +4713,7 @@ class SettingsScreenViewModel : ViewModel() {
             ),
             cardPlayOptimizationMode = input.cardPlayOptimizationMode,
             touchIndicatorEnabled = input.touchIndicatorEnabled,
+            hideEnemyPanelWhileTargeting = input.hideEnemyPanelWhileTargeting,
             gameplayFontScale = input.fontScale,
             gameplayLargerUiEnabled = input.largerUiEnabled,
             workshopMaxConcurrentDownloads = market.workshopMaxConcurrentDownloads,

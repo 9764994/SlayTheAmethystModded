@@ -464,6 +464,7 @@ internal fun LauncherSettingsGameScreenContent(
     onScreenBottomCropChanged: (Boolean) -> Unit = {},
     onGameplayFontScaleChanged: (Float) -> Unit = {},
     onGameplayLargerUiChanged: (Boolean) -> Unit = {},
+    onHideEnemyPanelWhileTargetingChanged: (Boolean) -> Unit = {},
     onKeepScreenOnTimeoutSelected: (Int) -> Unit = {},
 ) {
     SettingsRouteScaffold(
@@ -512,6 +513,7 @@ internal fun LauncherSettingsGameScreenContent(
                         onScreenBottomCropChanged = onScreenBottomCropChanged,
                         onGameplayFontScaleChanged = onGameplayFontScaleChanged,
                         onGameplayLargerUiChanged = onGameplayLargerUiChanged,
+                        onHideEnemyPanelWhileTargetingChanged = onHideEnemyPanelWhileTargetingChanged,
                         onKeepScreenOnTimeoutSelected = onKeepScreenOnTimeoutSelected,
                     ),
                 )

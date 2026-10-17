@@ -2765,6 +2765,16 @@ object LauncherConfig {
         )
     }
 
+    fun readHideEnemyPanelWhileTargeting(context: Context): Boolean {
+        return prefs(context).getBoolean("hide_enemy_panel_while_targeting", false)
+    }
+
+    fun setHideEnemyPanelWhileTargeting(context: Context, enabled: Boolean) {
+        prefs(context).edit {
+            putBoolean("hide_enemy_panel_while_targeting", enabled)
+        }
+    }
+
     fun setTouchIndicatorEnabled(context: Context, enabled: Boolean) {
         prefs(context).edit {
             putBoolean(PREF_KEY_TOUCH_INDICATOR_ENABLED, enabled)

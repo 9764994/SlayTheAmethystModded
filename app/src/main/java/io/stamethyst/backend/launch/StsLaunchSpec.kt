@@ -346,6 +346,10 @@ object StsLaunchSpec {
                 if (cardPlayOptimizationMode.optimizationEnabled) "true" else "false"
         )
         args.add(
+            "-Damethyst.runtime_compat.hide_enemy_panel_while_targeting=" +
+                LauncherConfig.readHideEnemyPanelWhileTargeting(context)
+        )
+        args.add(
             "-Damethyst.runtime_compat.touchscreen_idle_card_hover_cleanup=" +
                 if (cardPlayOptimizationMode.optimizationEnabled) "true" else "false"
         )

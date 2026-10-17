@@ -20,6 +20,20 @@ The root package only contains the ModTheSpire initializer. Runtime fixes should
 
 ## Included fixes
 
+0. `EnemyPanelWhileTargetingPatches` / `EnemyPanelHoverDelay`
+Implements the opt-in launcher Game setting “出牌指定敌人时，不显示敌人面板”, forwarded as
+`amethyst.runtime_compat.hide_enemy_panel_while_targeting` (default false). Large buff/intent
+tooltip panels otherwise obscure the fight when dragging a targeted card over an enemy.
+The patch skips only `AbstractMonster.renderTip`, leaving hitboxes, targeting, intent icons,
+card validation and card play unchanged. Each enemy hover starts a two-second minimum
+suppression window while an ENEMY/SELF_AND_ENEMY card is dragged or in single-target mode.
+Movement during those two seconds does not reveal the panel; after the window the pointer
+must move again. A stationary pointer remains suppressed even after release. Leaving the
+enemy resets its window; a new targeted card starts a fresh window. Normal non-card hover
+is unaffected. `EnemyPanelHoverDelayTest` covers timing, stationary release, re-entry,
+different cards and independent monster state. Settings take effect on the next game launch.
+The bundled version is `1.0.41` so installed copies are refreshed by component validation.
+
 0.1. `JavaSoundBootstrap`, `AndroidMixerProvider`, `AndroidMixer`, `AndroidClip`, and `PcmWavWriter`
 Provides the Java Sound `Clip` API expected by desktop-oriented mods, backed by the game's
 LibGDX audio device and registered through the standard `MixerProvider` SPI. This addresses the

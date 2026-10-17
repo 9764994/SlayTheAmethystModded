@@ -320,6 +320,12 @@ private fun renderingSection(
                 zh,
             ),
             boolField(
+                "hideEnemyPanelWhileTargeting",
+                R.string.settings_hide_enemy_panel_while_targeting,
+                LauncherConfig.readHideEnemyPanelWhileTargeting(context),
+                zh,
+            ),
+            boolField(
                 "avoidDisplayCutout",
                 R.string.settings_display_cutout_enabled,
                 LauncherConfig.isDisplayCutoutAvoidanceEnabled(context),

@@ -68,6 +68,7 @@ internal data class PerformanceSettingsActions(
 
 
 internal data class GameplayDisplaySettingsActions(
+    val onHideEnemyPanelWhileTargetingChanged: (Boolean) -> Unit = {},
     val onDisplayCutoutAvoidanceChanged: (Boolean) -> Unit,
     val onScreenBottomCropChanged: (Boolean) -> Unit,
     val onGameplayFontScaleChanged: (Float) -> Unit,
@@ -358,6 +359,16 @@ internal fun SettingsGameplayDisplaySection(
     var gameplayFontScaleSliderValue by remember(uiState.gameplayFontScale) {
         mutableFloatStateOf(uiState.gameplayFontScale)
     }
+
+    SettingsSwitchItem(
+        SettingsSwitchSpec(
+            checked = uiState.hideEnemyPanelWhileTargeting,
+            enabled = !uiState.busy,
+            title = stringResource(R.string.settings_hide_enemy_panel_while_targeting),
+            description = stringResource(R.string.settings_hide_enemy_panel_while_targeting_desc),
+            onCheckedChange = actions.onHideEnemyPanelWhileTargetingChanged,
+        )
+    )
 
     SettingsSwitchItem(
         SettingsSwitchSpec(

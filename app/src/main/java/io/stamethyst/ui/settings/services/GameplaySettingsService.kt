@@ -45,6 +45,13 @@ internal object GameplaySettingsService {
         return LauncherConfig.readTouchIndicatorEnabled(context)
     }
 
+    fun readHideEnemyPanelWhileTargeting(context: Context): Boolean =
+        LauncherConfig.readHideEnemyPanelWhileTargeting(context)
+
+    fun setHideEnemyPanelWhileTargeting(context: Context, enabled: Boolean) {
+        LauncherConfig.setHideEnemyPanelWhileTargeting(context, enabled)
+    }
+
     fun setTouchIndicatorEnabled(context: Context, enabled: Boolean) {
         LauncherConfig.setTouchIndicatorEnabled(context, enabled)
     }
@@ -90,5 +97,4 @@ internal object GameplaySettingsService {
         LauncherConfig.saveGameplayLargerUiEnabled(context, enabled)
     }
 }
-
 

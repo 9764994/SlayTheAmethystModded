@@ -175,6 +175,11 @@ internal val SettingsSearchEntries: List<SettingsSearchEntry> = listOf(
         route = Route.SettingsGame,
     ),
     entry(
+        titleResId = R.string.settings_hide_enemy_panel_while_targeting,
+        categoryTitleResId = R.string.settings_category_game_title,
+        route = Route.SettingsGame,
+    ),
+    entry(
         titleResId = R.string.settings_gameplay_font_scale_title,
         categoryTitleResId = R.string.settings_category_game_title,
         route = Route.SettingsGame,

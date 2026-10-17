@@ -1,4 +1,6 @@
 <resources>
+    <string name="settings_hide_enemy_panel_while_targeting">出牌指定敵人時，不顯示敵人面板</string>
+    <string name="settings_hide_enemy_panel_while_targeting_desc">有時敵人身上 buff 太多時，拖曳到敵人身上會顯示很大的面板，影響觀感，開啟該選項後拖曳時不再顯示面板。</string>
     <string name="mod_config_title">模組設定</string>
     <string name="mod_config_developer_title">模組設定（實驗性）</string>
     <string name="mod_config_developer_description">選擇已安裝模組，編輯已儲存的 .properties 設定。自動定位能力有限，手動關聯的檔案請確認歸屬後再儲存。</string>
