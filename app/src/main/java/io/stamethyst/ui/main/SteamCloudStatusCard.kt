@@ -17,7 +17,6 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Surface
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -93,25 +92,20 @@ internal fun SteamCloudStatusCard(state: CloudState, onClick: () -> Unit, modifi
     Card(
         onClick = onClick,
         modifier = modifier.fillMaxWidth().testTag("steam-cloud-status-card"),
-        shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(containerColor = cloudSurface()),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = .5f)),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.22f)),
     ) {
         Column(Modifier.fillMaxWidth().animateContentSize(tween(CLOUD_SIZE_DURATION, easing = CloudSizeEasing))) {
-            Row(Modifier.fillMaxWidth().heightIn(min = 83.dp).padding(16.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                Surface(Modifier.size(42.dp), shape = RoundedCornerShape(14.dp), color = tint.copy(alpha = .12f)) {
-                    androidx.compose.foundation.layout.Box(contentAlignment = Alignment.Center) {
-                        Icon(painterResource(cloudIcon(state)), null, Modifier.size(25.dp), tint)
-                    }
-                }
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                    Text(stringResource(R.string.cloud_card_title), style = MaterialTheme.typography.titleSmall,
+            Row(Modifier.fillMaxWidth().padding(16.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.Top) {
+                GameOverviewIcon(cloudIcon(state), tint)
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(stringResource(R.string.cloud_card_title), style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold)
                     CloudStatusLine(state)
                 }
-                Icon(painterResource(R.drawable.ic_chevron_right), null, Modifier.size(18.dp),
+                Icon(painterResource(R.drawable.ic_chevron_right), null, Modifier.align(Alignment.CenterVertically).size(18.dp),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             AnimatedVisibility(state.operationInFlight, enter = fadeIn(tween(300)), exit = fadeOut(tween(180))) {
@@ -400,27 +394,40 @@ private fun CloudSheetActions(state: CloudState, enabled: Boolean, onRefresh: ()
         .navigationBarsPadding().padding(horizontal = 24.dp, vertical = 16.dp).testTag("steam-cloud-actions"),
         verticalArrangement = Arrangement.spacedBy(8.dp)) {
         when {
-            state.operationInFlight -> OutlinedButton(onClick = onCancel, enabled = enabled && state.state != Status.CANCELLING,
-                shape = buttonShape, contentPadding = buttonPadding, colors = outlineColors, border = outlineBorder,
-                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("steam-cloud-cancel")) {
-                CloudActionLabel(R.drawable.ic_stop, stringResource(if (state.state == Status.CANCELLING)
-                    R.string.cloud_card_cancelling else R.string.cloud_card_cancel))
+            state.operationInFlight -> Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = onCancel, enabled = enabled && state.state != Status.CANCELLING,
+                    shape = buttonShape, contentPadding = buttonPadding, colors = outlineColors, border = outlineBorder,
+                    modifier = Modifier.weight(1f).heightIn(min = 48.dp).testTag("steam-cloud-cancel")) {
+                    CloudActionLabel(R.drawable.ic_cancel, stringResource(if (state.state == Status.CANCELLING)
+                        R.string.cloud_card_cancelling else R.string.cloud_card_cancel))
+                }
+                if (shouldShowSteamCloudBackgroundSyncAction(state)) FilledTonalButton(onClick = onBackground,
+                    enabled = enabled && state.state != Status.CANCELLING, shape = buttonShape, colors = tonalColors, contentPadding = buttonPadding,
+                    modifier = Modifier.weight(1f).heightIn(min = 48.dp).testTag("steam-cloud-background")) {
+                    CloudActionLabel(R.drawable.ic_cloud_sync, stringResource(R.string.cloud_card_background))
+                }
             }
             canResolveSteamCloudCard(state) -> Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = { onResolve(true) }, enabled = enabled, shape = buttonShape, contentPadding = buttonPadding,
                     colors = outlineColors, border = outlineBorder,
-                    modifier = Modifier.weight(1f).heightIn(min = 48.dp).testTag("steam-cloud-local")) { Text(stringResource(R.string.cloud_card_local_title)) }
+                    modifier = Modifier.weight(1f).heightIn(min = 48.dp).testTag("steam-cloud-local")) {
+                    CloudActionLabel(R.drawable.ic_inventory, stringResource(R.string.cloud_card_local_title))
+                }
                 OutlinedButton(onClick = { onResolve(false) }, enabled = enabled, shape = buttonShape, contentPadding = buttonPadding,
                     colors = outlineColors, border = outlineBorder,
-                    modifier = Modifier.weight(1f).heightIn(min = 48.dp).testTag("steam-cloud-remote")) { Text(stringResource(R.string.cloud_card_cloud_title)) }
+                    modifier = Modifier.weight(1f).heightIn(min = 48.dp).testTag("steam-cloud-remote")) {
+                    CloudActionLabel(R.drawable.ic_cloud_queue, stringResource(R.string.cloud_card_cloud_title))
+                }
             }
             state.state == Status.UP_TO_DATE -> Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilledTonalButton(onClick = onRefresh, enabled = enabled, shape = buttonShape, colors = tonalColors, contentPadding = buttonPadding,
                     modifier = Modifier.weight(1f).heightIn(min = 48.dp).testTag("steam-cloud-refresh")) {
-                    Text(stringResource(if (state.state == Status.HIDDEN) R.string.cloud_card_check_now else R.string.cloud_card_check))
+                    CloudActionLabel(R.drawable.ic_refresh, stringResource(R.string.cloud_card_check))
                 }
                 Button(onClick = onLaunch, enabled = enabled, shape = buttonShape, contentPadding = buttonPadding,
-                    modifier = Modifier.weight(1f).heightIn(min = 48.dp).testTag("steam-cloud-launch")) { Text(stringResource(R.string.main_launch_game)) }
+                    modifier = Modifier.weight(1f).heightIn(min = 48.dp).testTag("steam-cloud-launch")) {
+                    CloudActionLabel(R.drawable.ic_play_arrow, stringResource(R.string.main_launch_game))
+                }
             }
             canRefreshSteamCloudCard(state) -> Button(onClick = onRefresh, enabled = enabled, shape = buttonShape, contentPadding = buttonPadding,
                 modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("steam-cloud-refresh")) {
@@ -430,22 +437,23 @@ private fun CloudSheetActions(state: CloudState, enabled: Boolean, onRefresh: ()
             state.state in setOf(Status.DISABLED, Status.INDEPENDENT, Status.SIGNED_OUT) -> Button(onClick = onUnavailable,
                 enabled = enabled, shape = buttonShape, contentPadding = buttonPadding,
                 modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("steam-cloud-settings")) {
-                Text(stringResource(when (state.state) {
-                    Status.SIGNED_OUT -> R.string.cloud_card_login
-                    Status.INDEPENDENT -> R.string.cloud_card_manage
-                    else -> R.string.cloud_card_settings
-                }))
+                CloudActionLabel(if (state.state == Status.SIGNED_OUT) R.drawable.ic_account_circle else R.drawable.ic_dock_settings,
+                    stringResource(when (state.state) {
+                        Status.SIGNED_OUT -> R.string.cloud_card_login
+                        Status.INDEPENDENT -> R.string.cloud_card_manage
+                        else -> R.string.cloud_card_settings
+                    }))
             }
         }
         if (!state.operationInFlight && state.state in setOf(Status.CONNECTION_FAILED, Status.CANCELLED, Status.CONFLICT, Status.RECOVERY_REQUIRED)) {
             TextButton(onClick = onSkip, enabled = enabled, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("steam-cloud-skip")) {
-                Text(stringResource(R.string.cloud_card_skip), style = MaterialTheme.typography.bodySmall)
+                CloudActionLabel(R.drawable.ic_play_arrow, stringResource(R.string.cloud_card_skip))
             }
         }
-        if (shouldShowSteamCloudBackgroundSyncAction(state)) FilledTonalButton(onClick = onBackground,
+        if (!state.operationInFlight && shouldShowSteamCloudBackgroundSyncAction(state)) FilledTonalButton(onClick = onBackground,
             enabled = enabled && state.state != Status.CANCELLING, shape = buttonShape, colors = tonalColors, contentPadding = buttonPadding,
             modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("steam-cloud-background")) {
-            Text(stringResource(R.string.cloud_card_background))
+            CloudActionLabel(R.drawable.ic_cloud_sync, stringResource(R.string.cloud_card_background))
         }
         if (canResolveSteamCloudCard(state)) Text(stringResource(R.string.cloud_card_overwrite_note),
             modifier = Modifier.align(Alignment.CenterHorizontally), style = MaterialTheme.typography.labelSmall,
@@ -525,8 +533,10 @@ private fun cloudSurface(): Color = if (MaterialTheme.colorScheme.surface.lumina
 
 @Composable
 private fun CloudActionLabel(@DrawableRes icon: Int, label: String) {
-    Icon(painterResource(icon), contentDescription = null, modifier = Modifier.size(18.dp))
-    Text(label, modifier = Modifier.padding(start = 6.dp))
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        Icon(painterResource(icon), contentDescription = null, modifier = Modifier.size(18.dp))
+        Text(label, modifier = Modifier.weight(1f, fill = false))
+    }
 }
 
 @Composable

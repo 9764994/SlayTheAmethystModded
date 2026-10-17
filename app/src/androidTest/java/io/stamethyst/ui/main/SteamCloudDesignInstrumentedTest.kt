@@ -153,6 +153,42 @@ class SteamCloudDesignInstrumentedTest {
         compose.onNodeWithTag("steam-cloud-close").assertDoesNotExist()
     }
 
+    @Test fun cancelAndBackgroundActionsShareAnEqualWidthRowAtLargeFontScale() {
+        val state = mutableStateOf(State(state = Status.CHECKING))
+        var cancelled = 0
+        var background = 0
+        compose.setContent {
+            val density = LocalDensity.current.density
+            CompositionLocalProvider(LocalDensity provides Density(density, fontScale = 1.5f)) {
+                MaterialTheme {
+                    Box(Modifier.width(320.dp).height(480.dp)) {
+                        SteamCloudStatusDetails(state.value, true, {}, { cancelled++ }, {}, {}, {}, { background++ })
+                    }
+                }
+            }
+        }
+        listOf(Status.CHECKING, Status.SYNCING, Status.CANCELLING).forEach { status ->
+            compose.runOnIdle { state.value = State(state = status) }
+            compose.waitForIdle()
+            val cancel = compose.onNodeWithTag("steam-cloud-cancel").assertIsDisplayed()
+            val sync = compose.onNodeWithTag("steam-cloud-background").assertIsDisplayed()
+            val cancelBounds = cancel.fetchSemanticsNode().boundsInRoot
+            val syncBounds = sync.fetchSemanticsNode().boundsInRoot
+            assertEquals(cancelBounds.top, syncBounds.top, 1f)
+            assertEquals(cancelBounds.width, syncBounds.width, 1f)
+            assertTrue(cancelBounds.right < syncBounds.left)
+            if (status == Status.CANCELLING) {
+                cancel.assertIsNotEnabled()
+                sync.assertIsNotEnabled()
+            } else {
+                cancel.performClick()
+                sync.performClick()
+            }
+        }
+        assertEquals(2, cancelled)
+        assertEquals(2, background)
+    }
+
     @Test fun longDetailsScrollWithoutMovingTheBottomActionsAtLargeFontScale() {
         compose.setContent {
             val density = LocalDensity.current.density
