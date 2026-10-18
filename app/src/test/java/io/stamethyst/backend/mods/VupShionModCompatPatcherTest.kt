@@ -33,28 +33,24 @@ class VupShionModCompatPatcherTest {
         assertTrue(firstPatch.patchedSaveTenkoDataMethod)
         assertTrue(firstPatch.patchedSaveSleyntaPanelMethod)
         assertTrue(firstPatch.patchedModPanelNullElementGuard)
-        assertTrue(firstPatch.patchedLowVramDetection)
         assertTrue(firstPatch.hasAnyPatch)
         assertFalse(hasWorkshopSubscriptionGuard(jarFile))
         assertTrue(hasUrlAssignment(jarFile))
         assertTrue(hasSaveTenkoPanelGuard(jarFile))
         assertTrue(hasSaveSleyntaPanelGuard(jarFile))
         assertTrue(hasModPanelNullElementGuard(jarFile))
-        assertTrue(hasLowVramDetectionPatch(jarFile))
 
         val secondPatch = VupShionModCompatPatcher.patchInPlace(jarFile)
         assertFalse(secondPatch.patchedWebButtonConstructor)
         assertFalse(secondPatch.patchedSaveTenkoDataMethod)
         assertFalse(secondPatch.patchedSaveSleyntaPanelMethod)
         assertFalse(secondPatch.patchedModPanelNullElementGuard)
-        assertFalse(secondPatch.patchedLowVramDetection)
         assertFalse(secondPatch.hasAnyPatch)
         assertFalse(hasWorkshopSubscriptionGuard(jarFile))
         assertTrue(hasUrlAssignment(jarFile))
         assertTrue(hasSaveTenkoPanelGuard(jarFile))
         assertTrue(hasSaveSleyntaPanelGuard(jarFile))
         assertTrue(hasModPanelNullElementGuard(jarFile))
-        assertTrue(hasLowVramDetectionPatch(jarFile))
     }
 
     @Test
@@ -68,17 +64,6 @@ class VupShionModCompatPatcherTest {
         assertTrue(patchResult.patchedSaveSleyntaPanelMethod)
         assertTrue(hasSaveTenkoPanelGuard(jarFile))
         assertTrue(hasSaveSleyntaPanelGuard(jarFile))
-    }
-
-    @Test
-    fun patchInPlace_disablesLowVramDetection() {
-        val tempDir = Files.createTempDirectory("vupshion-patcher-low-vram")
-        val jarFile = tempDir.resolve("VUPShionMod.jar").toFile()
-        createVupShionJar(jarFile, "VUPShionMod/ui/CharPanel")
-
-        val patchResult = VupShionModCompatPatcher.patchInPlace(jarFile)
-        assertTrue(patchResult.patchedLowVramDetection)
-        assertTrue(hasLowVramDetectionPatch(jarFile))
     }
 
     @Test
@@ -96,7 +81,6 @@ class VupShionModCompatPatcherTest {
         assertFalse(patchResult.patchedSaveTenkoDataMethod)
         assertFalse(patchResult.patchedSaveSleyntaPanelMethod)
         assertFalse(patchResult.patchedModPanelNullElementGuard)
-        assertFalse(patchResult.patchedLowVramDetection)
         assertFalse(patchResult.hasAnyPatch)
     }
 
@@ -113,9 +97,6 @@ class VupShionModCompatPatcherTest {
             zipOut.closeEntry()
             zipOut.putNextEntry(ZipEntry("VUPShionMod/util/ShionModPanel.class"))
             zipOut.write(buildShionModPanelClassBytes())
-            zipOut.closeEntry()
-            zipOut.putNextEntry(ZipEntry("VUPShionMod/util/ShionImageMaster.class"))
-            zipOut.write(buildShionImageMasterClassBytes())
             zipOut.closeEntry()
         }
     }
@@ -137,56 +118,6 @@ class VupShionModCompatPatcherTest {
             visitMethodInsn(Opcodes.INVOKESPECIAL, "basemod/ModPanel", "<init>", "()V", false)
             visitInsn(Opcodes.RETURN)
             visitMaxs(0, 0)
-            visitEnd()
-        }
-
-        classWriter.visitEnd()
-        return classWriter.toByteArray()
-    }
-
-    private fun buildShionImageMasterClassBytes(): ByteArray {
-        val classWriter = ClassWriter(ClassWriter.COMPUTE_MAXS or ClassWriter.COMPUTE_FRAMES)
-        classWriter.visit(
-            Opcodes.V1_8,
-            Opcodes.ACC_PUBLIC,
-            "VUPShionMod/util/ShionImageMaster",
-            null,
-            "java/lang/Object",
-            null
-        )
-
-        classWriter.visitMethod(
-            Opcodes.ACC_PRIVATE or Opcodes.ACC_STATIC,
-            "isLowVRAM",
-            "(Z)Z",
-            null,
-            null
-        ).apply {
-            visitCode()
-            visitInsn(Opcodes.ICONST_1)
-            visitInsn(Opcodes.IRETURN)
-            visitMaxs(1, 1)
-            visitEnd()
-        }
-
-        classWriter.visitMethod(
-            Opcodes.ACC_PUBLIC or Opcodes.ACC_STATIC,
-            "isLowVRAM",
-            "()Z",
-            null,
-            null
-        ).apply {
-            visitCode()
-            visitInsn(Opcodes.ICONST_0)
-            visitMethodInsn(
-                Opcodes.INVOKESTATIC,
-                "VUPShionMod/util/ShionImageMaster",
-                "isLowVRAM",
-                "(Z)Z",
-                false
-            )
-            visitInsn(Opcodes.IRETURN)
-            visitMaxs(1, 0)
             visitEnd()
         }
 
@@ -481,23 +412,6 @@ class VupShionModCompatPatcherTest {
             superCall.owner == "basemod/ModPanel" &&
             superCall.name == "addUIElement" &&
             superCall.desc == "(Lbasemod/IUIElement;)V"
-    }
-
-    private fun hasLowVramDetectionPatch(jarFile: File): Boolean {
-        val classBytes = JarFileIoUtils.readJarEntryBytes(
-            jarFile,
-            "VUPShionMod/util/ShionImageMaster.class"
-        )
-        assertNotNull(classBytes)
-        val classNode = ClassNode()
-        ClassReader(classBytes!!).accept(classNode, 0)
-        val method = classNode.methods.firstOrNull { candidate ->
-            candidate.name == "isLowVRAM" && candidate.desc == "(Z)Z"
-        } ?: return false
-        val instructions = meaningfulInstructions(method)
-        return instructions.size == 2 &&
-            instructions[0].opcode == Opcodes.ICONST_0 &&
-            instructions[1].opcode == Opcodes.IRETURN
     }
 
     private fun readWebButtonConstructors(jarFile: File): List<MethodNode> {

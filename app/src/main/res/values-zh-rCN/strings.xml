@@ -146,7 +146,7 @@
     <string name="compat_downfall_import_compat_title">Downfall 导入兼容补丁</string>
     <string name="compat_downfall_import_compat_desc">开启后，导入 downfall 时会自动修补商人的 drawX 站位，使其改为基于 Settings.WIDTH/xScale 计算，并把 Hexaghost MyBody 渲染里的 270/256 偏移改为随 Settings.scale 缩放，同时把 Boss 机制弹窗改为以当前 boss 为参照、只在悬停该 boss 时显示在其右侧，用于修复手机宽屏下的站位、材质偏移和挡住 Boss 的提示框。关闭后不会修补新导入的 Downfall。</string>
     <string name="compat_vupshion_mod_compat_title">紫音模组兼容</string>
-    <string name="compat_vupshion_mod_compat_desc">开启后，导入 vupshionmod 时会自动修补启动兼容问题：移除 VUPShionMod/ui/WebButton 的 Steam 创意工坊订阅校验、取消低显存自动强制低配（改由游戏内“低配模式”开关控制，默认完整 UI）、忽略未创建的空设置项，并适配新旧面板路径。关闭后不会修补新导入的 VUPShionMod。</string>
+    <string name="compat_vupshion_mod_compat_desc">开启后，导入 vupshionmod 时会自动修补启动兼容问题：移除 VUPShionMod/ui/WebButton 的 Steam 创意工坊订阅校验、忽略低显存模式下未创建的空设置项，并适配新旧面板路径。低显存设备仍按模组自身判定进入低配模式。关闭后不会修补新导入的 VUPShionMod。</string>
     <string name="compat_chaofanmod_compat_title">Chaofan Mod 导入兼容补丁</string>
     <string name="compat_chaofanmod_compat_desc">开启后，导入 chaofanmod 时会自动移除 ChaofanMod.receivePostInitialize() 中的 SteamworksHelper 初始化和订阅，避免 Android 上因 Steamworks native callback 缺失而启动崩溃。关闭后不会修补新导入的 Chaofan Mod。</string>
     <string name="compat_fragment_shader_precision_compat_title">Shader 源码兼容补丁</string>
@@ -863,9 +863,9 @@
     <string name="mod_import_vupshion_message_none">本次导入没有发现需要修补的紫音模组启动兼容问题。</string>
     <string name="mod_import_vupshion_message_intro">以下模组在导入时已自动修补紫音模组启动兼容逻辑：
 </string>
-    <string name="mod_import_vupshion_message_item_detail">  已移除 VUPShionMod/ui/WebButton 的 Steam 创意工坊订阅校验，取消低显存自动强制低配并默认恢复完整自定义 UI，让 ModPanel 忽略未创建的空设置项，并适配新版 CharPanel 面板路径</string>
+    <string name="mod_import_vupshion_message_item_detail">  已移除 VUPShionMod/ui/WebButton 的 Steam 创意工坊订阅校验，让 ModPanel 忽略低显存模式下未创建的空设置项，并适配新版 CharPanel 面板路径</string>
     <string name="mod_import_vupshion_message_rule">
-修补规则：删除 VUPShionMod/ui/WebButton 里的 SteamApps.isSubscribedApp(646570) 守卫；将 VUPShionMod/util/ShionImageMaster 的低显存检测改为固定返回 false，低配模式改由游戏内开关控制；在 VUPShionMod/util/ShionModPanel 中重写 addUIElement 并忽略 null 设置项；保存面板守卫同时匹配旧版 VUPShionMod/ui/... 与新版 VUPShionMod/ui/CharPanel/... 路径，其余行为保持不变。</string>
+修补规则：删除 VUPShionMod/ui/WebButton 里的 SteamApps.isSubscribedApp(646570) 守卫；在 VUPShionMod/util/ShionModPanel 中重写 addUIElement 并忽略 null 设置项；保存面板守卫同时匹配旧版 VUPShionMod/ui/... 与新版 VUPShionMod/ui/CharPanel/... 路径，其余行为保持不变。</string>
     <string name="mod_import_chaofanmod_message_none">本次导入没有发现需要修补的 Chaofan Mod Steamworks 启动逻辑。</string>
     <string name="mod_import_chaofanmod_message_intro">以下模组在导入时已自动修补 Chaofan Mod Steamworks 启动逻辑：
 </string>
@@ -1008,7 +1008,7 @@
     <string name="mod_import_patch_firstperson_detail_yaw">水平视角读取：%1$d</string>
     <string name="mod_import_patch_firstperson_detail_pitch">垂直视角读取：%1$d</string>
     <string name="mod_import_patch_vupshion_title">VUPShionMod 启动兼容</string>
-    <string name="mod_import_patch_vupshion_summary">移除 Steam 所有权启动门槛、低显存强制低配、空设置项崩溃和新版面板路径不匹配。</string>
+    <string name="mod_import_patch_vupshion_summary">移除 Steam 所有权启动门槛，并修复低显存空设置项崩溃和新版面板路径不匹配。</string>
     <string name="mod_import_patch_vupshion_applied">已修补 VUPShionMod 启动兼容。</string>
     <string name="mod_import_patch_vupshion_noop">VUPShionMod 启动兼容无需修补。</string>
     <string name="mod_import_patch_vupshion_detail">有修补生效：%1$s</string>

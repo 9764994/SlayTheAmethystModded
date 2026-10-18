@@ -32,24 +32,19 @@ internal data class VupShionModCompatPatchResult(
     val patchedWebButtonConstructor: Boolean,
     val patchedSaveTenkoDataMethod: Boolean,
     val patchedSaveSleyntaPanelMethod: Boolean,
-    val patchedModPanelNullElementGuard: Boolean = false,
-    val patchedLowVramDetection: Boolean = false
+    val patchedModPanelNullElementGuard: Boolean = false
 ) {
     val hasAnyPatch: Boolean
         get() = patchedWebButtonConstructor ||
             patchedSaveTenkoDataMethod ||
             patchedSaveSleyntaPanelMethod ||
-            patchedModPanelNullElementGuard ||
-            patchedLowVramDetection
+            patchedModPanelNullElementGuard
 }
 
 internal object VupShionModCompatPatcher {
     private const val TARGET_CLASS_ENTRY = "VUPShionMod/ui/WebButton.class"
     private const val SHION_MOD_PANEL_CLASS_ENTRY = "VUPShionMod/util/ShionModPanel.class"
-    private const val SHION_IMAGE_MASTER_CLASS_ENTRY = "VUPShionMod/util/ShionImageMaster.class"
     private const val SAVE_HELPER_CLASS_ENTRY = "VUPShionMod/util/SaveHelper.class"
-    private const val LOW_VRAM_METHOD_NAME = "isLowVRAM"
-    private const val LOW_VRAM_METHOD_DESC = "(Z)Z"
     private const val VOID_METHOD_DESC = "()V"
     private const val STEAM_APPS_INTERNAL_NAME = "com/codedisaster/steamworks/SteamApps"
     private const val NULL_API_EXCEPTION_INTERNAL_NAME = "VUPShionMod/msic/NullApiException"
@@ -113,7 +108,6 @@ internal object VupShionModCompatPatcher {
         var patchedSaveTenkoDataMethod = false
         var patchedSaveSleyntaPanelMethod = false
         var patchedModPanelNullElementGuard = false
-        var patchedLowVramDetection = false
         ZipFile(modJar).use { zipFile ->
             val hierarchyResolver = ClassHierarchyResolver(zipFile)
             patchClassEntry(zipFile, TARGET_CLASS_ENTRY) { classBytes ->
@@ -136,12 +130,6 @@ internal object VupShionModCompatPatcher {
                 replacements[entryName] = patchedBytes
                 patchedModPanelNullElementGuard = true
             }
-            patchClassEntry(zipFile, SHION_IMAGE_MASTER_CLASS_ENTRY) { classBytes ->
-                patchShionImageMasterClassBytes(classBytes)
-            }?.let { (entryName, patchedBytes) ->
-                replacements[entryName] = patchedBytes
-                patchedLowVramDetection = true
-            }
         }
 
         if (replacements.isNotEmpty()) {
@@ -152,8 +140,7 @@ internal object VupShionModCompatPatcher {
             patchedWebButtonConstructor = patchedWebButtonConstructor,
             patchedSaveTenkoDataMethod = patchedSaveTenkoDataMethod,
             patchedSaveSleyntaPanelMethod = patchedSaveSleyntaPanelMethod,
-            patchedModPanelNullElementGuard = patchedModPanelNullElementGuard,
-            patchedLowVramDetection = patchedLowVramDetection
+            patchedModPanelNullElementGuard = patchedModPanelNullElementGuard
         )
     }
 
@@ -243,59 +230,6 @@ internal object VupShionModCompatPatcher {
         method.maxLocals = 2
         classNode.methods.add(method)
         return writeClass(classNode, hierarchyResolver)
-    }
-
-    /**
-     * Android exposes no usable VRAM information to oshi, so the mod's 4GB check always reports
-     * low VRAM and forces Low Spec Mode. Replace the private detection method with a constant false,
-     * which keeps the mod's Low Spec Mode toggle available and leaves the choice to the player.
-     * Frames of the other methods are preserved because this class is written with COMPUTE_MAXS.
-     */
-    @Throws(IOException::class)
-    private fun patchShionImageMasterClassBytes(
-        classBytes: ByteArray
-    ): ByteArray? {
-        val classNode = readClassNode(classBytes)
-        val methodIndex = classNode.methods.indexOfFirst { method ->
-            method.name == LOW_VRAM_METHOD_NAME &&
-                method.desc == LOW_VRAM_METHOD_DESC
-        }
-        if (methodIndex < 0) {
-            return null
-        }
-        val existing = classNode.methods[methodIndex]
-        if (isAlwaysFalse(existing)) {
-            return null
-        }
-
-        val replacement = MethodNode(
-            existing.access,
-            LOW_VRAM_METHOD_NAME,
-            LOW_VRAM_METHOD_DESC,
-            null,
-            null
-        )
-        replacement.instructions.apply {
-            add(InsnNode(Opcodes.ICONST_0))
-            add(InsnNode(Opcodes.IRETURN))
-        }
-        replacement.maxStack = 1
-        replacement.maxLocals = 1
-        classNode.methods[methodIndex] = replacement
-        return writeClassPreservingFrames(classNode)
-    }
-
-    private fun isAlwaysFalse(method: MethodNode): Boolean {
-        val instructions = meaningfulInstructions(method)
-        return instructions.size == 2 &&
-            instructions[0].opcode == Opcodes.ICONST_0 &&
-            instructions[1].opcode == Opcodes.IRETURN
-    }
-
-    private fun writeClassPreservingFrames(classNode: ClassNode): ByteArray {
-        val classWriter = ClassWriter(ClassWriter.COMPUTE_MAXS)
-        classNode.accept(classWriter)
-        return classWriter.toByteArray()
     }
 
     @Throws(IOException::class)

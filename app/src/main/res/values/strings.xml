@@ -146,7 +146,7 @@
     <string name="compat_downfall_import_compat_title">Downfall import compatibility patch</string>
     <string name="compat_downfall_import_compat_desc">When enabled, importing downfall automatically patches merchant drawX to use a Settings.WIDTH/xScale-aware position, scales Hexaghost MyBody render offsets with Settings.scale, and reanchors the boss mechanic popup to the active boss so it renders to the right of the boss only while that boss is hovered. This targets wide-screen drift and boss-obscuring UI on mobile. If disabled, newly imported Downfall jars are left untouched.</string>
     <string name="compat_vupshion_mod_compat_title">VUPShionMod import compatibility patch</string>
-    <string name="compat_vupshion_mod_compat_desc">When enabled, importing vupshionmod automatically patches its startup compatibility: it removes the Steam workshop subscription gate in VUPShionMod/ui/WebButton, disables the automatic low-VRAM force (the in-game Low Spec Mode toggle controls it, defaulting to the full UI), ignores the null settings element when it is not created, and matches both old and new panel paths. If disabled, newly imported VUPShionMod jars are left untouched.</string>
+    <string name="compat_vupshion_mod_compat_desc">When enabled, importing vupshionmod automatically patches its startup compatibility: it removes the Steam workshop subscription gate in VUPShionMod/ui/WebButton, ignores the null settings element created when low-VRAM mode skips it, and matches both old and new panel paths. Low-VRAM devices still enter Low Spec Mode based on its own detection. If disabled, newly imported VUPShionMod jars are left untouched.</string>
     <string name="compat_chaofanmod_compat_title">Chaofan Mod import compatibility patch</string>
     <string name="compat_chaofanmod_compat_desc">When enabled, importing chaofanmod automatically removes the SteamworksHelper initialization and subscription in ChaofanMod.receivePostInitialize(), avoiding the Steamworks native callback crash on Android. If disabled, newly imported Chaofan Mod jars are left untouched.</string>
     <string name="compat_fragment_shader_precision_compat_title">Shader source compatibility patch</string>
@@ -866,9 +866,9 @@ Patch rule: merchant drawX now uses Settings.WIDTH/xScale-aware positioning, Hex
     <string name="mod_import_vupshion_message_none">No VUPShionMod startup compatibility fixes needed patching in this import.</string>
     <string name="mod_import_vupshion_message_intro">The following mods had VUPShionMod startup compatibility logic auto-patched during import:
 </string>
-    <string name="mod_import_vupshion_message_item_detail">  Removed the Steam workshop subscription guard in VUPShionMod/ui/WebButton, disabled the automatic low-VRAM force so the full UI is used by default, made the mod panel ignore the settings element when it is not created, and matched the new CharPanel panel paths</string>
+    <string name="mod_import_vupshion_message_item_detail">  Removed the Steam workshop subscription guard in VUPShionMod/ui/WebButton, made the mod panel ignore the settings element that is not created in low-VRAM mode, and matched the new CharPanel panel paths</string>
     <string name="mod_import_vupshion_message_rule">
-Patch rule: strip the SteamApps.isSubscribedApp(646570) gate from VUPShionMod/ui/WebButton; replace the low-VRAM detection in VUPShionMod/util/ShionImageMaster with a constant false so the in-game Low Spec Mode toggle controls the UI; override addUIElement in VUPShionMod/util/ShionModPanel to ignore null settings elements; match both the old VUPShionMod/ui/... and new VUPShionMod/ui/CharPanel/... panel paths for the save guards; leave all other behavior unchanged.</string>
+Patch rule: strip the SteamApps.isSubscribedApp(646570) gate from VUPShionMod/ui/WebButton; override addUIElement in VUPShionMod/util/ShionModPanel to ignore null settings elements; match both the old VUPShionMod/ui/... and new VUPShionMod/ui/CharPanel/... panel paths for the save guards; leave all other behavior unchanged.</string>
     <string name="mod_import_chaofanmod_message_none">No Chaofan Mod Steamworks startup fixes needed patching in this import.</string>
     <string name="mod_import_chaofanmod_message_intro">The following mods had Chaofan Mod Steamworks startup logic auto-patched during import:
 </string>
@@ -1011,7 +1011,7 @@ Patch rule: keep Ori full-resolution glow/bloom rendering, but replace the blur 
     <string name="mod_import_patch_firstperson_detail_yaw">Yaw cursor reads: %1$d</string>
     <string name="mod_import_patch_firstperson_detail_pitch">Pitch cursor reads: %1$d</string>
     <string name="mod_import_patch_vupshion_title">VUPShionMod startup compatibility</string>
-    <string name="mod_import_patch_vupshion_summary">Remove the Steam ownership startup gate, the forced low-VRAM mode, the settings toggle crash, and the new panel-path mismatch.</string>
+    <string name="mod_import_patch_vupshion_summary">Remove the Steam ownership startup gate and fix the low-VRAM settings toggle crash and the new panel-path mismatch.</string>
     <string name="mod_import_patch_vupshion_applied">Patched VUPShionMod startup compatibility.</string>
     <string name="mod_import_patch_vupshion_noop">VUPShionMod startup compatibility did not need patching.</string>
     <string name="mod_import_patch_vupshion_detail">Any patch applied: %1$s</string>
