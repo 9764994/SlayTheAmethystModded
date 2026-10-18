@@ -15,7 +15,7 @@ import java.io.File
 internal object VupShionImportPatchModule : ImportPatchModule {
     override val targetModId = "vupshionmod"
     override val id = "mod.vupshion.startup_compat"
-    override val version = 2
+    override val version = 3
     override val displayNameResId = R.string.mod_import_patch_vupshion_title
     override val summaryResId = R.string.mod_import_patch_vupshion_summary
     override val category = ImportPatchCategory.ModSpecific
