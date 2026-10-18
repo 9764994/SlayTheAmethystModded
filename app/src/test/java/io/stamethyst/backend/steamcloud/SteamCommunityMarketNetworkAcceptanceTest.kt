@@ -29,6 +29,10 @@ import org.junit.Test
  * This intentionally contacts Watt and Steam. It is disabled by default because its result
  * describes the current machine/network and third-party endpoints, rather than deterministic
  * launcher behavior. Enable it only with STS_RUN_MARKET_NETWORK_ACCEPTANCE=true.
+ *
+ * Deterministic unstable-network coverage lives in
+ * [io.stamethyst.backend.workshop.WorkshopMarketNetworkSimulationTest] and runs offline through
+ * `:app:marketNetworkSimulationTest`.
  */
 class SteamCommunityMarketNetworkAcceptanceTest {
     @Test
