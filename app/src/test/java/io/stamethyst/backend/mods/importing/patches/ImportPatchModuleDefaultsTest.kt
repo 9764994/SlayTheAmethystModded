@@ -22,6 +22,21 @@ import org.junit.Test
 
 class ImportPatchModuleDefaultsTest {
     @Test
+    fun vupShionVersion2_isRestoredWithoutMarkingArchivedVersionsOutdated() {
+        val module = VupShionImportPatchModule
+        assertEquals(2, module.version)
+        assertSame(module, ImportPatchRegistry.moduleForId(module.id))
+        for (version in 1..6) {
+            val info = ImportedModPatchInfo(
+                modId = "vupshionmod",
+                modName = "Shion",
+                appliedPatches = listOf(ImportedModPatchRecord(module.id, version))
+            )
+            assertEquals(version < 2, ImportPatchRegistry.hasOutdatedAppliedPatches(info))
+        }
+    }
+
+    @Test
     fun spireBiomesFogPatch_isRegisteredAndUsesVersionedMetadata() {
         val module = SpireBiomesImportPatchModule
         assertSame(module, ImportPatchRegistry.moduleForId(module.id))
