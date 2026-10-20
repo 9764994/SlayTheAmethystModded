@@ -204,6 +204,7 @@ class MainScreenViewModel : ViewModel() {
         val launchMode: String,
         val forceJvmCrash: Boolean,
         val forceRuntimeCrash: Boolean,
+        val skipEnabledModSizeWarning: Boolean,
     )
 
     data object PendingMtsComponentUpdate
@@ -3129,22 +3130,6 @@ class MainScreenViewModel : ViewModel() {
         if (!tryBeginLaunchRequest()) {
             return
         }
-        val importPatchUpdateMods = collectImportPatchUpdateMods(
-            modManagementController.currentOptionalMods()
-        )
-        if (importPatchUpdateMods.isNotEmpty() &&
-            ImportPatchUpdateIgnoreStore.hasUnignoredUpdates(host, importPatchUpdateMods)
-        ) {
-            uiState = uiState.copy(
-                pendingImportPatchUpdateLaunchWarning = PendingImportPatchUpdateLaunchWarning(
-                    mods = importPatchUpdateMods,
-                    launchMode = StsLaunchSpec.LAUNCH_MODE_MTS,
-                    forceJvmCrash = false,
-                    forceRuntimeCrash = false,
-                )
-            )
-            return
-        }
         val unreadSuggestionModNames = collectPendingLaunchUnreadSuggestionModNames()
         if (unreadSuggestionModNames.isNotEmpty()) {
             pendingLaunchUnreadSuggestionModNames = unreadSuggestionModNames
@@ -3186,18 +3171,15 @@ class MainScreenViewModel : ViewModel() {
             return
         }
         uiState = uiState.copy(pendingImportPatchUpdateLaunchWarning = null)
-        val unreadSuggestionModNames = collectPendingLaunchUnreadSuggestionModNames()
-        if (unreadSuggestionModNames.isNotEmpty()) {
-            pendingLaunchUnreadSuggestionModNames = unreadSuggestionModNames
-            uiState = uiState.copy(pendingLaunchUnreadSuggestionModNames = unreadSuggestionModNames)
-            return
-        }
+        acknowledgedImportPatchUpdateKeys = acknowledgedImportPatchUpdateKeys +
+            ImportPatchUpdateIgnoreStore.collectUpdateKeys(pending.mods)
         dismissCrashRecovery()
-        beginLaunchFlow(
+        prepareAndLaunch(
             host = host,
             launchMode = pending.launchMode,
             forceJvmCrash = pending.forceJvmCrash,
             forceRuntimeCrash = pending.forceRuntimeCrash,
+            skipEnabledModSizeWarning = pending.skipEnabledModSizeWarning,
         )
     }
 
@@ -3208,15 +3190,6 @@ class MainScreenViewModel : ViewModel() {
         }
         uiState = uiState.copy(pendingImportPatchUpdateLaunchWarning = null)
         clearLaunchInFlightState()
-    }
-
-    private fun collectImportPatchUpdateMods(optionalMods: List<ModItemUi>): List<ModItemUi> {
-        return optionalMods.filter { mod ->
-            mod.enabled &&
-                mod.installed &&
-                !mod.required &&
-                mod.needsImportPatchUpdate
-        }
     }
 
     private fun collectPendingLaunchUnreadSuggestionModNames(): List<String> {
@@ -3884,6 +3857,7 @@ class MainScreenViewModel : ViewModel() {
         if (uiState.busy || launchInFlight) {
             return false
         }
+        acknowledgedImportPatchUpdateKeys = emptySet()
         markLaunchInFlight()
         return true
     }
@@ -3968,6 +3942,22 @@ class MainScreenViewModel : ViewModel() {
                 return
             }
             val optionalMods = modManagementController.currentOptionalMods()
+            val importPatchUpdateMods = ImportPatchUpdateIgnoreStore.collectUpdateMods(optionalMods)
+            if (ImportPatchUpdateIgnoreStore.hasUnignoredUpdates(
+                    host, importPatchUpdateMods, acknowledgedImportPatchUpdateKeys,
+                )
+            ) {
+                uiState = uiState.copy(
+                    pendingImportPatchUpdateLaunchWarning = PendingImportPatchUpdateLaunchWarning(
+                        mods = importPatchUpdateMods,
+                        launchMode = launchMode,
+                        forceJvmCrash = forceJvmCrash,
+                        forceRuntimeCrash = forceRuntimeCrash,
+                        skipEnabledModSizeWarning = skipEnabledModSizeWarning,
+                    )
+                )
+                return
+            }
             val duplicateGroups = modManagementController.findEnabledDuplicateModIdGroups(optionalMods)
             if (duplicateGroups.isNotEmpty()) {
                 showDuplicateModIdDialog(host, duplicateGroups)
@@ -6122,6 +6112,7 @@ class MainScreenViewModel : ViewModel() {
 
     private fun clearLaunchInFlightState(clearPendingEnabledModSizeWarning: Boolean = true) {
         launchInFlight = false
+        acknowledgedImportPatchUpdateKeys = emptySet()
         // Drop the autoplay latch too — if we're aborting a launch, the next user-triggered
         // launch shouldn't silently inherit autoplay from the cancelled debug intent.
         pendingAutoplay = false
@@ -6130,11 +6121,12 @@ class MainScreenViewModel : ViewModel() {
         pendingAutoplaySingleRoomSpecPath = ""
         pendingAutoplayChoiceDelayMs = 0L
         pendingCardObtainEffectOwnershipCompatEnabled = true
-        if (uiState.launchInFlight ||
+        if (uiState.launchInFlight || uiState.pendingImportPatchUpdateLaunchWarning != null ||
             (clearPendingEnabledModSizeWarning && uiState.pendingEnabledModSizeLaunchWarning != null)
         ) {
             uiState = uiState.copy(
                 launchInFlight = false,
+                pendingImportPatchUpdateLaunchWarning = null,
                 pendingEnabledModSizeLaunchWarning = if (clearPendingEnabledModSizeWarning) {
                     null
                 } else {

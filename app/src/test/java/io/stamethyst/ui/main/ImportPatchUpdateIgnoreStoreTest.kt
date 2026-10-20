@@ -9,6 +9,56 @@ import org.junit.Test
 
 class ImportPatchUpdateIgnoreStoreTest {
     @Test
+    fun collectUpdateMods_includesDisabledInstalledModsButNotMissingOrRequiredMods() {
+        val shion = createMod(
+            "/mods/Shion.jar",
+            listOf(patch("mod.vupshion.startup_compat", 2, 4)),
+        )
+        val disabled = shion.copy(enabled = false)
+
+        assertEquals(
+            listOf(shion, disabled),
+            ImportPatchUpdateIgnoreStore.collectUpdateMods(
+                listOf(shion, disabled, shion.copy(installed = false), shion.copy(required = true)),
+            ),
+        )
+    }
+
+    @Test
+    fun shionV2ToV4_isNotSuppressedByIgnoredV2OrV3() {
+        val shion = createMod(
+            "/mods/Shion.jar",
+            listOf(patch("mod.vupshion.startup_compat", 2, 4)),
+        )
+        val current = ImportPatchUpdateIgnoreStore.collectUpdateKeys(listOf(shion))
+        val ignored = setOf(2, 3).mapTo(mutableSetOf()) { version ->
+            ImportPatchUpdateIgnoreStore.buildUpdateKey(
+                shion.storagePath, "mod.vupshion.startup_compat", version,
+            )
+        }
+
+        assertTrue(ImportPatchUpdateIgnoreStore.hasUnignoredUpdates(current, ignored))
+        assertFalse(ImportPatchUpdateIgnoreStore.hasUnignoredUpdates(current, ignored + current))
+    }
+
+    @Test
+    fun acknowledgedUpdates_doNotSuppressNewerPatchVersions() {
+        val v4 = createMod(
+            "/mods/Shion.jar",
+            listOf(patch("mod.vupshion.startup_compat", 2, 4)),
+        )
+        val acknowledged = ImportPatchUpdateIgnoreStore.collectUpdateKeys(listOf(v4))
+        val v5 = v4.copy(importPatches = listOf(patch("mod.vupshion.startup_compat", 2, 5)))
+
+        assertFalse(ImportPatchUpdateIgnoreStore.hasUnignoredUpdates(acknowledged, acknowledged))
+        assertTrue(
+            ImportPatchUpdateIgnoreStore.hasUnignoredUpdates(
+                ImportPatchUpdateIgnoreStore.collectUpdateKeys(listOf(v5)), acknowledged,
+            ),
+        )
+    }
+
+    @Test
     fun collectUpdateKeys_onlyIncludesOutdatedOrUnrecordedPatches() {
         val mod = createMod(
             storagePath = "/mods/Test.jar",

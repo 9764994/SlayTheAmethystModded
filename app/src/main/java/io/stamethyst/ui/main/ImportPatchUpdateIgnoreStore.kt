@@ -12,11 +12,19 @@ import java.util.LinkedHashSet
  * so the launch warning appears again for anything the user has not seen yet.
  */
 internal object ImportPatchUpdateIgnoreStore {
-    fun hasUnignoredUpdates(context: Context, mods: List<ModItemUi>): Boolean {
+    fun hasUnignoredUpdates(
+        context: Context,
+        mods: List<ModItemUi>,
+        acknowledgedKeys: Set<String> = emptySet(),
+    ): Boolean {
         return hasUnignoredUpdates(
             currentKeys = collectUpdateKeys(mods),
-            ignoredKeys = loadIgnoredKeys(context),
+            ignoredKeys = loadIgnoredKeys(context) + acknowledgedKeys,
         )
+    }
+
+    internal fun collectUpdateMods(mods: List<ModItemUi>): List<ModItemUi> {
+        return mods.filter { it.installed && !it.required && it.needsImportPatchUpdate }
     }
 
     fun rememberIgnoredUpdates(context: Context, mods: List<ModItemUi>): Boolean {
