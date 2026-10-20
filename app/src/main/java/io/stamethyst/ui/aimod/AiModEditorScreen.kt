@@ -50,8 +50,10 @@ import androidx.compose.material3.TooltipBox
 import androidx.compose.material3.TooltipDefaults
 import androidx.compose.material3.rememberTooltipState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
@@ -1031,7 +1033,7 @@ fun LauncherAiModEditorScreen(
 }
 
 @Composable
-private fun AiMessageCard(
+internal fun AiMessageCard(
     message: AiEditorMessage,
     onCopy: () -> Unit,
     onCopyError: () -> Unit,
@@ -1039,7 +1041,6 @@ private fun AiMessageCard(
     onRollback: () -> Unit,
     enabled: Boolean,
 ) {
-    var thinkingExpanded by rememberSaveable(message.id) { mutableStateOf(false) }
     var showActions by remember { mutableStateOf(false) }
     val assistantLabel = stringResource(R.string.ai_mod_editor_assistant_label)
     val actionsLabel = stringResource(R.string.ai_mod_editor_message_actions)
@@ -1102,16 +1103,17 @@ private fun AiMessageCard(
                 }
             } else {
                 if (message.parts.isNotEmpty()) {
-                    message.coalescedParts().forEach { part ->
+                    message.coalescedParts().forEachIndexed { partIndex, part ->
                         when (part.kind) {
                             AiMessagePartKind.TEXT -> AiAssistantText(part.content, bodyStyle, colors)
-                            AiMessagePartKind.THINKING -> AiThinkingBlock(
-                                text = part.content,
-                                expanded = thinkingExpanded,
-                                streaming = message.streaming,
-                                onToggle = { thinkingExpanded = !thinkingExpanded },
-                                colors = colors,
-                            )
+                            // Content grows during streaming; keep each block's state tied to its position.
+                            AiMessagePartKind.THINKING -> key(message.id, partIndex) {
+                                AiThinkingBlock(
+                                    text = part.content,
+                                    streaming = message.streaming,
+                                    colors = colors,
+                                )
+                            }
                             AiMessagePartKind.TOOL -> message.tools.firstOrNull { it.id == part.toolId }
                                 ?.let { AiToolCallRow(it, message.streaming) }
                         }
@@ -1126,6 +1128,7 @@ private fun AiMessageCard(
                         AiToolCallRow(tool, message.streaming)
                     }
                     if (message.thinking.isNotBlank()) {
+                        var thinkingExpanded by rememberSaveable(message.id) { mutableStateOf(false) }
                         val thinkingPreview = message.thinking.lineSequence()
                             .firstOrNull { it.isNotBlank() }
                             ?.trim()
@@ -1316,18 +1319,17 @@ private fun AiAssistantText(
 @Composable
 private fun AiThinkingBlock(
     text: String,
-    expanded: Boolean,
     streaming: Boolean,
-    onToggle: () -> Unit,
     colors: androidx.compose.material3.ColorScheme,
 ) {
+    var expanded by rememberSaveable { mutableStateOf(false) }
     if (text.isBlank()) return
     val preview = text.lineSequence().firstOrNull { it.isNotBlank() }?.trim().orEmpty()
     Column(Modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier
                 .clip(RoundedCornerShape(6.dp))
-                .clickable(onClick = onToggle)
+                .clickable { expanded = !expanded }
                 .padding(vertical = 14.dp, horizontal = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
