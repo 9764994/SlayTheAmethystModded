@@ -1436,6 +1436,8 @@ Patch rule: keep Ori full-resolution glow/bloom rendering, but replace the blur 
     <string name="ai_mod_editor_restore_message">Restore the selected backup and keep the current JAR as a new backup?</string>
     <string name="ai_mod_editor_thinking">Thinking</string>
     <string name="ai_mod_editor_new_chat">New chat</string>
+    <string name="ai_mod_editor_keep_screen_on">Keep screen on</string>
+    <string name="ai_mod_editor_keep_screen_on_enabled">Keep screen on enabled</string>
     <string name="ai_mod_editor_new_chat_message">Clear this conversation? Applied JAR changes will not be undone.</string>
     <string name="ai_mod_editor_not_configured">Configure an API key in Settings &gt; LLM support first.</string>
     <string name="ai_mod_editor_user_label">You</string>

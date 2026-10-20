@@ -4,6 +4,8 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.provider.OpenableColumns
+import android.view.WindowManager
+import androidx.activity.compose.LocalActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -639,6 +641,17 @@ fun LauncherAiModEditorScreen(
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
+    val activity = LocalActivity.current
+    var keepScreenOn by rememberSaveable { mutableStateOf(false) }
+    DisposableEffect(activity, keepScreenOn) {
+        val window = activity?.window
+        val flag = WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+        val originallyEnabled = window != null && (window.attributes.flags and flag) != 0
+        if (keepScreenOn) window?.addFlags(flag) else window?.clearFlags(flag)
+        onDispose {
+            if (originallyEnabled) window?.addFlags(flag) else window?.clearFlags(flag)
+        }
+    }
     val historyContentDescription = stringResource(R.string.ai_mod_editor_history)
     val navigator = currentNavigator
     val viewModel: AiModEditorViewModel = viewModel(
@@ -819,6 +832,12 @@ fun LauncherAiModEditorScreen(
                         label = stringResource(R.string.ai_mod_editor_new_chat),
                         onClick = viewModel::newConversation,
                         enabled = !viewModel.busy,
+                    )
+                    AiMessageAction(
+                        icon = ImageVector.vectorResource(R.drawable.ic_keep_screen_on),
+                        label = stringResource(if (keepScreenOn) R.string.ai_mod_editor_keep_screen_on_enabled else R.string.ai_mod_editor_keep_screen_on),
+                        onClick = { keepScreenOn = !keepScreenOn },
+                        highlighted = keepScreenOn,
                     )
                     AiContextCounter(
                         tokens = if (viewModel.messages.isEmpty()) 0 else viewModel.sessions
@@ -1379,6 +1398,7 @@ internal fun AiMessageAction(
     onClick: () -> Unit,
     enabled: Boolean = true,
     prominent: Boolean = false,
+    highlighted: Boolean = false,
 ) {
     TooltipBox(
         positionProvider = TooltipDefaults.rememberPlainTooltipPositionProvider(),
@@ -1395,7 +1415,8 @@ internal fun AiMessageAction(
                     icon,
                     contentDescription = label,
                     modifier = Modifier.size(18.dp),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = if (enabled) 0.8f else 0.38f),
+                    tint = if (highlighted && enabled) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = if (enabled) 0.8f else 0.38f),
                 )
             }
         }

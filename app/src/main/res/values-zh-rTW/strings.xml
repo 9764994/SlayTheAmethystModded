@@ -1421,6 +1421,8 @@
     <string name="ai_mod_editor_restore_message">恢復選取的備份，並將目前 JAR 保留為新的備份嗎？</string>
     <string name="ai_mod_editor_thinking">思考過程</string>
     <string name="ai_mod_editor_new_chat">新增對話</string>
+    <string name="ai_mod_editor_keep_screen_on">保持螢幕常亮</string>
+    <string name="ai_mod_editor_keep_screen_on_enabled">已開啟螢幕常亮</string>
     <string name="ai_mod_editor_new_chat_message">建立新會話後，目前會話會保留在歷史記錄中。</string>
     <string name="ai_mod_editor_not_configured">請先在「設定 &gt; LLM 智能支援」中設定 API Key。</string>
     <string name="ai_mod_editor_user_label">你</string>
