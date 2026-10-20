@@ -27,6 +27,7 @@ function loadConfig() {
     sharedSecret: readOptionalEnv('FEEDBACK_SHARED_SECRET'),
     githubWebhookSecret: readOptionalEnv('GITHUB_WEBHOOK_SECRET'),
     githubAuth: loadGithubAuthConfig(),
+    patchCatalogue: loadPatchCatalogueConfig(),
     mail: loadMailConfig(),
     githubOwner,
     githubRepo,
@@ -44,6 +45,22 @@ function loadConfig() {
       readOptionalEnv('GITHUB_NOTIFICATION_STATE_RELEASE_PREFIX') || 'feedback-mail-state'
     ),
     cloudControlConfigUrl: readOptionalEnv('CLOUD_CONTROL_CONFIG_URL')
+  };
+}
+
+function loadPatchCatalogueConfig() {
+  const rawTrustProxyHops = readOptionalEnv('PATCH_UPLOAD_TRUST_PROXY_HOPS') || '0';
+  const trustProxyHops = Number(rawTrustProxyHops);
+  if (!/^[0-5]$/.test(rawTrustProxyHops) || !Number.isInteger(trustProxyHops)) {
+    throw new Error('PATCH_UPLOAD_TRUST_PROXY_HOPS must be an integer from 0 to 5');
+  }
+  return {
+    owner: readOptionalEnv('PATCH_CATALOGUE_OWNER') || 'ModinMobileSTS',
+    repo: readOptionalEnv('PATCH_CATALOGUE_REPO') || 'SlaytheAmethystPlayerModCatalogue',
+    branch: readOptionalEnv('PATCH_CATALOGUE_BRANCH') || 'main',
+    trustProxyHops,
+    committerName: readOptionalEnv('PATCH_COMMITTER_NAME') || 'Slay the Amethyst Catalogue',
+    committerEmail: readOptionalEnv('PATCH_COMMITTER_EMAIL') || 'catalogue-upload@users.noreply.github.com'
   };
 }
 
@@ -116,6 +133,7 @@ function loadMailConfig() {
 
 module.exports = {
   loadConfig,
+  loadPatchCatalogueConfig,
   loadGithubAuthConfig,
   loadMailConfig
 };

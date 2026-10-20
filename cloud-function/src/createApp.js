@@ -2,6 +2,8 @@
 
 const express = require('express');
 const multer = require('multer');
+const { createPatchUploadGuard, parsePatchUpload, publishPatchUpload } = require('./patchCatalogue');
+const { MAX_JSON_BYTES, MAX_JAR_BYTES, MAX_SOURCE_BYTES } = require('./patchValidation');
 
 const { APP_NAME } = require('./constants');
 const {
@@ -54,6 +56,7 @@ function createApp(config) {
   const app = express();
 
   app.disable('x-powered-by');
+  app.set('trust proxy', config.patchCatalogue && config.patchCatalogue.trustProxyHops || 0);
   app.use(express.json({
     limit: '1mb',
     verify: captureRawRequestBody
@@ -317,6 +320,62 @@ function createApp(config) {
   ]), handleIssueMessage);
   app.post('/api/feedback-issues/state', handleIssueState);
   app.post('/github/webhook', handleGithubWebhook);
+
+  const patchUpload = multer({
+    storage: {
+      _handleFile(_req, file, callback) {
+        const limit = file.fieldname === 'source' ? MAX_SOURCE_BYTES : MAX_JAR_BYTES;
+        const chunks = [];
+        let size = 0;
+        let tooLarge = false;
+        file.stream.on('limit', () => { tooLarge = true; });
+        file.stream.on('data', (chunk) => {
+          size += chunk.length;
+          if (size > limit) {
+            tooLarge = true;
+            chunks.length = 0;
+          } else if (!tooLarge) {
+            chunks.push(chunk);
+          }
+        });
+        file.stream.once('error', callback);
+        file.stream.once('end', () => {
+          if (tooLarge) {
+            callback(new multer.MulterError('LIMIT_FILE_SIZE', file.fieldname));
+            return;
+          }
+          callback(null, { buffer: Buffer.concat(chunks), size });
+        });
+      },
+      _removeFile(_req, file, callback) {
+        delete file.buffer;
+        callback(null);
+      }
+    },
+    limits: { fileSize: MAX_JAR_BYTES, fieldSize: MAX_JSON_BYTES, fields: 2, files: 2, parts: 4, fieldNameSize: 100 }
+  }).fields([{ name: 'jar', maxCount: 1 }, { name: 'source', maxCount: 1 }]);
+  app.post('/api/mod-patches/upload', createPatchUploadGuard(config), (req, res, next) => {
+    patchUpload(req, res, (error) => {
+      if (!error) {
+        req.patchUploadProcessing = true;
+        return next();
+      }
+      req.releasePatchUpload();
+      res.status(error.code === 'LIMIT_FILE_SIZE' || error.code === 'LIMIT_FIELD_VALUE' ? 413 : 400).json({
+        ok: false, error: error.code || 'invalid_patch_upload', message: error.message
+      });
+    });
+  }, async (req, res, next) => {
+    try {
+      const submission = await parsePatchUpload(req);
+      const result = await publishPatchUpload(submission, config);
+      res.status(201).json({ ok: true, ...result });
+    } catch (error) {
+      next(error);
+    } finally {
+      req.releasePatchUpload();
+    }
+  });
 
   app.use((error, _req, res, _next) => {
     if (error && error.code === 'LIMIT_FILE_SIZE') {

@@ -232,7 +232,9 @@ async function githubFetchJsonInternal(path, init, currentConfig, allowNotFound)
   }
   if (!response.ok) {
     const message = data && data.message ? data.message : rawText || `GitHub API request failed (${response.status})`;
-    throw httpError(502, message);
+    const error = httpError(502, message);
+    error.githubStatus = response.status;
+    throw error;
   }
   return data;
 }

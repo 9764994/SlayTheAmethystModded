@@ -6,6 +6,7 @@
   "main": "app.js",
   "scripts": {
     "start": "node app.js",
+    "test": "node --test",
     "check": "node -e \"process.env.GITHUB_TOKEN='test';process.env.GITHUB_OWNER='test';process.env.GITHUB_REPO='test';require('./app')\"",
     "check:app": "node -e \"process.env.GITHUB_OWNER='test';process.env.GITHUB_REPO='test';process.env.GITHUB_APP_ID='123';process.env.GITHUB_APP_INSTALLATION_ID='456';process.env.GITHUB_APP_PRIVATE_KEY='-----BEGIN RSA PRIVATE KEY-----\\\\nMIIBOgIBAAJBAL3Jfakekeyforloadtestonly1234567890\\\\n-----END RSA PRIVATE KEY-----';require('./app')\""
   },
@@ -13,8 +14,14 @@
     "node": ">=20"
   },
   "dependencies": {
-    "express": "^4.21.2",
-    "multer": "^2.0.2",
-    "nodemailer": "^8.0.1"
+    "crc-32": "^1.2.2",
+    "express": "^4.22.3",
+    "multer": "^2.4.0",
+    "nodemailer": "^10.1.7",
+    "unicode-case-folding": "^1.1.2",
+    "yauzl": "^3.4.0"
+  },
+  "overrides": {
+    "proxy-addr": "^2.0.8"
   }
 }
