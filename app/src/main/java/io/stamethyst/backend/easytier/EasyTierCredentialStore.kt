@@ -1,88 +1,60 @@
 package io.stamethyst.backend.easytier
 
 import android.content.Context
-import androidx.security.crypto.EncryptedSharedPreferences
-import androidx.security.crypto.MasterKey
+import android.net.Uri
+import android.os.Bundle
 
-/** Stores bearer credentials outside the externally readable diagnostic snapshot. */
+/** All processes access the encrypted file through its single owner in :easytier. */
 internal object EasyTierCredentialStore {
-    private const val FILE_NAME = "easytier_credentials"
-    private const val SESSION_TOKEN_PREFIX = "session:"
-    private const val OWNER_TOKEN_PREFIX = "owner:"
-    private const val ROOM_PASSWORD_PREFIX = "password:"
-
-    fun save(
-        context: Context,
-        roomId: String,
-        playerId: String,
-        sessionToken: String,
-        ownerToken: String,
-    ) {
-        val preferences = preferences(context)
-        preferences.edit().apply {
-            if (sessionToken.isNotBlank()) {
-                putString(sessionKey(roomId, playerId), sessionToken)
-            }
-            if (ownerToken.isNotBlank()) {
-                putString(ownerKey(roomId), ownerToken)
-            }
-        }.apply()
+    fun save(context: Context, roomId: String, playerId: String, sessionToken: String, ownerToken: String) {
+        call(context, "save", roomId, playerId, sessionToken, ownerToken)
     }
 
     fun sessionToken(context: Context, roomId: String, playerId: String): String =
-        preferences(context).getString(sessionKey(roomId, playerId), "").orEmpty()
+        call(context, "sessionToken", roomId, playerId).getString("value").orEmpty()
 
     fun ownerToken(context: Context, roomId: String): String =
-        preferences(context).getString(ownerKey(roomId), "").orEmpty()
+        call(context, "ownerToken", roomId).getString("value").orEmpty()
 
-    /**
-     * Remembers a room password that the server accepted, so a returning player is not prompted
-     * again. Stored in the same encrypted file as the bearer tokens; it must never reach the
-     * plaintext diagnostic snapshot.
-     */
     fun saveRoomPassword(context: Context, roomId: String, password: String) {
-        val editor = preferences(context).edit()
-        if (password.isEmpty()) {
-            editor.remove(passwordKey(roomId))
-        } else {
-            editor.putString(passwordKey(roomId), password)
-        }
-        editor.apply()
+        call(context, "saveRoomPassword", roomId, password = password)
     }
 
     fun roomPassword(context: Context, roomId: String): String =
-        preferences(context).getString(passwordKey(roomId), "").orEmpty()
+        call(context, "roomPassword", roomId).getString("value").orEmpty()
 
     fun clearRoomPassword(context: Context, roomId: String) {
-        preferences(context).edit().remove(passwordKey(roomId)).apply()
+        call(context, "clearRoomPassword", roomId)
     }
 
     fun clearSession(context: Context, roomId: String, playerId: String) {
-        preferences(context).edit().remove(sessionKey(roomId, playerId)).apply()
+        call(context, "clearSession", roomId, playerId)
     }
 
     fun clearRoom(context: Context, roomId: String, playerId: String) {
-        preferences(context).edit()
-            .remove(sessionKey(roomId, playerId))
-            .remove(ownerKey(roomId))
-            .remove(passwordKey(roomId))
-            .apply()
+        call(context, "clearRoom", roomId, playerId)
     }
 
-    private fun sessionKey(roomId: String, playerId: String): String =
-        "$SESSION_TOKEN_PREFIX${roomId.trim()}:${playerId.trim()}"
-
-    private fun ownerKey(roomId: String): String = "$OWNER_TOKEN_PREFIX${roomId.trim()}"
-
-    private fun passwordKey(roomId: String): String = "$ROOM_PASSWORD_PREFIX${roomId.trim()}"
-
-    private fun preferences(context: Context) = EncryptedSharedPreferences.create(
-        context.applicationContext,
-        FILE_NAME,
-        MasterKey.Builder(context.applicationContext)
-            .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
-            .build(),
-        EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-        EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
-    )
+    private fun call(
+        context: Context,
+        method: String,
+        roomId: String,
+        playerId: String = "",
+        sessionToken: String = "",
+        ownerToken: String = "",
+        password: String = "",
+    ): Bundle {
+        val uri = Uri.parse("content://${context.packageName}.easytier.credentials")
+        val extras = Bundle().apply {
+            putString("roomId", roomId)
+            putString("playerId", playerId)
+            putString("sessionToken", sessionToken)
+            putString("ownerToken", ownerToken)
+            putString("password", password)
+        }
+        // Do not fall back to local preferences or mask IPC failures as missing credentials.
+        return checkNotNull(context.contentResolver.call(uri, method, null, extras)) {
+            "EasyTier credential provider is unavailable."
+        }
+    }
 }

@@ -150,6 +150,12 @@
             android:foregroundServiceType="dataSync"
             android:process=":game" />
 
+        <provider
+            android:name="io.stamethyst.backend.easytier.EasyTierCredentialProvider"
+            android:authorities="${applicationId}.easytier.credentials"
+            android:exported="false"
+            android:process=":easytier" />
+
         <service
             android:name="io.stamethyst.backend.easytier.EasyTierProcessService"
             android:exported="false"
