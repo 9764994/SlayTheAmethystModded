@@ -16,6 +16,7 @@ import io.stamethyst.backend.mods.ModJarSupport
 import io.stamethyst.backend.mods.ModManifestNameRewriter
 import io.stamethyst.backend.mods.MtsLaunchManifestValidator
 import io.stamethyst.backend.mods.importing.patches.ImportPatchRegistry
+import io.stamethyst.backend.mods.importing.patches.ImportPatchModuleState
 import io.stamethyst.backend.resources.RuntimeResourceProvider
 import io.stamethyst.backend.workshop.WorkshopDownloadProcessService
 import io.stamethyst.backend.workshop.WorkshopDownloadBlocklist
@@ -61,7 +62,9 @@ internal data class MainMtsLaunchValidationIssue(
 )
 
 internal class MainModManagementController(
-    private val hostCallbacks: Host
+    private val hostCallbacks: Host,
+    private val loadImportPatchStates: (Activity) -> List<ImportPatchModuleState> =
+        { ImportPatchRegistry.moduleStates(it) },
 ) {
     interface Host {
         fun canEditMainScreenState(): Boolean
@@ -117,6 +120,7 @@ internal class MainModManagementController(
     )
 
     private val executor: ExecutorService = Executors.newSingleThreadExecutor()
+    private val refreshLock = Any()
     private val requiredModsSnapshot = ArrayList<ModItemUi>()
     private val optionalModsSnapshot = ArrayList<ModItemUi>()
     private var optionalModsWithPendingSelectionCache: List<ModItemUi> = emptyList()
@@ -164,8 +168,20 @@ internal class MainModManagementController(
         executor.shutdownNow()
     }
 
-    @Synchronized
     fun refresh(host: Activity, storageAccessible: Boolean) {
+        synchronized(refreshLock) { refreshSnapshot(host, storageAccessible) }
+    }
+
+    private fun refreshSnapshot(host: Activity, storageAccessible: Boolean) {
+        val workshopPaths = HashMap<WorkshopInstalledModRecord, List<String>>()
+        // Build filesystem-backed cards outside the state monitor. UI snapshots stay readable.
+        val mods = if (storageAccessible) {
+            WorkshopMetadataStore(host).markMissingFiles()
+            loadModItems(host, AgentPatchCatalogueService.readCachedParentModIds(host), workshopPaths)
+        } else emptyList()
+        val scannedOptional = mods.filter { !it.required }
+        val workshopCards = if (storageAccessible) loadWorkshopCardItems(host, scannedOptional, workshopPaths) else emptyList()
+        synchronized(this) {
         folderStateStore.reload(host)
         associationStore.reload(host)
         favoriteModKeys.clear()
@@ -174,9 +190,6 @@ internal class MainModManagementController(
         if (!storageAccessible) {
             return
         }
-        WorkshopMetadataStore(host).markMissingFiles()
-        val cataloguePatchParents = AgentPatchCatalogueService.readCachedParentModIds(host)
-        val mods = loadModItems(host, cataloguePatchParents)
         requiredModsSnapshot.clear()
         requiredModsSnapshot.addAll(mods.filter { it.required }.map { it.copy(enabled = it.installed) })
         val optionalMods = mods.filter { !it.required }
@@ -185,7 +198,6 @@ internal class MainModManagementController(
             pendingSelectionInitialized = true
         }
         optionalModsSnapshot.clear()
-        val workshopCards = loadWorkshopCardItems(host, optionalMods)
         optionalModsSnapshot.addAll(
             (optionalMods + workshopCards).map { mod ->
                 val isTexturePack = mod.workshop?.state == WorkshopModState.TexturePackInstalled
@@ -202,6 +214,7 @@ internal class MainModManagementController(
         sanitizeFolderAssignments(folderOrganizableMods)
         associationStore.sanitize(host, optionalMods)
         persistFolderState(host)
+        }
     }
 
     @Synchronized
@@ -1912,13 +1925,13 @@ internal class MainModManagementController(
         return RuntimeResourceProvider(host).exists(assetPath)
     }
 
-    private fun loadModItems(host: Activity, cataloguePatchParents: Set<String>): List<ModItemUi> {
+    private fun loadModItems(host: Activity, cataloguePatchParents: Set<String>, workshopPaths: MutableMap<WorkshopInstalledModRecord, List<String>>): List<ModItemUi> {
         val aliases = ModAliasStore.loadAliases(host)
         val importedPatchInfoByPath = ImportedModPatchRegistry.readAll(host)
         val workshopRecords = WorkshopMetadataStore(host).list()
         val workshopRecordsByInstalledPath = workshopRecords
             .flatMap { record ->
-                resolveWorkshopJarPaths(host, record)
+                workshopPaths.getOrPut(record) { resolveWorkshopJarPaths(host, record) }
                     .map { absoluteJarPath -> absoluteJarPath to record }
             }
             .toMap()
@@ -1939,14 +1952,15 @@ internal class MainModManagementController(
                     )
                 }
             }
-        val importPatchStates = ImportPatchRegistry.moduleStates(host).associateBy { it.id }
+        val importPatchStates = loadImportPatchStates(host).associateBy { it.id }
+        val normalizePath = RuntimePaths.legacyStsPathNormalizer(host)
         return installedMods.asSequence()
             .map { mod ->
             val workshopRecord = workshopRecordsByInstalledPath[mod.jarFile.absolutePath]
             val importPatchInfo = if (mod.required) {
                 null
             } else {
-                ImportedModPatchRegistry.lookupKey(host, mod.jarFile.absolutePath)
+                normalizePath(mod.jarFile.absolutePath)
                     ?.let(importedPatchInfoByPath::get)
             }
             val importPatchDetails = importPatchInfo?.let { patchInfo ->
@@ -2001,6 +2015,7 @@ internal class MainModManagementController(
                         host = host,
                         representedByInstalledMod = true,
                         task = downloadTasksByPublishedFileId[record.publishedFileId],
+                        absoluteJarPaths = workshopPaths.getOrPut(record) { resolveWorkshopJarPaths(host, record) },
                     )
                 },
                 agentPatchMods = agentPatchesByParent[ModManager.normalizeModId(mod.modId)].orEmpty(),
@@ -2052,7 +2067,7 @@ internal class MainModManagementController(
         }
     }
 
-    private fun loadWorkshopCardItems(host: Activity, installedMods: List<ModItemUi>): List<ModItemUi> {
+    private fun loadWorkshopCardItems(host: Activity, installedMods: List<ModItemUi>, workshopPaths: MutableMap<WorkshopInstalledModRecord, List<String>>): List<ModItemUi> {
         val installedPaths = installedMods.map { it.storagePath }.toSet()
         val downloadTasksByPublishedFileId = loadDownloadCenterTaskRecords(host)
         val recordsByPublishedFileId = LinkedHashMap<ULong, WorkshopInstalledModRecord>()
@@ -2066,7 +2081,7 @@ internal class MainModManagementController(
             }
         return recordsByPublishedFileId.values
             .filter { record ->
-                val absoluteJarPaths = resolveWorkshopJarPaths(host, record)
+                val absoluteJarPaths = workshopPaths.getOrPut(record) { resolveWorkshopJarPaths(host, record) }
                 val activeTask = downloadTasksByPublishedFileId[record.publishedFileId]
                 activeTask != null ||
                     absoluteJarPaths.isEmpty() ||
@@ -2076,6 +2091,7 @@ internal class MainModManagementController(
                 record.toWorkshopModItem(
                     host = host,
                     task = downloadTasksByPublishedFileId[record.publishedFileId],
+                    absoluteJarPaths = workshopPaths.getOrPut(record) { resolveWorkshopJarPaths(host, record) },
                 )
             }
     }
@@ -2161,10 +2177,11 @@ internal class MainModManagementController(
 
     private fun WorkshopInstalledModRecord.toWorkshopModItem(
         host: Activity,
-        task: io.stamethyst.backend.workshop.WorkshopDownloadTaskRecord?
+        task: io.stamethyst.backend.workshop.WorkshopDownloadTaskRecord?,
+        absoluteJarPaths: List<String>,
     ): ModItemUi {
-        val absoluteJarPath = resolveWorkshopJarPath(host, this)
-        val workshop = toWorkshopModUi(host, representedByInstalledMod = false, task = task)
+        val absoluteJarPath = absoluteJarPaths.firstOrNull().orEmpty()
+        val workshop = toWorkshopModUi(host, representedByInstalledMod = false, task = task, absoluteJarPaths = absoluteJarPaths)
         val fileSizeBytes = task?.fileSizeBytes
             ?.takeIf { it > 0L }
             ?: File(absoluteJarPath).takeIf { it.isFile }?.length()?.coerceAtLeast(0L)
@@ -2206,9 +2223,9 @@ internal class MainModManagementController(
         host: Activity,
         representedByInstalledMod: Boolean,
         task: io.stamethyst.backend.workshop.WorkshopDownloadTaskRecord?,
+        absoluteJarPaths: List<String>,
     ): WorkshopModUi {
-        val absoluteJarPath = resolveWorkshopJarPath(host, this)
-        val absoluteJarPaths = resolveWorkshopJarPaths(host, this)
+        val absoluteJarPath = absoluteJarPaths.firstOrNull().orEmpty()
         val taskIsActive = task?.status?.isActiveDownload() == true
         val resolved = if (!representedByInstalledMod && !taskIsActive && shouldShowWorkshopFileMissing(this, absoluteJarPaths)) {
             WorkshopResolvedModState(
@@ -2259,18 +2276,6 @@ internal class MainModManagementController(
         WorkshopResolvedModStateKind.TexturePackInstalled -> WorkshopModState.TexturePackInstalled
         WorkshopResolvedModStateKind.UpdateAvailable -> WorkshopModState.UpdateAvailable
         WorkshopResolvedModStateKind.FileMissing -> WorkshopModState.FileMissing
-    }
-
-    private fun resolveWorkshopJarPath(host: Activity, record: WorkshopInstalledModRecord): String {
-        val path = record.localJarPath.trim()
-        if (path.isEmpty()) return ""
-        val file = File(path)
-        if (file.isAbsolute) return path
-        return RuntimePaths.workshopItemDirs(host, record.appId, record.publishedFileId)
-            .map { directory -> File(directory, path) }
-            .firstOrNull(File::exists)
-            ?.absolutePath
-            ?: File(RuntimePaths.workshopItemDir(host, record.appId, record.publishedFileId), path).absolutePath
     }
 
     private fun resolveWorkshopJarPaths(host: Activity, record: WorkshopInstalledModRecord): List<String> =

@@ -18,14 +18,27 @@ internal object OptionalModStorageCoordinator {
     private const val INTERRUPTED_IMPORT_CLEANUP_GRACE_MS = 60L * 60L * 1000L
 
     private val importArtifactLock = Any()
+    private val lastCleanupByLibrary = LinkedHashMap<String, Long>()
 
     @JvmStatic
     @Throws(IOException::class)
     fun ensureOptionalModLibraryReady(context: Context) {
         val libraryDir = RuntimePaths.optionalModsLibraryDir(context)
         ensureDirectory(libraryDir)
-        withImportArtifactLock {
-            cleanupInterruptedImports(libraryDir)
+        val now = System.nanoTime()
+        val cleanupDue = synchronized(lastCleanupByLibrary) {
+            val last = lastCleanupByLibrary[libraryDir.absolutePath]
+            last == null || now - last >= 60_000_000_000L
+        }
+        if (cleanupDue) withImportArtifactLock {
+            synchronized(lastCleanupByLibrary) {
+                val last = lastCleanupByLibrary[libraryDir.absolutePath]
+                if (last == null || now - last >= 60_000_000_000L) {
+                    cleanupInterruptedImports(libraryDir)
+                    if (lastCleanupByLibrary.size >= 16) lastCleanupByLibrary.clear()
+                    lastCleanupByLibrary[libraryDir.absolutePath] = now
+                }
+            }
         }
         val migrationMarker = RuntimePaths.optionalModsLibraryMigrationMarker(context)
         if (migrationMarker.isFile) {
@@ -298,7 +311,7 @@ internal object OptionalModStorageCoordinator {
         val files = libraryDir.listFiles() ?: return
         val nowMs = System.currentTimeMillis()
         files.forEach { file ->
-            if (!file.isFile) {
+            if (!isInterruptedImportArtifact(file.name) || !file.isFile) {
                 return@forEach
             }
             val name = file.name

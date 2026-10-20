@@ -174,8 +174,12 @@ internal class ModLaunchProfileStore {
             item.put("enabledModKeys", enabledArray)
             array.put(item)
         }
-        prefs(host).edit()
-            .putString(KEY_PROFILES, array.toString())
+        val preferences = prefs(host)
+        val serialized = array.toString()
+        if (preferences.getString(KEY_PROFILES, null) == serialized &&
+            preferences.getString(KEY_ACTIVE_PROFILE_ID, null) == activeProfileId) return
+        preferences.edit()
+            .putString(KEY_PROFILES, serialized)
             .putString(KEY_ACTIVE_PROFILE_ID, activeProfileId)
             .apply()
     }

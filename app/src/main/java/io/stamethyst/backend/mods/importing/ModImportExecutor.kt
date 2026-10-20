@@ -272,6 +272,8 @@ internal object ModImportExecutor {
                 moveFileReplacing(workingJar, target)
             }
             committedTarget = target
+            io.stamethyst.backend.mods.ModJarManifestParser.clearCacheFor(target)
+            io.stamethyst.backend.mods.OptionalModMetadataIndex.invalidate(context, target)
             val targetPath = target.absolutePath
             progress.step(
                 item = item,

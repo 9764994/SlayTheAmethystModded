@@ -85,7 +85,20 @@ internal class MainFolderStateStore {
             collapsedObject.put(folderId, collapsed)
         }
 
-        val editor = prefs(host).edit()
+        val preferences = prefs(host)
+        val expected = mapOf(
+            KEY_FOLDERS to foldersArray.toString(),
+            KEY_ASSIGNMENTS to assignmentsObject.toString(),
+            KEY_COLLAPSED to collapsedObject.toString(),
+            KEY_UNASSIGNED_COLLAPSED to unassignedCollapsed,
+            KEY_DEPENDENCY_FOLDER_COLLAPSED to dependencyFolderCollapsed,
+            KEY_DRAG_LOCKED to dragLocked,
+            KEY_UNASSIGNED_NAME to unassignedFolderName,
+            KEY_UNASSIGNED_ORDER to unassignedFolderOrder.coerceIn(0, modFolders.size),
+        )
+        val stored = preferences.all
+        if (expected.all { (key, value) -> stored[key] == value }) return
+        val editor = preferences.edit()
             .putString(KEY_FOLDERS, foldersArray.toString())
             .putString(KEY_ASSIGNMENTS, assignmentsObject.toString())
             .putString(KEY_COLLAPSED, collapsedObject.toString())

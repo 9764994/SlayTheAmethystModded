@@ -1336,8 +1336,12 @@ object ModManager {
             list.add(entry)
         }
 
-        selection.forEach { raw ->
-            val token = normalizeSelectionToken(context, raw)
+        val normalizePath = RuntimePaths.legacyStsPathNormalizer(context)
+        val tokens = selection.map { raw ->
+            val trimmed = raw.trim()
+            if (looksLikePathToken(trimmed)) normalizePath(trimmed).orEmpty() else normalizeModId(trimmed)
+        }
+        tokens.forEach { token ->
             if (token.isEmpty()) {
                 return@forEach
             }
@@ -1347,8 +1351,7 @@ object ModManager {
             }
         }
 
-        selection.forEach { raw ->
-            val token = normalizeSelectionToken(context, raw)
+        tokens.forEach { token ->
             if (token.isEmpty() || looksLikePathToken(token)) {
                 return@forEach
             }
@@ -1385,8 +1388,12 @@ object ModManager {
             list.add(entry)
         }
 
-        selection.forEach { (rawKey, rawPriority) ->
-            val token = normalizeSelectionToken(context, rawKey)
+        val normalizePath = RuntimePaths.legacyStsPathNormalizer(context)
+        val tokens = selection.map { (rawKey, priority) ->
+            val trimmed = rawKey.trim()
+            (if (looksLikePathToken(trimmed)) normalizePath(trimmed).orEmpty() else normalizeModId(trimmed)) to priority
+        }
+        tokens.forEach { (token, rawPriority) ->
             val normalizedPriority = normalizeOptionalModPriority(rawPriority) ?: return@forEach
             if (token.isEmpty()) {
                 return@forEach
@@ -1397,8 +1404,7 @@ object ModManager {
             }
         }
 
-        selection.forEach { (rawKey, rawPriority) ->
-            val token = normalizeSelectionToken(context, rawKey)
+        tokens.forEach { (token, rawPriority) ->
             val normalizedPriority = normalizeOptionalModPriority(rawPriority) ?: return@forEach
             if (token.isEmpty() || looksLikePathToken(token)) {
                 return@forEach

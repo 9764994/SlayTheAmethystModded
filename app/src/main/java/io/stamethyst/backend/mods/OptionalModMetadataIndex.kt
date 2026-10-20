@@ -11,6 +11,8 @@ import java.util.ArrayList
 import java.util.LinkedHashMap
 import java.util.LinkedHashSet
 import java.util.Locale
+import android.util.Log
+import io.stamethyst.backend.workshop.WorkshopJsonFileStore
 
 internal object OptionalModMetadataIndex {
     internal data class OptionalModMetadata(
@@ -100,7 +102,9 @@ internal object OptionalModMetadataIndex {
 
     private data class OptionalLibrarySignature(
         val libraryPath: String,
-        val jars: List<OptionalJarSignature>
+        val jars: List<OptionalJarSignature>,
+        val indexModified: Long,
+        val indexLength: Long,
     )
 
     private data class RuntimeCache(
@@ -108,7 +112,7 @@ internal object OptionalModMetadataIndex {
         val entries: List<OptionalModMetadata>
     )
 
-    private const val SCHEMA_VERSION = 1
+    private const val SCHEMA_VERSION = 2
     private const val JSON_KEY_SCHEMA_VERSION = "schemaVersion"
     private const val JSON_KEY_ENTRIES = "entries"
     private const val JSON_KEY_STORAGE_PATH = "storagePath"
@@ -127,23 +131,53 @@ internal object OptionalModMetadataIndex {
     private val lock = Any()
     private var runtimeCache: RuntimeCache? = null
 
+    /** Importers call this even when a replacement preserves length and timestamp. */
+    fun invalidate(context: Context, changedFile: File? = null) {
+        synchronized(lock) {
+            runtimeCache = null
+            val index = RuntimePaths.optionalModIndexFile(context)
+            WorkshopJsonFileStore.withFileLock(index, lock) {
+                if (changedFile != null && index.isFile) {
+                    val root = runCatching { JSONObject(index.readText(StandardCharsets.UTF_8)) }.getOrNull()
+                    if (root != null) {
+                        val entries = root.optJSONArray(JSON_KEY_ENTRIES) ?: JSONArray()
+                        val retained = JSONArray()
+                        for (i in 0 until entries.length()) {
+                            val entry = entries.optJSONObject(i) ?: continue
+                            if (entry.optString(JSON_KEY_STORAGE_PATH) != changedFile.absolutePath) retained.put(entry)
+                        }
+                        root.put(JSON_KEY_ENTRIES, retained)
+                        WorkshopJsonFileStore.writeAtomically(index, root.toString())
+                        return@withFileLock
+                    }
+                }
+                if (index.exists() && !index.delete()) {
+                    throw java.io.IOException("Cannot invalidate mod index: $index")
+                }
+            }
+        }
+    }
+
     fun listOptionalMods(context: Context): List<OptionalModMetadata> {
         synchronized(lock) {
             OptionalModStorageCoordinator.ensureOptionalModLibraryReady(context)
             val jarFiles = listCurrentOptionalJarFiles(context)
-            val signature = buildLibrarySignature(context, jarFiles)
+            val normalizePath = RuntimePaths.legacyStsPathNormalizer(context)
+            val signature = buildLibrarySignature(context, jarFiles, normalizePath)
             runtimeCache
                 ?.takeIf { it.signature == signature }
                 ?.let { return copyRuntimeEntries(it.entries) }
 
-            val readState = readEntries(context)
+            val indexFile = RuntimePaths.optionalModIndexFile(context)
+            return WorkshopJsonFileStore.withFileLock(indexFile, lock) {
+            val readState = readEntries(context, normalizePath)
             val staleEntries = readState.entriesByPath
             val refreshedEntries = ArrayList<CachedEntry>()
             val result = ArrayList<OptionalModMetadata>()
             var changed = readState.needsRewrite
 
             jarFiles.forEach { file ->
-                val storagePath = normalizeStoragePath(context, file.absolutePath) ?: file.absolutePath
+                val storagePath = normalizePath(file.absolutePath) ?: file.absolutePath
                 val cached = staleEntries.remove(storagePath)
                 val entry = if (cached != null && cached.matches(file)) {
                     cached
@@ -161,16 +195,35 @@ internal object OptionalModMetadataIndex {
             if (changed) {
                 writeEntries(context, refreshedEntries)
             }
-            runtimeCache = RuntimeCache(signature, copyRuntimeEntries(result))
-            return result
+            runtimeCache = RuntimeCache(signature.copy(
+                indexModified = indexFile.lastModified(), indexLength = indexFile.length(),
+            ), copyRuntimeEntries(result))
+            result
+            }
         }
     }
 
     private fun buildCachedEntry(file: File, storagePath: String): CachedEntry {
         val lastModified = file.lastModified()
         val length = file.length()
+        var launchModId = ""
+        var launchValidationError = ""
         val manifest = try {
-            ModJarSupport.readModManifest(file)
+            java.util.zip.ZipFile(file).use { zip ->
+                val entry = JarFileIoUtils.findEntryIgnoreCase(zip, "ModTheSpire.json")
+                    ?: return buildSkippedEntry(storagePath, lastModified, length)
+                val rawManifest = JarFileIoUtils.readEntry(zip, entry)
+                val parsed = ModJarManifestParser.parseManifest(rawManifest)
+                    ?: return buildSkippedEntry(storagePath, lastModified, length)
+                try {
+                    launchModId = MtsLaunchManifestValidator.resolveLaunchModId(
+                        zip, rawManifest.takeIf { entry.name == "ModTheSpire.json" },
+                    ).trim()
+                } catch (failure: Exception) {
+                    launchValidationError = failure.message.orEmpty()
+                }
+                parsed
+            }
         } catch (_: Throwable) {
             return buildSkippedEntry(storagePath, lastModified, length)
         }
@@ -179,14 +232,6 @@ internal object OptionalModMetadataIndex {
         val normalizedModId = ModManager.normalizeModId(rawModId)
         if (normalizedModId.isEmpty() || ModManager.isRequiredModId(normalizedModId)) {
             return buildSkippedEntry(storagePath, lastModified, length)
-        }
-
-        var launchModId = ""
-        var launchValidationError = ""
-        try {
-            launchModId = MtsLaunchManifestValidator.resolveLaunchModId(file).trim()
-        } catch (failure: Throwable) {
-            launchValidationError = failure.message?.trim().orEmpty()
         }
 
         return CachedEntry(
@@ -232,7 +277,7 @@ internal object OptionalModMetadataIndex {
         )
     }
 
-    private fun readEntries(context: Context): ReadState {
+    private fun readEntries(context: Context, normalizePath: (String?) -> String?): ReadState {
         val file = RuntimePaths.optionalModIndexFile(context)
         if (!file.isFile) {
             return ReadState(
@@ -258,7 +303,7 @@ internal object OptionalModMetadataIndex {
                     continue
                 }
                 val rawStoragePath = item.optString(JSON_KEY_STORAGE_PATH).trim()
-                val normalizedStoragePath = normalizeStoragePath(context, rawStoragePath)
+                val normalizedStoragePath = normalizePath(rawStoragePath)
                 if (normalizedStoragePath.isNullOrEmpty()) {
                     needsRewrite = true
                     continue
@@ -344,8 +389,8 @@ internal object OptionalModMetadataIndex {
                     }
                 )
             }
-            file.writeText(root.toString(), StandardCharsets.UTF_8)
-        }
+            WorkshopJsonFileStore.writeAtomically(file, root.toString())
+        }.onFailure { Log.w("OptionalModMetadataIndex", "Failed to persist mod index", it) }
     }
 
     private fun listCurrentOptionalJarFiles(context: Context): List<File> {
@@ -362,13 +407,17 @@ internal object OptionalModMetadataIndex {
 
     private fun buildLibrarySignature(
         context: Context,
-        jarFiles: List<File>
+        jarFiles: List<File>,
+        normalizePath: (String?) -> String?,
     ): OptionalLibrarySignature {
+        val index = RuntimePaths.optionalModIndexFile(context)
         return OptionalLibrarySignature(
             libraryPath = RuntimePaths.optionalModsLibraryDir(context).absolutePath,
+            indexModified = index.lastModified(),
+            indexLength = index.length(),
             jars = jarFiles.map { file ->
                 OptionalJarSignature(
-                    storagePath = normalizeStoragePath(context, file.absolutePath) ?: file.absolutePath,
+                    storagePath = normalizePath(file.absolutePath) ?: file.absolutePath,
                     lastModified = file.lastModified(),
                     length = file.length()
                 )
@@ -383,12 +432,6 @@ internal object OptionalModMetadataIndex {
                 dependencies = ArrayList(entry.dependencies)
             )
         }
-    }
-
-    private fun normalizeStoragePath(context: Context, rawPath: String?): String? {
-        return RuntimePaths.normalizeLegacyStsPath(context, rawPath)
-            ?.trim()
-            ?.ifEmpty { null }
     }
 
     private fun isReservedJarName(fileName: String): Boolean {

@@ -59,13 +59,28 @@ internal object MtsLaunchManifestValidator {
 
         return try {
             ZipFile(jarFile).use { zipFile ->
+                inspectZip(zipFile)
+            }
+        } catch (_: Throwable) {
+            ValidationResult(failure = ValidationFailure("读取根目录 ModTheSpire.json 失败"))
+        }
+    }
+
+    internal fun resolveLaunchModId(zipFile: ZipFile, rawManifest: String? = null): String {
+        val result = inspectZip(zipFile, rawManifest)
+        result.failure?.let { throw IOException(it.reason) }
+        return result.modId ?: throw IOException("根目录 ModTheSpire.json 缺少 modid")
+    }
+
+    private fun inspectZip(zipFile: ZipFile, rawManifest: String? = null): ValidationResult {
+        return try {
                 val manifestEntry = zipFile.getEntry(ROOT_MANIFEST_ENTRY)
                     ?: return ValidationResult(failure = ValidationFailure("jar 根目录缺少 ModTheSpire.json"))
                 if (manifestEntry.isDirectory) {
                     return ValidationResult(failure = ValidationFailure("jar 根目录的 ModTheSpire.json 不是文件"))
                 }
 
-                val rawJson = JarFileIoUtils.readEntry(zipFile, manifestEntry)
+                val rawJson = rawManifest ?: JarFileIoUtils.readEntry(zipFile, manifestEntry)
                 val root = JSONTokener(rawJson).nextValue()
                 val manifest = root as? JSONObject
                     ?: return ValidationResult(failure = ValidationFailure("根目录 ModTheSpire.json 不是有效的 JSON 对象"))
@@ -85,7 +100,6 @@ internal object MtsLaunchManifestValidator {
                 }
 
                 ValidationResult(modId = modId)
-            }
         } catch (_: Throwable) {
             ValidationResult(failure = ValidationFailure("读取根目录 ModTheSpire.json 失败"))
         }

@@ -101,7 +101,7 @@ internal object ModJarManifestParser {
         }
     }
 
-    private fun parseManifest(json: String?): ModJarSupport.ModManifestInfo? {
+    internal fun parseManifest(json: String?): ModJarSupport.ModManifestInfo? {
         if (json == null) {
             return null
         }

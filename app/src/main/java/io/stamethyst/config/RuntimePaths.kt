@@ -915,30 +915,32 @@ object RuntimePaths {
 
     @JvmStatic
     fun normalizeLegacyStsPath(context: Context, rawPath: String?): String? {
-        val raw = rawPath?.trim() ?: return null
-        if (raw.isEmpty()) {
-            return null
-        }
+        return legacyStsPathNormalizer(context)(rawPath)
+    }
 
-        val absolutePath = File(raw).absolutePath
+    /** Snapshot roots once for a batch; never retain a Context or cache storage roots globally. */
+    fun legacyStsPathNormalizer(context: Context): (String?) -> String? {
         val currentRootPath = stsRoot(context).absolutePath
-        if (absolutePath == currentRootPath ||
-            absolutePath.startsWith("$currentRootPath${File.separator}")
-        ) {
-            return absolutePath
-        }
-
-        knownLegacyStsRootCandidates(context).forEach { legacyRootPath ->
-            if (legacyRootPath == currentRootPath) {
-                return@forEach
+        val legacyRoots by lazy { knownLegacyStsRootCandidates(context) }
+        return normalize@ { rawPath ->
+            val raw = rawPath?.trim() ?: return@normalize null
+            if (raw.isEmpty()) return@normalize null
+            val absolutePath = File(raw).absolutePath
+            if (absolutePath == currentRootPath ||
+                absolutePath.startsWith("$currentRootPath${File.separator}")
+            ) {
+                return@normalize absolutePath
             }
-            when {
-                absolutePath == legacyRootPath -> return currentRootPath
-                absolutePath.startsWith("$legacyRootPath${File.separator}") ->
-                    return currentRootPath + absolutePath.substring(legacyRootPath.length)
+            legacyRoots.forEach { legacyRootPath ->
+                if (legacyRootPath == currentRootPath) return@forEach
+                when {
+                    absolutePath == legacyRootPath -> return@normalize currentRootPath
+                    absolutePath.startsWith("$legacyRootPath${File.separator}") ->
+                        return@normalize currentRootPath + absolutePath.substring(legacyRootPath.length)
+                }
             }
+            absolutePath
         }
-        return absolutePath
     }
 
     @JvmStatic
