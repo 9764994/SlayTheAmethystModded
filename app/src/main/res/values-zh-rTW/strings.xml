@@ -1270,6 +1270,7 @@
     <string name="ai_mod_editor_context_updating">目前有效上下文的估算值，在模型和工具執行檢查點更新。</string>
     <string name="ai_mod_editor_context_details">上次請求：輸入 %1$s / 輸出 %2$s tokens。成功壓縮 %3$d 次。</string>
     <string name="ai_mod_editor_cache_rates">輸入快取命中率：最近 %1$s · 累計 %2$s</string>
+    <string name="ai_mod_editor_cache_normalized">偵測到閘道分開回報未快取輸入，已將快取讀取/建立 tokens 加回輸入總量。此口徑由閘道回應推斷。</string>
     <string name="ai_mod_editor_cache_tokens">最近快取 / 輸入 tokens：%1$s / %2$s。快取統計涵蓋：%3$d / %4$d 次回應。</string>
     <string name="ai_mod_editor_cache_hint">快取讀取 tokens ÷ 輸入總 tokens。累計值按 token 加權，只統計伺服器回報快取用量的回應（含空回應重試），不含獨立摘要請求。-- 表示未回報。快取不減少上下文佔用；冷啟動、壓縮和伺服器過期可能降低命中率。</string>
     <string name="ai_mod_editor_context_limit">模型上下文上限</string>

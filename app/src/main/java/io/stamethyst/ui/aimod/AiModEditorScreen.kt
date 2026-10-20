@@ -826,6 +826,7 @@ fun LauncherAiModEditorScreen(
                         busy = viewModel.busy,
                         tools = viewModel.availableTools(),
                         contextState = viewModel.sessions.firstOrNull { it.id == viewModel.currentSessionId }?.context,
+                        endpoint = settings.endpoint.name,
                     )
                 },
                 )

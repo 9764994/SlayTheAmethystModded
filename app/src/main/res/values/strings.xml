@@ -1281,6 +1281,7 @@ Patch rule: keep Ori full-resolution glow/bloom rendering, but replace the blur 
     <string name="ai_mod_editor_context_updating">Estimated active context. Updated at model and tool checkpoints.</string>
     <string name="ai_mod_editor_context_details">Last request: %1$s input / %2$s output tokens. Successful compactions: %3$d.</string>
     <string name="ai_mod_editor_cache_rates">Input cache hit rate: last %1$s · cumulative %2$s</string>
+    <string name="ai_mod_editor_cache_normalized">Detected a gateway reporting uncached input separately. Input totals include cached reads/writes after normalization. This convention is inferred from the gateway response.</string>
     <string name="ai_mod_editor_cache_tokens">Last cached / input tokens: %1$s / %2$s. Cache reporting: %3$d / %4$d responses.</string>
     <string name="ai_mod_editor_cache_hint">Cached input tokens ÷ total input tokens. Cumulative rate is token-weighted and includes only responses with cache statistics, including empty retries; summary requests are excluded. -- means unreported. Caching does not reduce context occupancy; cold starts, compaction and server expiry may lower the rate.</string>
     <string name="ai_mod_editor_context_limit">Model context limit</string>

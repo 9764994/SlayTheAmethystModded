@@ -36,6 +36,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.stamethyst.R
 import io.stamethyst.backend.llm.AgentContextState
+import io.stamethyst.backend.llm.AgentCacheStats
 import io.stamethyst.backend.llm.DEFAULT_AGENT_CONTEXT_LIMIT
 import java.text.NumberFormat
 import java.util.Locale
@@ -45,6 +46,10 @@ internal data class AiToolInfo(
     val name: String,
     val descriptionRes: Int,
 )
+
+internal fun formatAiCacheRate(rate: Double?): String = rate?.let {
+    NumberFormat.getPercentInstance().apply { maximumFractionDigits = 1 }.format(it)
+} ?: "--"
 
 /**
  * Localized one-line description for an agent tool, keyed by its stable tool name. Unknown tools
@@ -84,6 +89,7 @@ internal fun AiContextCounter(
     busy: Boolean,
     tools: List<AiToolInfo> = emptyList(),
     contextState: AgentContextState? = null,
+    endpoint: String? = null,
 ) {
     val context = LocalContext.current
     val preferences = remember(context) { context.getSharedPreferences("ai_context_limits", Context.MODE_PRIVATE) }
@@ -138,6 +144,22 @@ internal fun AiContextCounter(
                             state.compactionCount,
                         ), style = MaterialTheme.typography.bodySmall)
                     }
+                    val cache = contextState?.takeIf { it.modelKey == modelKey }?.cacheStats
+                        ?.takeIf { endpoint == null || it.endpoint == endpoint } ?: AgentCacheStats()
+                    Text(stringResource(
+                        R.string.ai_mod_editor_cache_rates,
+                        formatAiCacheRate(cache.lastRate), formatAiCacheRate(cache.totalRate),
+                    ), style = MaterialTheme.typography.bodySmall)
+                    Text(stringResource(
+                        R.string.ai_mod_editor_cache_tokens,
+                        cache.lastReadTokens?.let { NumberFormat.getIntegerInstance().format(it) } ?: "--",
+                        cache.lastInputTokens?.let { NumberFormat.getIntegerInstance().format(it) } ?: "--",
+                        cache.reportedRequests, cache.requests,
+                    ), style = MaterialTheme.typography.bodySmall)
+                    Text(stringResource(R.string.ai_mod_editor_cache_hint),
+                        style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
+                    if (cache.inputExcludesCached) Text(stringResource(R.string.ai_mod_editor_cache_normalized),
+                        style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
                     if (tokens != null && limit > 0) {
                         Text(stringResource(R.string.ai_mod_editor_context_fraction, tokens.toLong() * 100 / limit, NumberFormat.getIntegerInstance().format(limit)))
                     }

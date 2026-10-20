@@ -159,7 +159,7 @@ class AgentCompactionNetworkAcceptanceTest {
         val prepared = manager.prepare(force = true)
         val state = manager.state
         assertTrue("The real summarizer must merge multiple fragments", summaryCalls > 1)
-        assertEquals(original.messages, state.messages)
+        assertEquals(original.messages, state.messages.take(original.messages.size))
         assertEquals(3, state.summarizedCount)
         assertEquals(1, state.compactionCount)
         assertEquals("patch-alpha-42", state.activePatchId)
@@ -169,11 +169,11 @@ class AgentCompactionNetworkAcceptanceTest {
         assertTrue(estimatedTokens < before)
         assertTrue(estimatedTokens < manager.budget.inputLimit)
         assertEquals(state, checkpoints.last())
-        assertEquals(original.messages[3].text, (prepared[1] as UserMessage).singleText())
-        assertEquals(recentCall.id(), (prepared[2] as AiMessage).toolExecutionRequests().single().id())
-        assertEquals(seed.thinking(), (prepared[2] as AiMessage).thinking())
-        assertEquals(recentCall.id(), (prepared[3] as ToolExecutionResultMessage).id())
-        assertTrue((prepared[0] as SystemMessage).text().contains(state.summary))
+        assertEquals(original.messages[3].text, (prepared[2] as UserMessage).singleText())
+        assertEquals(recentCall.id(), (prepared[3] as AiMessage).toolExecutionRequests().single().id())
+        assertEquals(seed.thinking(), (prepared[3] as AiMessage).thinking())
+        assertEquals(recentCall.id(), (prepared[4] as ToolExecutionResultMessage).id())
+        assertTrue((prepared[1] as UserMessage).singleText().contains(state.summary))
 
         val restored = Json.decodeFromString<AgentContextState>(Json.encodeToString(state))
         val restoredManager = AgentContextManager(restored, "You are a mod-editing agent. Report verified facts only.", "",

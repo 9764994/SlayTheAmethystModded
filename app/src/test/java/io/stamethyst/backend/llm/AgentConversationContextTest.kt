@@ -61,9 +61,9 @@ class AgentConversationContextTest {
         assertEquals(original.messages, manager.state.messages)
         assertEquals(2, manager.state.summarizedCount)
         assertEquals(1, manager.state.compactionCount)
-        assertEquals("Keep this exact request", (active[1] as UserMessage).singleText())
-        assertEquals("recent", (active[2] as AiMessage).toolExecutionRequests().single().id())
-        assertEquals("recent", (active[3] as ToolExecutionResultMessage).id())
+        assertEquals("Keep this exact request", (active[2] as UserMessage).singleText())
+        assertEquals("recent", (active[3] as AiMessage).toolExecutionRequests().single().id())
+        assertEquals("recent", (active[4] as ToolExecutionResultMessage).id())
         assertTrue(manager.state.estimatedTokens!! < 8000)
         val restored = manager(manager.state, limit = 8000).prepare()
         assertEquals(active, restored)
@@ -121,8 +121,8 @@ class AgentConversationContextTest {
         val manager = manager(original, limit = 8000)
         val active = manager.prepare()
         assertEquals(3, manager.state.summarizedCount)
-        assertEquals(2, active.size)
-        assertEquals("Do not enable patch-alpha", (active[1] as UserMessage).singleText())
+        assertEquals(3, active.size)
+        assertEquals("Do not enable patch-alpha", (active[2] as UserMessage).singleText())
         assertEquals(original.messages, manager.state.messages)
     }
 

@@ -1284,6 +1284,7 @@
     <string name="ai_mod_editor_context_updating">当前有效上下文的估算值，在模型和工具执行检查点更新。</string>
     <string name="ai_mod_editor_context_details">上次请求：输入 %1$s / 输出 %2$s tokens。成功压缩 %3$d 次。</string>
     <string name="ai_mod_editor_cache_rates">输入缓存命中率：最近 %1$s · 累计 %2$s</string>
+    <string name="ai_mod_editor_cache_normalized">检测到网关单独报告未缓存输入，已将缓存读取/创建 tokens 加回输入总量。该口径由网关响应推断。</string>
     <string name="ai_mod_editor_cache_tokens">最近缓存 / 输入 tokens：%1$s / %2$s。缓存统计覆盖：%3$d / %4$d 次响应。</string>
     <string name="ai_mod_editor_cache_hint">缓存读取 tokens ÷ 输入总 tokens。累计值按 token 加权，仅统计服务端报告缓存用量的响应（含空响应重试），不含独立摘要请求。-- 表示未报告。缓存不减少上下文占用；冷启动、压缩和服务端过期可能降低命中率。</string>
     <string name="ai_mod_editor_context_limit">模型上下文上限</string>

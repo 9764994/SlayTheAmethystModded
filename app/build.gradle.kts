@@ -502,8 +502,20 @@ val aiCompactionAcceptanceTestClass =
 val runAiCompactionAcceptance = gradle.startParameter.taskNames.any {
     it == "aiCompactionAcceptanceTest" || it.endsWith(":aiCompactionAcceptanceTest")
 }
+val aiCacheAcceptanceTestClass = "io.stamethyst.backend.llm.AgentCacheNetworkAcceptanceTest"
+val runAiCacheAcceptance = gradle.startParameter.taskNames.any {
+    it == "aiCacheAcceptanceTest" || it.endsWith(":aiCacheAcceptanceTest")
+}
 
 tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
+    if (name == "testDebugUnitTest" && runAiCacheAcceptance) {
+        filter { includeTestsMatching(aiCacheAcceptanceTestClass) }
+        systemProperty("sts.runAiCacheAcceptance", "true")
+        outputs.upToDateWhen { false }
+        testLogging.showStandardStreams = true
+    } else {
+        filter { excludeTestsMatching(aiCacheAcceptanceTestClass) }
+    }
     if (name == "testDebugUnitTest" && runAiCompactionAcceptance) {
         filter { includeTestsMatching(aiCompactionAcceptanceTestClass) }
         systemProperty("sts.runAiCompactionAcceptance", "true")
@@ -513,6 +525,12 @@ tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
     } else {
         filter { excludeTestsMatching(aiCompactionAcceptanceTestClass) }
     }
+}
+
+tasks.register("aiCacheAcceptanceTest") {
+    group = "verification"
+    description = "Manually tests prompt-cache reuse with deepseek-v4-flash using local OpenCode credentials."
+    dependsOn("testDebugUnitTest")
 }
 
 tasks.register("aiCompactionAcceptanceTest") {

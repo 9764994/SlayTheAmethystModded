@@ -85,6 +85,8 @@ data class OpenAiCompatibleModelConfig(
     val endpoint: LlmEndpoint = LlmEndpoint.CHAT_COMPLETIONS,
     val requestTimeoutSeconds: Int = DEFAULT_LLM_REQUEST_TIMEOUT_SECONDS,
     val reasoningEffort: LlmReasoningEffort = LlmReasoningEffort.OFF,
+    /** Stable, opaque conversation affinity; never contains a path, credential or user prompt. */
+    val cacheAffinity: String? = null,
 )
 
 enum class LlmEndpoint {
@@ -94,6 +96,9 @@ enum class LlmEndpoint {
 
 object AgentChatModelFactory {
     private const val CONNECT_TIMEOUT_SECONDS = 30L
+
+    private fun affinityHeaders(config: OpenAiCompatibleModelConfig): Map<String, String> =
+        config.cacheAffinity?.let { mapOf("x-session-affinity" to it, "X-Session-Id" to it) } ?: emptyMap()
 
     private fun requestTimeout(config: OpenAiCompatibleModelConfig): java.time.Duration =
         java.time.Duration.ofSeconds(config.requestTimeoutSeconds
@@ -135,6 +140,7 @@ object AgentChatModelFactory {
             .httpClientBuilder(httpClientBuilder(config))
             .baseUrl(config.baseUrl)
             .apiKey(config.apiKey)
+            .customHeaders(affinityHeaders(config))
             .modelName(config.modelName)
             .reasoningEffort(config.reasoningEffort.requestValue)
             .customParameters(chatCustomParameters(config))
@@ -147,6 +153,7 @@ object AgentChatModelFactory {
             .httpClientBuilder(httpClientBuilder(config))
             .baseUrl(config.baseUrl)
             .apiKey(config.apiKey)
+            .customHeaders(affinityHeaders(config))
             .modelName(config.modelName)
             .reasoningEffort(config.reasoningEffort.requestValue)
             .build()
@@ -160,6 +167,7 @@ object AgentChatModelFactory {
                 .httpClientBuilder(httpClientBuilder(config))
                 .baseUrl(config.baseUrl)
                 .apiKey(config.apiKey)
+                .customHeaders(affinityHeaders(config))
                 .modelName(config.modelName)
                 .reasoningEffort(config.reasoningEffort.requestValue)
                 .customParameters(chatCustomParameters(config))
@@ -1918,7 +1926,6 @@ class PolicyGatedAgentGateway(
                 throw AgentEmptyResponseException(finishReason(lastResponse))
             }
             val aiMessage = normalizeToolCallMessage(completed.aiMessage())
-            contextManager?.let { it.observe(completed, it.requestEstimate()) }
             messages += aiMessage
             contextManager?.append(aiMessage)
             val text = aiMessage.text().orEmpty()
@@ -1993,7 +2000,6 @@ class PolicyGatedAgentGateway(
                 throw AgentEmptyResponseException(finishReason(lastResult.response))
             }
             val aiMessage = normalizeToolCallMessage(result.response.aiMessage())
-            contextManager?.let { it.observe(result.response, it.requestEstimate()) }
             messages += aiMessage
             contextManager?.append(aiMessage)
             val text = result.text.ifBlank { aiMessage.text().orEmpty() }
@@ -2028,7 +2034,7 @@ class PolicyGatedAgentGateway(
                 if (contextManager != null && isAgentContextOverflow(error)) {
                     // Context overflow gets an immediate compaction retry, not a delayed network retry.
                     active = contextManager.prepare(force = true)
-                    return request(active)
+                    return observeTurn(request(active))
                 }
                 val delaySeconds = INITIAL_RETRY_DELAY_SECONDS shl attempt
                 onRetry(attempt + 1, delaySeconds, error)
@@ -2038,9 +2044,22 @@ class PolicyGatedAgentGateway(
                     Thread.currentThread().interrupt()
                     throw java.util.concurrent.CancellationException("LLM retry cancelled")
                 }
+                return@repeat
             }
+            // A checkpoint failure must never retry an already successful, billable request.
+            return observeTurn(result)
         }
         throw requireNotNull(lastError)
+    }
+
+    private fun <T> observeTurn(result: T): T {
+        val response = when (result) {
+            is ChatResponse -> result
+            is StreamingResult -> result.response
+            else -> null
+        }
+        if (response != null) contextManager?.let { it.observe(response, it.requestEstimate()) }
+        return result
     }
 
     private fun chatRequest(messages: List<ChatMessage>) = ChatRequest.builder()

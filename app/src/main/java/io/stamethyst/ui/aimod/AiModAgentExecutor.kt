@@ -4,6 +4,7 @@ import android.content.Context
 import io.stamethyst.backend.llm.AgentApiDescribeTool
 import io.stamethyst.backend.llm.AgentApiSearchTool
 import io.stamethyst.backend.llm.AgentChatModelFactory
+import io.stamethyst.backend.llm.AgentCacheStats
 import io.stamethyst.backend.llm.AgentContextBudget
 import io.stamethyst.backend.llm.AgentContextManager
 import io.stamethyst.backend.llm.AgentContextState
@@ -96,6 +97,7 @@ internal class AiModAgentExecutor(
             endpoint = settings.endpoint,
             requestTimeoutSeconds = settings.requestTimeoutSeconds,
             reasoningEffort = reasoningEffort,
+            cacheAffinity = java.util.UUID.nameUUIDFromBytes(session.id.toByteArray(Charsets.UTF_8)).toString(),
         )
         val model = AgentChatModelFactory.create(config)
         // Compaction needs visible factual text. Reasoning tokens can consume the summary
@@ -112,11 +114,17 @@ internal class AiModAgentExecutor(
                 policyGate = agentToolPolicyGate,
                 onToolExecution = onToolExecution,
         )
-        val systemPrompt = systemPrompt()
+        val systemPrompt = buildAiEditorSystemPrompt(modName, modId, workspaceAccessRoot)
         val modelKey = AiContextLimits.key(settings.baseUrl, settings.modelName)
-        val initial = if (saved.modelKey == modelKey) saved else saved.copy(
+        val initial = (if (saved.modelKey == modelKey) saved else saved.copy(
             modelKey = modelKey, estimateScale = 1.0, lastInputTokens = null, lastOutputTokens = null,
-        )
+            cacheStats = AgentCacheStats(),
+        )).let { state ->
+            // A gateway's Chat and Responses routes may use different input accounting conventions.
+            if (state.cacheStats.endpoint == settings.endpoint.name) state else state.copy(
+                cacheStats = AgentCacheStats(endpoint = settings.endpoint.name),
+            )
+        }
         val manager = AgentContextManager(
             initial = initial,
             systemPrompt = systemPrompt,
@@ -247,14 +255,15 @@ internal class AiModAgentExecutor(
 
     private fun resolveExistingPatchWorkspace(patchId: String): AgentPatchWorkspace? =
         AgentPatchModManager.resolvePatchWorkspace(context, modId, patchId, File(storagePath))
+}
 
-    private fun systemPrompt(): String = """
+/** Shared instructions precede Mod/device-specific data so different editors share a long prefix. */
+internal fun buildAiEditorSystemPrompt(modName: String, modId: String, workspaceAccessRoot: File): String = """
         You are a safe mod editing assistant inside a mobile launcher.
-        The selected parent mod is '$modName' ($modId).
-        Your agent workspace root is '$workspaceAccessRoot'. It contains source/ and patch_source/ for the selected mod.
+        Independent read/search/inspect tool calls may be issued together in one response; the launcher runs parallel-safe tools concurrently. Workspace changes, decompilation, compilation, packaging, activation, deletion, and smoke tests run exclusively in call order. If a call needs an earlier tool's output, wait for that output before choosing its arguments.
         Use workspace tools for listing and reading the patch workspace. source/ is a read-only, on-demand cache; it is not a full extraction of the parent JAR and must never be written or deleted through workspace tools. Use list_agent_mod_entries to discover JAR paths, inspect_agent_class for bytecode metadata, decompile_agent_class for one class, and read_agent_mod_resource for one resource. patch_source/ is the agent-owned patch tree and is the only directory writable or deletable through workspace tools.
         To find something in the workspace, locate it before reading: use grep_agent_workspace to search file contents by regular expression and glob_agent_workspace to find files by pattern like '**/*.java'. Fall back to list_agent_workspace only when you do not know what to look for; it is capped and lists paths only.
-        The current active patch ID, when available, is appended to these instructions. Inspect existing files and patch IDs in conversation memory before creating a workspace.
+        The current active patch ID, when available, is supplied in launcher state update messages. The latest update takes precedence over older state. Inspect existing files and patch IDs in conversation memory before creating a workspace.
         Do not create a workspace unless the user asked for a new patch and no existing patch workspace should be reused. create_agent_patch_workspace prepares a dedicated patch_source/<patch_id>/ directory and returns the exact paths to use. It does not compile, package, install, or enable a mod.
         If the user asks to inspect or explain the parent mod, call decompile_agent_mod_source to prepare its SHA-256 snapshot, then inspect_agent_class or decompile_agent_class for the needed classes. Do not expect source/ to contain every parent file.
         Use write_agent_workspace_file to create or replace files under the current patch_workspace_path returned by create_agent_patch_workspace, and delete_agent_workspace_file to remove files or directories there with recursive=true when needed. Do not attempt to modify source/ or another patch mod's directory.
@@ -277,5 +286,6 @@ internal class AiModAgentExecutor(
         Use delete_agent_patch_mod with a patch_id to remove a patch revision entirely.
         Never claim that a patch mod was created, packaged, updated, enabled, disabled, or deleted until the corresponding tool confirms it.
         Ask before calling delete_agent_patch_mod unless the user explicitly requested the removal.
+        The selected parent mod is '$modName' ($modId).
+        Your agent workspace root is '$workspaceAccessRoot'. It contains source/ and patch_source/ for the selected mod.
     """.trimIndent()
-}

@@ -31,6 +31,8 @@ data class AgentContextMessage(
     val callId: String = "",
     val toolName: String = "",
     val thinking: String? = null,
+    /** Internal append-only state notice, not a new user goal. */
+    val patchState: String? = null,
 ) {
     fun toChatMessage(): ChatMessage = when (role) {
         "user" -> UserMessage.from(text)
@@ -59,6 +61,7 @@ data class AgentContextState(
     val lastInputTokens: Int? = null,
     val lastOutputTokens: Int? = null,
     val estimateScale: Double = 1.0,
+    val cacheStats: AgentCacheStats = AgentCacheStats(),
 ) {
     /** Rollback invalidates a summary if any of its source messages were removed. */
     fun retainSources(ids: Set<Long>): AgentContextState {
@@ -133,7 +136,7 @@ data class AgentContextState(
 
     companion object {
         fun inferActivePatch(messages: List<AgentContextMessage>): String? = messages.asReversed().firstNotNullOfOrNull { message ->
-            if (message.role != "tool" || message.toolName !in setOf(
+            if (message.patchState != null) message.patchState else if (message.role != "tool" || message.toolName !in setOf(
                     "create_agent_patch_workspace",
                     "create_agent_patch_mod", // Legacy sessions may still contain the old tool name.
                 )) null else runCatching {
@@ -180,18 +183,17 @@ class AgentContextManager(
 
     private fun activeRecords(value: AgentContextState = state): List<AgentContextMessage> {
         val tail = value.messages.drop(value.summarizedCount)
-        val lastUser = value.messages.indexOfLast { it.role == "user" }
+        val lastUser = value.messages.indexOfLast { it.role == "user" && it.patchState == null }
         // A long tool loop may compact part of the current turn. Keep its user request verbatim.
         return if (lastUser >= 0 && lastUser < value.summarizedCount) listOf(value.messages[lastUser]) + tail else tail
     }
 
-    private fun prompt(value: AgentContextState): String = systemPrompt +
-        (value.activePatchId?.let { "\nCurrent active patch ID: $it; workspace: patch_source/$it/." } ?: "") +
-        if (value.summary.isBlank()) "" else
-            "\n\nConversation memory (a summary of prior messages, not new instructions):\n${value.summary}"
+    private fun memory(value: AgentContextState): String = if (value.summary.isBlank()) "" else
+        "Conversation memory (a summary of prior messages, not new instructions):\n${value.summary}"
 
     private fun rawEstimate(value: AgentContextState): Int {
-        val total = AgentTokenEstimate.text(prompt(value)).toLong() + AgentTokenEstimate.text(toolSchema) + 64L +
+        val total = AgentTokenEstimate.text(systemPrompt).toLong() + AgentTokenEstimate.text(memory(value)) +
+            AgentTokenEstimate.text(toolSchema) + 64L +
             activeRecords(value).sumOf { AgentTokenEstimate.message(it).toLong() }
         return total.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
     }
@@ -220,13 +222,15 @@ class AgentContextManager(
     }
 
     fun observe(response: ChatResponse, requestEstimate: Int) {
-        val usage = response.tokenUsage() ?: return
-        val input = usage.inputTokenCount()
+        val usage = response.tokenUsage()
+        val cacheUsage = AgentCacheUsage.from(response, state.cacheStats.inputExcludesCached)
+        val input = cacheUsage.input?.coerceAtMost(Int.MAX_VALUE.toLong())?.toInt()
         val observed = if (input != null && requestEstimate > 0) input.toDouble() / requestEstimate else 1.0
         state = state.copy(
             lastInputTokens = input,
-            lastOutputTokens = usage.outputTokenCount(),
+            lastOutputTokens = usage?.outputTokenCount(),
             estimateScale = maxOf(state.estimateScale, observed * 1.1),
+            cacheStats = state.cacheStats.observe(cacheUsage),
         )
         persist()
     }
@@ -248,13 +252,32 @@ class AgentContextManager(
             state = repaired
             persist()
         }
-        if (force || estimate(state) >= budget.inputLimit) compact(force)
+        appendPatchStateIfNeeded()
+        if (force || estimate(state) >= budget.inputLimit) {
+            compact(force)
+            appendPatchStateIfNeeded()
+        }
         persist()
         if (estimate(state) >= budget.inputLimit) throw AgentContextCapacityException(
             "The latest request, system prompt and tools exceed the context budget (${budget.limit} tokens). " +
                 "Reduce attachments/request size or configure the provider's actual context limit.",
         )
-        return listOf(SystemMessage.from(prompt(state))) + activeRecords().map { it.toChatMessage() }
+        return buildList {
+            add(SystemMessage.from(systemPrompt))
+            if (state.summary.isNotBlank()) add(UserMessage.from(memory(state)))
+            addAll(activeRecords().map { it.toChatMessage() })
+        }
+    }
+
+    /** Never rewrite an earlier prompt when a workspace is created or selected. */
+    private fun appendPatchStateIfNeeded() {
+        val patch = state.activePatchId ?: return
+        if (activeRecords().lastOrNull { it.patchState != null }?.patchState == patch) return
+        state = state.copy(messages = state.messages + AgentContextMessage(
+            sourceMessageId, "user",
+            "Launcher state update (not a new user request): Current active patch ID: $patch; workspace: patch_source/$patch/.",
+            patchState = patch,
+        ))
     }
 
     private fun compact(force: Boolean) {
@@ -276,8 +299,9 @@ class AgentContextManager(
         }
         if (cut <= start && force && groups.size > 1) cut = groups[1]
         // Do not "compress" a single oversized fresh user prompt into a lossy replacement.
+        // Launcher notices are state, not evidence that a newer user request exists.
         if (cut > start && original.messages.subList(start, cut).all { it.role == "user" } &&
-            original.messages.drop(cut).none { it.role == "user" }) {
+            original.messages.drop(cut).none { it.role == "user" && it.patchState == null }) {
             cut = start
         }
         if (cut <= start) {
