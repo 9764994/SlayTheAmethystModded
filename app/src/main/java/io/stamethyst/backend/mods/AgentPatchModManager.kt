@@ -193,6 +193,7 @@ object AgentPatchModManager {
                 StandardCopyOption.REPLACE_EXISTING,
             )
         }
+        synchronized(descriptorCache) { descriptorCache.remove(outputJar.absolutePath) }
         return AgentPatchModInfo(
             parentModId = ModManager.normalizeModId(parentDependency),
             patchId = workspace.patchId,
@@ -398,6 +399,7 @@ object AgentPatchModManager {
         } finally {
             temp.delete()
         }
+        synchronized(descriptorCache) { descriptorCache.remove(existing.jarFile.absolutePath) }
         return existing.copy(name = normalizedName, description = normalizedDescription)
     }
 
@@ -479,7 +481,25 @@ object AgentPatchModManager {
         return result
     }
 
-    private fun readDescriptor(jarFile: File): AgentPatchModInfo? = runCatching {
+    private data class DescriptorCacheEntry(val modified: Long, val size: Long, val info: AgentPatchModInfo?)
+    private val descriptorCache = LinkedHashMap<String, DescriptorCacheEntry>(64, 0.75f, true)
+
+    private fun readDescriptor(jarFile: File): AgentPatchModInfo? {
+        val modified = jarFile.lastModified()
+        val size = jarFile.length()
+        synchronized(descriptorCache) {
+            descriptorCache[jarFile.absolutePath]?.takeIf { it.modified == modified && it.size == size }
+                ?.let { return it.info }
+        }
+        val info = readDescriptorUncached(jarFile)
+        synchronized(descriptorCache) {
+            descriptorCache[jarFile.absolutePath] = DescriptorCacheEntry(modified, size, info)
+            while (descriptorCache.size > 512) descriptorCache.remove(descriptorCache.keys.first())
+        }
+        return info
+    }
+
+    private fun readDescriptorUncached(jarFile: File): AgentPatchModInfo? = runCatching {
         ZipFile(jarFile).use { zip ->
             val entry = zip.getEntry(DESCRIPTOR_ENTRY) ?: return null
             val descriptor = JSONObject(zip.getInputStream(entry).use { it.readBytes() }.toString(StandardCharsets.UTF_8))
