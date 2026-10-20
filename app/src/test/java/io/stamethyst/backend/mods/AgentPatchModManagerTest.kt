@@ -38,7 +38,9 @@ class AgentPatchModManagerTest {
         }
 
         val workspace = AgentPatchModManager.createWorkspace(context, "Parent", source)
-        assertTrue(workspace.sourceRoot.resolve("data/config.txt").isFile)
+        assertTrue(workspace.sourceRoot.isDirectory)
+        assertFalse(JSONObject(workspace.root.resolve("mod-metadata.json").readText()).getBoolean("source_extracted"))
+        assertEquals("on_demand", JSONObject(workspace.root.resolve("mod-metadata.json").readText()).getString("source_mode"))
         assertEquals(RuntimePaths.agentModWorkspaceRoot(context, "parent"), workspace.root)
         assertEquals(RuntimePaths.agentModSourceRoot(context, "parent"), workspace.sourceRoot)
         assertEquals(

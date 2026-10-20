@@ -16,7 +16,7 @@ import java.util.zip.ZipOutputStream
 
 class AgentModInspectionManagerTest {
     @Test
-    fun createInspection_extractsSourceIntoSharedModWorkspace() {
+    fun createInspection_preparesOnDemandSourceCacheWithoutExtractingJar() {
         val root = Files.createTempDirectory("agent-mod-inspection").toFile()
         val context = testContext(root)
         val source = File(root, "source.jar")
@@ -36,13 +36,22 @@ class AgentModInspectionManagerTest {
         )
 
         assertEquals("ShoujoKageki", inspection.parentModId)
-        assertTrue(inspection.sourceRoot.resolve("ModTheSpire.json").isFile)
-        assertTrue(inspection.sourceRoot.resolve("com/example/Parent.class").isFile)
         assertEquals(RuntimePaths.agentModWorkspaceRoot(context, "shoujokageki"), inspection.root)
+        assertEquals(RuntimePaths.agentModSourceRoot(context, "shoujokageki"), inspection.sourceRoot)
+        assertTrue(inspection.sourceRoot.isDirectory)
+        assertTrue("Inspection must not eagerly extract JAR entries", inspection.sourceRoot.listFiles()!!.isEmpty())
         assertFalse(inspection.root.resolve("patch_source").exists())
         val metadata = JSONObject(inspection.root.resolve("source-metadata.json").readText())
         assertEquals("ShoujoKageki", metadata.getString("parent_mod_id"))
-        assertFalse(metadata.getBoolean("source_decompiled"))
+        assertEquals(inspection.inspectionId, metadata.getString("inspection_id"))
+        assertEquals(source.canonicalPath, metadata.getString("source_path"))
+        assertEquals(AgentModJarReader.sha256(source), inspection.sourceSha256)
+        assertEquals(inspection.sourceSha256, metadata.getString("source_sha256"))
+        assertEquals("source", metadata.getString("source_root"))
+        assertEquals("on_demand", metadata.getString("source_mode"))
+        assertFalse(metadata.getBoolean("source_extracted"))
+        // Decompilation state is only recorded once a class has actually been materialized.
+        assertFalse(metadata.has("source_decompiled"))
     }
 
     private fun testContext(root: File): Context {
