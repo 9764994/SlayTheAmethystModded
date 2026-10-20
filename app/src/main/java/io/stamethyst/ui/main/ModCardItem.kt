@@ -118,7 +118,6 @@ internal data class ModCardCallbacks(
     val onSetAgentPatchEnabled: (ModItemUi, io.stamethyst.model.AgentPatchModUi, Boolean) -> Unit = { _, _, _ -> },
     val onExportAgentPatch: (ModItemUi, io.stamethyst.model.AgentPatchModUi) -> Unit = { _, _ -> },
     val onShareAgentPatch: (ModItemUi, io.stamethyst.model.AgentPatchModUi) -> Unit = { _, _ -> },
-    val onUploadAgentPatch: (ModItemUi, io.stamethyst.model.AgentPatchModUi) -> Unit = { _, _ -> },
     val onRenameAgentPatch: (ModItemUi, io.stamethyst.model.AgentPatchModUi, String, String) -> Unit = { _, _, _, _ -> },
     val onRefreshAgentPatchMods: () -> Unit = {},
     val onSetImportPatchEnabled: (ModItemUi, String, Boolean) -> Unit = { _, _, _ -> },
@@ -166,7 +165,6 @@ internal fun ModCard(
     var showSuggestionDialog by remember(mod.storagePath, suggestionText) { mutableStateOf(false) }
     var showImportPatchDialog by remember(mod.storagePath) { mutableStateOf(false) }
     var showAgentPatchCatalogue by remember(mod.storagePath) { mutableStateOf(false) }
-    var initialAgentPatchTab by remember(mod.storagePath) { mutableStateOf(AgentPatchCatalogueTab.GITHUB) }
     var agentPatchDialogLocalOnly by remember(mod.storagePath) { mutableStateOf(false) }
     var agentPatchActionsOnly by remember(mod.storagePath) { mutableStateOf(false) }
     var agentPatchDetails by remember(mod.storagePath) { mutableStateOf<io.stamethyst.model.AgentPatchModUi?>(null) }
@@ -369,7 +367,6 @@ internal fun ModCard(
             agentPatchMods = mod.agentPatchMods,
             onSetAgentPatchEnabled = { patch, enabled -> callbacks.onSetAgentPatchEnabled(mod, patch, enabled) },
             onOpenAgentPatchCatalogue = {
-                initialAgentPatchTab = AgentPatchCatalogueTab.GITHUB
                 agentPatchDialogLocalOnly = false
                 agentPatchActionsOnly = false
                 initialLocalActionPatchId = null
@@ -540,7 +537,6 @@ internal fun ModCard(
                         }
                         androidx.compose.material3.IconButton(
                             onClick = {
-                                initialAgentPatchTab = AgentPatchCatalogueTab.LOCAL
                                 initialLocalActionPatchId = patch.patchId
                                 initialLocalUploadPatchId = null
                                 agentPatchDialogLocalOnly = true
@@ -757,15 +753,6 @@ internal fun ModCard(
             AiEditorNewBadgeStore.markSeen(context)
             callbacks.onOpenAiEditor(mod)
         },
-        onUploadAgentPatch = {
-            initialAgentPatchTab = AgentPatchCatalogueTab.LOCAL
-            initialLocalActionPatchId = null
-            initialLocalUploadPatchId = null
-            agentPatchDialogLocalOnly = true
-            agentPatchActionsOnly = true
-            agentPatchDetails = null
-            showAgentPatchCatalogue = true
-        },
         onAssociate = { callbacks.onAssociateMod(mod) },
         onExport = { callbacks.onExportMod(mod) },
         onShare = { callbacks.onShareMod(mod) },
@@ -778,7 +765,6 @@ internal fun ModCard(
             mod = mod,
             localPatches = mod.agentPatchMods,
             workshopId = mod.workshop?.publishedFileId,
-            initialTab = initialAgentPatchTab,
             initialLocalActionPatchId = initialLocalActionPatchId,
             initialLocalUploadPatchId = initialLocalUploadPatchId,
             localOnly = agentPatchDialogLocalOnly,

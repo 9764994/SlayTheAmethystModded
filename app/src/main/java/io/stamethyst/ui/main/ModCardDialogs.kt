@@ -79,7 +79,6 @@ internal fun ModActionsDialog(
     onOpenWorkshopDetails: () -> Unit = {},
     showAiEditorNewBadge: Boolean = false,
     onOpenAiEditor: () -> Unit = {},
-    onUploadAgentPatch: () -> Unit = {},
     onAssociate: () -> Unit,
     onExport: () -> Unit,
     onShare: () -> Unit,
@@ -179,16 +178,6 @@ internal fun ModActionsDialog(
                                 onDismiss()
                                 onOpenAiEditor()
                             }
-                        )
-                        ModActionOptionItem(
-                            text = stringResource(R.string.main_mod_agent_patch_upload_test),
-                            description = stringResource(R.string.main_mod_agent_patch_upload_test_desc),
-                            icon = R.drawable.ic_code,
-                            enabled = controlsEnabled,
-                            onClick = {
-                                onDismiss()
-                                onUploadAgentPatch()
-                            },
                         )
                         ModActionOptionItem(
                             text = stringResource(R.string.main_mod_export),

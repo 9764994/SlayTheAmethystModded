@@ -20,8 +20,13 @@ import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.MultipartBody
 import okhttp3.Request
+import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.asRequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
+import okio.Buffer
+import okio.BufferedSink
+import okio.ForwardingSink
+import okio.buffer
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -54,6 +59,38 @@ data class AgentPatchUploadResult(
     val commitUrl: String,
     val indexUrl: String,
     val indexing: String,
+)
+
+enum class AgentPatchInstallStage {
+    PREPARING,
+    DOWNLOADING,
+    VERIFYING,
+    INSPECTING,
+    PACKAGING,
+    INSTALLING,
+    DONE,
+}
+
+data class AgentPatchInstallProgress(
+    val stage: AgentPatchInstallStage,
+    val fraction: Float,
+    val downloadedBytes: Long = 0L,
+    val totalBytes: Long = 0L,
+)
+
+enum class AgentPatchUploadStage {
+    PREPARING,
+    PACKAGING_SOURCES,
+    UPLOADING,
+    PROCESSING,
+    DONE,
+}
+
+data class AgentPatchUploadProgress(
+    val stage: AgentPatchUploadStage,
+    val fraction: Float,
+    val uploadedBytes: Long = 0L,
+    val totalBytes: Long = 0L,
 )
 
 object AgentPatchCatalogueService {
@@ -154,7 +191,9 @@ object AgentPatchCatalogueService {
         context: Context,
         parentModId: String,
         patch: RemoteAgentPatch,
+        onProgress: (AgentPatchInstallProgress) -> Unit = {},
     ): AgentPatchModInfo = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        onProgress(AgentPatchInstallProgress(AgentPatchInstallStage.PREPARING, 0f))
         val normalizedParent = ModManager.normalizeModId(parentModId)
         if (normalizedParent.isBlank() || patch.size !in 1..MAX_PATCH_BYTES) {
             throw IOException("Invalid AI patch catalogue entry.")
@@ -166,20 +205,36 @@ object AgentPatchCatalogueService {
         val downloaded = File(targetDir, ".$stablePatchId.${System.nanoTime()}.download")
         val packaged = File(targetDir, ".$stablePatchId.${System.nanoTime()}.tmp")
         try {
-            downloadToFile(context, patch.downloadUrl, downloaded, patch.size)
+            onProgress(AgentPatchInstallProgress(AgentPatchInstallStage.DOWNLOADING, 0.02f))
+            downloadToFile(context, patch.downloadUrl, downloaded, patch.size) { fraction, downloadedBytes, totalBytes ->
+                onProgress(
+                    AgentPatchInstallProgress(
+                        stage = AgentPatchInstallStage.DOWNLOADING,
+                        fraction = (0.02f + fraction * 0.68f).coerceIn(0.02f, 0.70f),
+                        downloadedBytes = downloadedBytes,
+                        totalBytes = totalBytes,
+                    )
+                )
+            }
+            onProgress(AgentPatchInstallProgress(AgentPatchInstallStage.VERIFYING, 0.72f))
             if (!sha256(downloaded).equals(patch.sha256, ignoreCase = true)) {
                 throw IOException("AI patch SHA-256 does not match the catalogue.")
             }
+            onProgress(AgentPatchInstallProgress(AgentPatchInstallStage.INSPECTING, 0.80f))
             val manifest = validateRemoteJar(downloaded, normalizedParent, patch)
             val parentDependency = manifest.getJSONArray("dependencies").let { dependencies ->
                 (0 until dependencies.length()).map { dependencies.optString(it) }
                     .firstOrNull { ModManager.normalizeModId(it) == normalizedParent }
             } ?: throw IOException("Patch JAR does not depend on the selected mod.")
+            onProgress(AgentPatchInstallProgress(AgentPatchInstallStage.PACKAGING, 0.88f))
             repackageWithLocalDescriptor(downloaded, packaged, parentDependency, stablePatchId, patch)
+            onProgress(AgentPatchInstallProgress(AgentPatchInstallStage.INSTALLING, 0.95f))
             replaceAtomically(packaged, targetJar)
-            AgentPatchModManager.listPackaged(context, normalizedParent)
+            val installed = AgentPatchModManager.listPackaged(context, normalizedParent)
                 .firstOrNull { it.patchId == stablePatchId }
                 ?: throw IOException("Installed AI patch failed validation.")
+            onProgress(AgentPatchInstallProgress(AgentPatchInstallStage.DONE, 1f))
+            installed
         } finally {
             downloaded.delete()
             packaged.delete()
@@ -194,7 +249,9 @@ object AgentPatchCatalogueService {
         author: AgentPatchUploadAuthor,
         consent: Boolean,
         targetVersions: List<String>,
+        onProgress: (AgentPatchUploadProgress) -> Unit = {},
     ): AgentPatchUploadResult = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        onProgress(AgentPatchUploadProgress(AgentPatchUploadStage.PREPARING, 0f))
         if (workshopId == null || workshopId == 0uL) {
             throw IOException("This mod has no Workshop ID required by the public patch catalogue.")
         }
@@ -209,6 +266,7 @@ object AgentPatchCatalogueService {
             throw IOException("The packaged AI patch JAR is missing or too large.")
         }
 
+        onProgress(AgentPatchUploadProgress(AgentPatchUploadStage.PACKAGING_SOURCES, 0.03f))
         val sourceZip = createSourceArchive(context, parentModId, patch.patchId)
         try {
             val metadata = JSONObject()
@@ -236,10 +294,27 @@ object AgentPatchCatalogueService {
             sourceZip?.let { file ->
                 multipart.addFormDataPart("source", file.name, file.asRequestBody("application/zip".toMediaType()))
             }
+            onProgress(AgentPatchUploadProgress(AgentPatchUploadStage.UPLOADING, 0.1f))
+            val requestBody = ProgressRequestBody(
+                delegate = multipart.build(),
+                onProgress = { fraction, uploadedBytes, totalBytes ->
+                    onProgress(
+                        AgentPatchUploadProgress(
+                            stage = AgentPatchUploadStage.UPLOADING,
+                            fraction = (0.1f + fraction * 0.7f).coerceIn(0.1f, 0.8f),
+                            uploadedBytes = uploadedBytes,
+                            totalBytes = totalBytes,
+                        )
+                    )
+                },
+                onCompleted = {
+                    onProgress(AgentPatchUploadProgress(AgentPatchUploadStage.PROCESSING, 0.85f))
+                },
+            )
             val request = Request.Builder()
                 .url(UPLOAD_URL)
                 .header("User-Agent", USER_AGENT)
-                .post(multipart.build())
+                .post(requestBody)
                 .build()
             val responseBytes = sharedClient(context).newCall(request).execute().use { response ->
                 val bytes = response.body?.byteStream()?.let { readBounded(it, 128 * 1024) } ?: ByteArray(0)
@@ -251,12 +326,13 @@ object AgentPatchCatalogueService {
             }
             val body = JSONObject(responseBytes.toString(Charsets.UTF_8))
             if (!body.optBoolean("ok")) throw IOException(body.optString("message", "Patch upload failed."))
-            AgentPatchUploadResult(
-                commitUrl = body.optString("commitUrl").takeIf(String::isNotBlank)
-                    ?: throw IOException("Upload completed but returned no commit URL."),
+            val result = AgentPatchUploadResult(
+                commitUrl = body.optString("commitUrl"),
                 indexUrl = body.optString("indexUrl"),
                 indexing = body.optString("indexing"),
             )
+            onProgress(AgentPatchUploadProgress(AgentPatchUploadStage.DONE, 1f))
+            result
         } finally {
             sourceZip?.delete()
         }
@@ -433,7 +509,13 @@ object AgentPatchCatalogueService {
         }
     }
 
-    private fun downloadToFile(context: Context, url: String, target: File, expectedSize: Long) {
+    private fun downloadToFile(
+        context: Context,
+        url: String,
+        target: File,
+        expectedSize: Long,
+        onProgress: (fraction: Float, downloadedBytes: Long, totalBytes: Long) -> Unit = { _, _, _ -> },
+    ) {
         val request = Request.Builder().url(url).get().header("User-Agent", USER_AGENT).build()
         sharedClient(context).newCall(request).execute().use { response ->
             if (!response.isSuccessful) throw IOException("Patch download failed (HTTP ${response.code}).")
@@ -443,6 +525,7 @@ object AgentPatchCatalogueService {
             target.outputStream().buffered().use { output ->
                 val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
                 var count = 0L
+                var lastPercent = -1
                 while (true) {
                     if (Thread.currentThread().isInterrupted) throw IOException("Patch download was cancelled.")
                     val read = input.read(buffer)
@@ -451,6 +534,11 @@ object AgentPatchCatalogueService {
                     count += read
                     if (count > expectedSize || count > MAX_PATCH_BYTES) throw IOException("Patch download exceeds its size limit.")
                     output.write(buffer, 0, read)
+                    val percent = ((count * 100) / expectedSize).toInt().coerceIn(0, 100)
+                    if (percent != lastPercent) {
+                        lastPercent = percent
+                        onProgress(percent / 100f, count, expectedSize)
+                    }
                 }
                 if (count != expectedSize) throw IOException("Patch download size is incomplete.")
             }
@@ -524,6 +612,41 @@ object AgentPatchCatalogueService {
             }
         }
         return digest.digest().joinToString("") { "%02x".format(it.toInt() and 0xff) }
+    }
+
+    private class ProgressRequestBody(
+        private val delegate: RequestBody,
+        private val onProgress: (fraction: Float, uploadedBytes: Long, totalBytes: Long) -> Unit,
+        private val onCompleted: () -> Unit,
+    ) : RequestBody() {
+        override fun contentType() = delegate.contentType()
+
+        override fun contentLength(): Long = delegate.contentLength()
+
+        override fun writeTo(sink: BufferedSink) {
+            val total = delegate.contentLength()
+            var lastPercent = -1
+            var writtenBytes = 0L
+            val counter = object : ForwardingSink(sink) {
+                override fun write(source: Buffer, byteCount: Long) {
+                    super.write(source, byteCount)
+                    writtenBytes += byteCount
+                    if (total <= 0L) return
+                    val percent = ((writtenBytes * 100) / total).toInt().coerceIn(0, 100)
+                    if (percent != lastPercent) {
+                        lastPercent = percent
+                        onProgress(percent / 100f, writtenBytes, total)
+                    }
+                }
+            }
+            val buffered = counter.buffer()
+            delegate.writeTo(buffered)
+            buffered.flush()
+            if (total > 0L && lastPercent < 100) {
+                onProgress(1f, writtenBytes, total)
+            }
+            onCompleted()
+        }
     }
 
     private val SHA256 = Regex("[0-9a-f]{64}")
