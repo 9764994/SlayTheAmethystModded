@@ -38,11 +38,8 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Protocol
 import okhttp3.Request
-import top.apricityx.workshop.steam.protocol.CmServer
-import top.apricityx.workshop.steam.protocol.SessionContext
 import top.apricityx.workshop.steam.protocol.STEAM_PUBLISHED_FILE_QUERY_TYPE_RANKED_BY_TEXT_SEARCH
 import top.apricityx.workshop.steam.protocol.SteamAccountSession
-import top.apricityx.workshop.steam.protocol.SteamCmSession
 import top.apricityx.workshop.steam.protocol.SteamDirectoryClient
 import top.apricityx.workshop.steam.protocol.SteamPublishedFileClient
 import top.apricityx.workshop.steam.protocol.SteamPublishedFileQuery
@@ -1110,11 +1107,13 @@ internal class WorkshopService(
             ?: SteamPipeWorkshopContentDownloader(::createEngine)
 
     private fun createEngine(): WorkshopDownloadEngine {
-        val account = readSteamAccountSession(identity)
         return WorkshopDownloadEngine.createDefault(
             client = workshopClient,
-            sessionFactory = { SharedSteamCmSessions.forProcess(context).asCmSession() },
-            sessionConnector = buildSessionConnector(account),
+            // Downloads must stay anonymous even when browsing/cloud sync is logged in.
+            // The shared session can promote anonymous connects to account logons, so
+            // use a dedicated transport and never read account credentials here.
+            sessionFactory = { identity.createSession(client) },
+            sessionConnector = { session, servers -> session.connectAnonymous(servers) },
             maxConcurrentChunks = LauncherPreferences.readWorkshopDownloadThreads(context),
             allowPublicCdnFallbackOnSessionFailure = true,
             publishedFileLanguage = steamLanguagePreference.requestValue,
@@ -1139,15 +1138,6 @@ internal class WorkshopService(
             }
         }
     }
-
-    private fun buildSessionConnector(
-        account: SteamAccountSession?,
-    ): suspend (SteamCmSession, List<CmServer>) -> SessionContext =
-        if (account == null) {
-            { session, servers -> session.connectAnonymous(servers) }
-        } else {
-            { session, servers -> session.connectWithRefreshToken(servers, account) }
-        }
 
     fun downloadPreviewImage(appId: UInt, publishedFileId: ULong, previewUrl: String): String {
         return WorkshopPreviewImageStore(context, client).download(appId, publishedFileId, previewUrl)

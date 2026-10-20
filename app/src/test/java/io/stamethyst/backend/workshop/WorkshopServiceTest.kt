@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.Context
 import android.content.ContextWrapper
 import java.io.File
+import java.lang.reflect.Proxy
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import mockwebserver3.MockResponse
@@ -41,6 +42,53 @@ class WorkshopServiceTest {
         browseServer.close()
         detailsServer.close()
         downloadServer.close()
+    }
+
+    @Test
+    fun downloadEngineConnectsAnonymouslyWithoutReadingAccountCredentials() = runBlocking {
+        // Only the download-thread preference is available; account credentials
+        // must not be read while creating or connecting the download engine.
+        val preferences = Proxy.newProxyInstance(
+            javaClass.classLoader,
+            arrayOf(android.content.SharedPreferences::class.java),
+        ) { _, method, args ->
+            check(method.name == "getInt") { "Unexpected preference read: ${method.name}" }
+            args!![1]
+        } as android.content.SharedPreferences
+        val context = object : ContextWrapper(TestRoots.create("workshop-anonymous").context) {
+            override fun getApplicationContext(): Context = this
+
+            override fun getSharedPreferences(name: String, mode: Int) = preferences
+        }
+        val service = newService(context = context)
+        val createEngine = WorkshopService::class.java.getDeclaredMethod("createEngine").apply {
+            isAccessible = true
+        }
+        val engine = createEngine.invoke(service)
+        val downloader = engine.javaClass.getDeclaredField("ugcWorkshopDownloader").apply {
+            isAccessible = true
+        }.get(engine)
+        @Suppress("UNCHECKED_CAST")
+        val connector = downloader.javaClass.getDeclaredField("sessionConnector").apply {
+            isAccessible = true
+        }.get(downloader) as suspend (
+            top.apricityx.workshop.steam.protocol.SteamCmSession,
+            List<top.apricityx.workshop.steam.protocol.CmServer>,
+        ) -> top.apricityx.workshop.steam.protocol.SessionContext
+        val calls = mutableListOf<String>()
+        val stop = IllegalStateException("stop before network")
+        val session = Proxy.newProxyInstance(
+            javaClass.classLoader,
+            arrayOf(top.apricityx.workshop.steam.protocol.SteamCmSession::class.java),
+        ) { _, method, _ ->
+            calls += method.name
+            throw stop
+        } as top.apricityx.workshop.steam.protocol.SteamCmSession
+
+        val error = runCatching { connector(session, emptyList()) }.exceptionOrNull()
+
+        assertTrue(error === stop)
+        assertEquals(listOf("connectAnonymous"), calls)
     }
 
     @Test
@@ -1383,8 +1431,8 @@ class WorkshopServiceTest {
 
     private fun newService(
         downloaderFactory: ((WorkshopService) -> WorkshopContentDownloader)? = null,
+        context: Context = TestRoots.create("workshop-service").context,
     ): WorkshopService {
-        val context = TestRoots.create("workshop-service").context
         val client = OkHttpClient.Builder()
             .addInterceptor { chain ->
                 val request = chain.request()
