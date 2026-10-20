@@ -203,7 +203,7 @@ class SlingBreakActivity : AppCompatActivity() {
 
     private fun showEngineFailure(reason: String) {
         WebViewDiagnosticsLogStore.append(this, "sling_break_engine_failure", "reason=$reason")
-        AlertDialog.Builder(this)
+        io.stamethyst.ui.LauncherLegacyAlertDialog.Builder(this)
             .setTitle(R.string.settings_sling_break_compatibility_failed)
             .setMessage(reason)
             .setPositiveButton(R.string.common_action_close) { _, _ -> finish() }

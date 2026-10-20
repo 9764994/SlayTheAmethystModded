@@ -28,24 +28,22 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
+import io.stamethyst.ui.LauncherAlertDialog as AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
+import io.stamethyst.ui.LauncherPanelDialog
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
@@ -82,7 +80,6 @@ import io.stamethyst.ui.main.MainScreenViewModel.SteamCloudIndicatorState as Sta
 import io.stamethyst.ui.main.MainScreenViewModel.SteamCloudIndicatorUi as CloudState
 import java.text.DateFormat
 import java.util.Date
-import kotlinx.coroutines.launch
 
 /** No timers, networking or duplicate synchronization state belong to this card. */
 @Composable
@@ -178,15 +175,10 @@ internal fun SteamCloudStatusSheet(
     val windowSize = LocalWindowInfo.current.containerSize
     val windowHeight = with(LocalDensity.current) { windowSize.height.toDp().coerceAtLeast(240.dp) }
     val windowWidth = with(LocalDensity.current) { windowSize.width.toDp().coerceAtLeast(1.dp) }
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    val scope = rememberCoroutineScope()
 
     fun dismiss(after: () -> Unit = {}) {
-        scope.launch {
-            sheetState.hide()
-            onDismiss()
-            after()
-        }
+        onDismiss()
+        after()
     }
 
     fun execute(intent: CloudIntent) {
@@ -201,10 +193,9 @@ internal fun SteamCloudStatusSheet(
         if (actions.shouldPromptSteamCloudDirectMode()) networkIntent = intent else execute(intent)
     }
 
-    ModalBottomSheet(onDismissRequest = onDismiss, containerColor = cloudSurface(),
-        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
-        sheetMaxWidth = if (windowWidth < 560.dp) windowWidth else 440.dp,
-        sheetState = sheetState) {
+    LauncherPanelDialog(onDismissRequest = onDismiss, containerColor = cloudSurface(),
+        shape = RoundedCornerShape(28.dp),
+        maxWidth = if (windowWidth < 560.dp) windowWidth else 440.dp) {
         SteamCloudStatusDetails(
             state = state,
             controlsEnabled = controlsEnabled,

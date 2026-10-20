@@ -67,7 +67,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.AlertDialog
+import io.stamethyst.ui.LauncherAlertDialog as AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme

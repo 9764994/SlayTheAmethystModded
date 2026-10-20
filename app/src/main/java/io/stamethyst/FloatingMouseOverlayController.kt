@@ -985,7 +985,7 @@ internal class FloatingMouseOverlayController(
         }
         populateKeys(0)
 
-        val dialog = AlertDialog.Builder(activity).create()
+        val dialog = io.stamethyst.ui.LauncherLegacyAlertDialog.Builder(activity).create()
         dialog.setView(pickerView, 0, 0, 0, 0)
         customSoftKeyPickerDialog = dialog
         dialog.setCanceledOnTouchOutside(false)
@@ -2277,7 +2277,7 @@ internal class FloatingMouseOverlayController(
         if (activity.isFinishing || activity.isDestroyed) {
             return
         }
-        AlertDialog.Builder(activity)
+        io.stamethyst.ui.LauncherLegacyAlertDialog.Builder(activity)
             .setTitle(R.string.touch_mouse_custom_key_tutorial_title)
             .setMessage(R.string.touch_mouse_custom_key_tutorial_message)
             .setPositiveButton(android.R.string.ok, null)

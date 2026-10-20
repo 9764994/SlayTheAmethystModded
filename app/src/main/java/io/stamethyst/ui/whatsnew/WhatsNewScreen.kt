@@ -43,7 +43,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
+import io.stamethyst.ui.LauncherDialog as Dialog
 import androidx.compose.ui.window.DialogProperties
 import io.stamethyst.R
 import io.stamethyst.config.BootOverlayImageConfig

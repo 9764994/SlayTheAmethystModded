@@ -5060,7 +5060,7 @@ class MainScreenViewModel : ViewModel() {
         forceRuntimeCrash: Boolean,
     ) {
         var proceed = false
-        val dialog = AlertDialog.Builder(host)
+        val dialog = io.stamethyst.ui.LauncherLegacyAlertDialog.Builder(host)
             .setTitle(R.string.main_ram_saver_texture_residency_title)
             .setMessage(host.getString(R.string.main_ram_saver_texture_residency_message))
             .setNegativeButton(android.R.string.cancel, null)
@@ -5132,7 +5132,7 @@ class MainScreenViewModel : ViewModel() {
             stsJar = RuntimePaths.importedStsJar(host),
             patchJar = RuntimePaths.gdxPatchJar(host)
         ) ?: return false
-        AlertDialog.Builder(host)
+        io.stamethyst.ui.LauncherLegacyAlertDialog.Builder(host)
             .setTitle(R.string.settings_reimport_sts_jar_title)
             .setMessage(host.getString(R.string.startup_failure_legacy_patched_desktop_jar_requires_reimport))
             .setPositiveButton(android.R.string.ok, null)
@@ -5187,7 +5187,7 @@ class MainScreenViewModel : ViewModel() {
             append('\n')
             append(host.getString(R.string.main_duplicate_modid_message_footer))
         }.trimEnd()
-        AlertDialog.Builder(host)
+        io.stamethyst.ui.LauncherLegacyAlertDialog.Builder(host)
             .setTitle(R.string.main_duplicate_modid_title)
             .setMessage(message)
             .setPositiveButton(android.R.string.ok, null)
@@ -5215,7 +5215,7 @@ class MainScreenViewModel : ViewModel() {
             append('\n')
             append(host.getString(R.string.main_mts_validation_footer_2))
         }.trimEnd()
-        AlertDialog.Builder(host)
+        io.stamethyst.ui.LauncherLegacyAlertDialog.Builder(host)
             .setTitle(R.string.main_mts_validation_title)
             .setMessage(message)
             .setPositiveButton(android.R.string.ok, null)
@@ -5349,7 +5349,7 @@ class MainScreenViewModel : ViewModel() {
             )
         }
 
-        AlertDialog.Builder(host)
+        io.stamethyst.ui.LauncherLegacyAlertDialog.Builder(host)
             .setTitle(R.string.heap_pressure_dialog_title)
             .setView(createScrollableDialogMessageView(host, message))
             .setPositiveButton(android.R.string.ok, null)

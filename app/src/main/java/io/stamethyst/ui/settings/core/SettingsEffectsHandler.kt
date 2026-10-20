@@ -197,7 +197,7 @@ fun SettingsEffectsHandler(
                 }
 
                 is SettingsScreenViewModel.Effect.ShowDialog -> {
-                    androidx.appcompat.app.AlertDialog.Builder(activity)
+                    io.stamethyst.ui.LauncherLegacyAlertDialog.Builder(activity)
                         .setTitle(effect.title)
                         .setMessage(effect.message)
                         .setPositiveButton(R.string.common_action_confirm, null)

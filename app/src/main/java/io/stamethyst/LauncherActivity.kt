@@ -836,7 +836,7 @@ class LauncherActivity : AppCompatActivity() {
         val previousDialog = pendingImportDialog
         pendingImportDialog = null
         previousDialog?.dismiss()
-        val dialog = AlertDialog.Builder(this)
+        val dialog = io.stamethyst.ui.LauncherLegacyAlertDialog.Builder(this)
             .setTitle(R.string.external_import_unsupported_title)
             .setMessage(R.string.external_import_unsupported_message)
             .setPositiveButton(android.R.string.ok, null)
@@ -874,7 +874,7 @@ class LauncherActivity : AppCompatActivity() {
         container.addView(progressBar)
         container.addView(messageView)
 
-        val dialog = AlertDialog.Builder(this)
+        val dialog = io.stamethyst.ui.LauncherLegacyAlertDialog.Builder(this)
             .setTitle(R.string.external_import_loading_title)
             .setView(container)
             .setCancelable(false)
@@ -913,7 +913,7 @@ class LauncherActivity : AppCompatActivity() {
         val previousDialog = pendingImportDialog
         pendingImportDialog = null
         previousDialog?.dismiss()
-        val dialog = AlertDialog.Builder(this)
+        val dialog = io.stamethyst.ui.LauncherLegacyAlertDialog.Builder(this)
             .setTitle(R.string.sts_jar_external_import_notice_title)
             .setMessage(getString(R.string.sts_jar_external_import_notice_message, displayName))
             .setPositiveButton(android.R.string.ok, null)
@@ -930,7 +930,7 @@ class LauncherActivity : AppCompatActivity() {
 
     private fun showStorageMigrationDialog(result: LegacyStsStorageMigration.Result) {
         pendingStorageMigrationDialog?.dismiss()
-        val dialog = AlertDialog.Builder(this)
+        val dialog = io.stamethyst.ui.LauncherLegacyAlertDialog.Builder(this)
             .setTitle("存储位置已迁移")
             .setMessage(buildStorageMigrationDialogMessage(result))
             .setPositiveButton("知道了", null)

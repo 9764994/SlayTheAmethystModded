@@ -71,7 +71,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Button
-import androidx.compose.material3.AlertDialog
+import io.stamethyst.ui.LauncherAlertDialog as AlertDialog
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
@@ -84,7 +84,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
+import io.stamethyst.ui.LauncherPanelDialog
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
@@ -96,7 +96,6 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -3888,7 +3887,7 @@ internal fun EasyTierBottomSheetContent(
         }
     }
     closeConfirmationRoom?.let { room ->
-        androidx.compose.material3.AlertDialog(
+        io.stamethyst.ui.LauncherAlertDialog(
             onDismissRequest = { closeConfirmationRoom = null },
             title = {
                 Text(stringResource(R.string.main_easytier_close_room_confirm_title))
@@ -3924,7 +3923,7 @@ internal fun EasyTierBottomSheetContent(
         )
     }
     passwordPromptRoom?.let { promptRoom ->
-        androidx.compose.material3.AlertDialog(
+        io.stamethyst.ui.LauncherAlertDialog(
             onDismissRequest = {
                 passwordPromptRoom = null
                 passwordPromptValue = ""
@@ -3978,7 +3977,7 @@ internal fun EasyTierBottomSheetContent(
         )
     }
     kickConfirmationMember?.let { member ->
-        androidx.compose.material3.AlertDialog(
+        io.stamethyst.ui.LauncherAlertDialog(
             onDismissRequest = {
                 kickConfirmationMember = null
                 kickMessage = ""
@@ -4281,7 +4280,7 @@ fun LauncherCrashRecoveryScreen(
     }
 
     effectDialog?.let { dialog ->
-        androidx.compose.material3.AlertDialog(
+        io.stamethyst.ui.LauncherAlertDialog(
             onDismissRequest = { effectDialog = null },
             title = { Text(dialog.title.resolve()) },
             text = { Text(dialog.message.resolve()) },
@@ -4469,7 +4468,7 @@ internal fun LauncherMainRoute(
     }
 
     effectDialog?.let { dialog ->
-        androidx.compose.material3.AlertDialog(
+        io.stamethyst.ui.LauncherAlertDialog(
             onDismissRequest = { effectDialog = null },
             title = { Text(dialog.title.resolve()) },
             text = { Text(dialog.message.resolve()) },
@@ -4568,7 +4567,7 @@ internal fun LauncherMainRoute(
     }
 
     uiState.pendingEasyTierKickDialog?.let { dialog ->
-        androidx.compose.material3.AlertDialog(
+        io.stamethyst.ui.LauncherAlertDialog(
             onDismissRequest = { viewModel.dismissEasyTierKickDialog(context) },
             title = { Text(stringResource(R.string.main_easytier_kicked_dialog_title)) },
             text = {
@@ -4606,7 +4605,7 @@ internal fun LauncherMainRoute(
     }
 
     if (uiState.showModFileNameRemovalNotice && hostActivity != null) {
-        androidx.compose.material3.AlertDialog(
+        io.stamethyst.ui.LauncherAlertDialog(
             onDismissRequest = {},
             title = { Text(stringResource(R.string.main_mod_file_name_display_removed_title)) },
             text = { Text(stringResource(R.string.main_mod_file_name_display_removed_message)) },
@@ -4628,7 +4627,7 @@ internal fun LauncherMainRoute(
     }
 
     if (uiState.pendingMtsComponentUpdate != null && hostActivity != null) {
-        androidx.compose.material3.AlertDialog(
+        io.stamethyst.ui.LauncherAlertDialog(
             onDismissRequest = viewModel::dismissMtsComponentUpdatePrompt,
             title = { Text(text = stringResource(R.string.main_mts_component_update_title)) },
             text = { Text(text = stringResource(R.string.main_mts_component_update_message)) },
@@ -4648,7 +4647,7 @@ internal fun LauncherMainRoute(
     }
 
     if (uiState.expectedBackExitNoticeVisible) {
-        androidx.compose.material3.AlertDialog(
+        io.stamethyst.ui.LauncherAlertDialog(
             onDismissRequest = viewModel::dismissExpectedBackExitNotice,
             title = { Text(text = stringResource(R.string.main_expected_back_exit_title)) },
             text = { Text(text = stringResource(R.string.main_expected_back_exit_message)) },
@@ -4719,7 +4718,7 @@ private fun ModNameMigrationFailureDialog(
     onRetry: () -> Unit,
     onAbandon: () -> Unit
 ) {
-    androidx.compose.material3.AlertDialog(
+    io.stamethyst.ui.LauncherAlertDialog(
         onDismissRequest = {},
         title = {
             Text(text = stringResource(R.string.main_mod_name_migration_failed_title))
@@ -5019,8 +5018,6 @@ private fun LauncherMainScreenContent(
     val easyTierBottomSheetVisible = showEasyTierBottomSheet && uiState.easyTierIndicator.visible
     val easyTierInitialLoadPending = easyTierBottomSheetVisible &&
         easyTierRoomBrowser.lastLoadedAtMs == easyTierRoomLoadBaselineAtOpen
-    val easyTierBottomSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    val steamAchievementsBottomSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var batchEditBarState by remember { mutableStateOf<BatchEditBarState?>(null) }
     var batchEditBarHeightPx by remember { mutableIntStateOf(0) }
     val batchSelectionMode = batchEditBarState != null
@@ -5101,7 +5098,7 @@ private fun LauncherMainScreenContent(
         val unreadMessage = buildUnreadSuggestionLaunchWarningMessage(
             pendingLaunchUnreadSuggestionModNames
         )
-        androidx.compose.material3.AlertDialog(
+        io.stamethyst.ui.LauncherAlertDialog(
             onDismissRequest = actions.onCancelLaunchWithUnreadSuggestions,
             title = { Text(text = stringResource(R.string.main_launch_unread_suggestions_title)) },
             text = {
@@ -5416,12 +5413,10 @@ private fun LauncherMainScreenContent(
     }
 
     if (easyTierBottomSheetVisible) {
-        ModalBottomSheet(
+        LauncherPanelDialog(
             onDismissRequest = {
                 showEasyTierBottomSheet = false
             },
-            sheetState = easyTierBottomSheetState,
-            sheetGesturesEnabled = false,
         ) {
             EasyTierBottomSheetContent(
                 indicator = uiState.easyTierIndicator,
@@ -5445,10 +5440,8 @@ private fun LauncherMainScreenContent(
     }
 
     if (showSteamAchievementsBottomSheet) {
-        ModalBottomSheet(
+        LauncherPanelDialog(
             onDismissRequest = { showSteamAchievementsBottomSheet = false },
-            sheetState = steamAchievementsBottomSheetState,
-            sheetGesturesEnabled = false,
         ) {
             SteamAchievementBottomSheetContent(
                 state = uiState.steamAchievements,
@@ -5484,7 +5477,7 @@ private fun EnabledModSizeLaunchWarningDialog(
 ) {
     var dontRemindAgain by remember(totalBytes) { mutableStateOf(false) }
 
-    androidx.compose.material3.AlertDialog(
+    io.stamethyst.ui.LauncherAlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(text = stringResource(R.string.main_launch_enabled_mod_size_warning_title)) },
         text = {
@@ -5539,7 +5532,7 @@ private fun WorkshopJarSelectionDialog(
         mutableStateOf<Set<String>>(emptySet())
     }
 
-    androidx.compose.material3.AlertDialog(
+    io.stamethyst.ui.LauncherAlertDialog(
         onDismissRequest = {},
         properties = DialogProperties(
             dismissOnBackPress = false,
@@ -5640,7 +5633,7 @@ private fun EnabledModsDialog(
     modNames: List<String>,
     onDismiss: () -> Unit,
 ) {
-    androidx.compose.material3.AlertDialog(
+    io.stamethyst.ui.LauncherAlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(text = stringResource(R.string.main_enabled_mods_dialog_title)) },
         text = {
@@ -5692,7 +5685,7 @@ private fun ModSizeBreakdownDialog(
         )
     }
     val totalBytes = sortedItems.sumOf { it.bytes.coerceAtLeast(0L) }
-    androidx.compose.material3.AlertDialog(
+    io.stamethyst.ui.LauncherAlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(text = stringResource(R.string.main_mod_size_dialog_title)) },
         text = {

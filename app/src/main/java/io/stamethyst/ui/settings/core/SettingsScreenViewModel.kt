@@ -5118,7 +5118,7 @@ class SettingsScreenViewModel : ViewModel() {
         host: Activity,
         spaceCheck: ModManifestNameMigrationSpaceCheck
     ) {
-        AlertDialog.Builder(host)
+        io.stamethyst.ui.LauncherLegacyAlertDialog.Builder(host)
             .setTitle(R.string.main_mod_name_migration_storage_insufficient_title)
             .setMessage(
                 host.getString(
@@ -5226,7 +5226,7 @@ class SettingsScreenViewModel : ViewModel() {
         if (host.isFinishing || host.isDestroyed) {
             return
         }
-        val dialog = AlertDialog.Builder(host)
+        val dialog = io.stamethyst.ui.LauncherLegacyAlertDialog.Builder(host)
             .setTitle(R.string.settings_steam_cloud_switch_prompt_title)
             .setMessage(
                 host.getString(
@@ -5247,7 +5247,7 @@ class SettingsScreenViewModel : ViewModel() {
         if (host.isFinishing || host.isDestroyed) {
             return
         }
-        AlertDialog.Builder(host)
+        io.stamethyst.ui.LauncherLegacyAlertDialog.Builder(host)
             .setTitle(R.string.settings_save_import_failed_dialog_title)
             .setMessage(
                 host.getString(

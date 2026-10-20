@@ -13,6 +13,7 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.core.graphics.ColorUtils
 import io.stamethyst.config.LauncherThemeColor
 import io.stamethyst.config.LauncherThemeMode
+import io.stamethyst.ui.LauncherDialogHost
 
 // Material 3 Tonal Spot roles generated from the colorless source blue (#2196F3).
 private val ColorlessLightColorScheme = lightColorScheme(
@@ -157,7 +158,7 @@ fun LauncherTheme(
 
     MaterialTheme(
         colorScheme = colorScheme,
-        content = content
+        content = { LauncherDialogHost(content) }
     )
 }
 

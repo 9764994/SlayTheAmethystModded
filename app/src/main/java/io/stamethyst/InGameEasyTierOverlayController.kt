@@ -23,7 +23,7 @@ import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
+import io.stamethyst.ui.LauncherDialog as Dialog
 import androidx.compose.ui.window.DialogProperties
 import io.stamethyst.backend.easytier.EasyTierPermissionCoordinator
 import io.stamethyst.backend.workshop.WorkshopItemSummary
@@ -157,7 +157,7 @@ private fun InGameEasyTierDialogHost(
     }
 
     kickDialog?.let { dialog ->
-        androidx.compose.material3.AlertDialog(
+        io.stamethyst.ui.LauncherAlertDialog(
             onDismissRequest = { viewModel.dismissEasyTierKickDialog(activity) },
             title = {
                 androidx.compose.material3.Text(
