@@ -496,6 +496,8 @@ tasks.matching {
 
 val marketNetworkAcceptanceTestClass =
     "io.stamethyst.backend.steamcloud.SteamCommunityMarketNetworkAcceptanceTest"
+val marketNetworkSimulationTestClass =
+    "io.stamethyst.backend.workshop.WorkshopMarketNetworkSimulationTest"
 
 val aiCompactionAcceptanceTestClass =
     "io.stamethyst.backend.llm.AgentCompactionNetworkAcceptanceTest"
@@ -540,16 +542,29 @@ tasks.register("aiCompactionAcceptanceTest") {
 }
 
 tasks.matching { it.name == "testDebugUnitTest" }.configureEach {
-    if (gradle.startParameter.taskNames.any { it.endsWith("marketNetworkAcceptanceTest") }) {
+    val runAcceptance = gradle.startParameter.taskNames.any {
+        it.endsWith("marketNetworkAcceptanceTest")
+    }
+    val runSimulation = gradle.startParameter.taskNames.any {
+        it.endsWith("marketNetworkSimulationTest")
+    }
+    if (runAcceptance || runSimulation) {
         (this as org.gradle.api.tasks.testing.Test).filter {
-            includeTestsMatching(marketNetworkAcceptanceTestClass)
+            if (runAcceptance) includeTestsMatching(marketNetworkAcceptanceTestClass)
+            includeTestsMatching(marketNetworkSimulationTestClass)
         }
     }
 }
 
 tasks.register("marketNetworkAcceptanceTest") {
     group = "verification"
-    description = "Runs the opt-in live Watt Steam Community market acceptance test only."
+    description = "Runs the offline unstable-network market simulation and the opt-in live Watt acceptance test."
+    dependsOn("testDebugUnitTest")
+}
+
+tasks.register("marketNetworkSimulationTest") {
+    group = "verification"
+    description = "Runs the offline unstable-player-network market loading simulation only."
     dependsOn("testDebugUnitTest")
 }
 
