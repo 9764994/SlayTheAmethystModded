@@ -22,6 +22,13 @@ internal class ModLaunchProfileStore {
     )
 
     fun load(host: Activity, currentEnabledModKeys: Set<String>): State {
+        val state = readOnly(host, currentEnabledModKeys)
+        persist(host, state.profiles, state.activeProfileId)
+        return state
+    }
+
+    /** Preview saved profiles without writing or pruning selections against an incomplete scan. */
+    fun readOnly(host: Activity, currentEnabledModKeys: Set<String> = emptySet()): State {
         val preferences = prefs(host)
         val loadedProfiles = readProfiles(preferences)
         val profiles = if (loadedProfiles.isEmpty()) {
@@ -33,7 +40,6 @@ internal class ModLaunchProfileStore {
             ?.trim()
             .orEmpty()
         val activeProfileId = profiles.firstOrNull { it.id == requestedActiveId }?.id ?: profiles.first().id
-        persist(host, profiles, activeProfileId)
         return State(profiles = profiles, activeProfileId = activeProfileId)
     }
 

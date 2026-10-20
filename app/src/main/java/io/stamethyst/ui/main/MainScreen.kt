@@ -810,6 +810,7 @@ private fun ModsHeaderExpandedContent(
     profiles: List<ModLaunchProfile>,
     activeProfileId: String,
     profileEnabled: Boolean,
+    profileMenuEnabled: Boolean,
     onImportMods: () -> Unit,
     onSelectProfile: (String) -> Unit,
     onAddProfile: (String) -> Unit,
@@ -864,6 +865,7 @@ private fun ModsHeaderExpandedContent(
                     profiles = profiles,
                     activeProfileId = activeProfileId,
                     enabled = profileEnabled,
+                    menuEnabled = profileMenuEnabled,
                     onSelectProfile = onSelectProfile,
                     onAddProfile = onAddProfile,
                     onRenameProfile = onRenameProfile,
@@ -5379,7 +5381,11 @@ private fun LauncherMainScreenContent(
                                         importEnabled = !batchSelectionMode && !uiState.busy && uiState.storageIssue == null,
                                         profiles = uiState.modLaunchProfiles,
                                         activeProfileId = uiState.activeModLaunchProfileId,
-                                        profileEnabled = !batchSelectionMode && actions.isHostAvailable && uiState.controlsEnabled && uiState.storageIssue == null,
+                                        profileEnabled = !uiState.initializing && !batchSelectionMode && actions.isHostAvailable && uiState.controlsEnabled && uiState.storageIssue == null,
+                                        profileMenuEnabled = !batchSelectionMode && actions.isHostAvailable &&
+                                            uiState.storageIssue == null &&
+                                            ((!uiState.initializing && uiState.controlsEnabled) ||
+                                                (uiState.initializing && uiState.modLaunchProfiles.isNotEmpty())),
                                         onImportMods = actions.onImportMods,
                                         onSelectProfile = actions.onSelectModLaunchProfile,
                                         onAddProfile = actions.onAddModLaunchProfile,
@@ -6637,11 +6643,12 @@ private fun ColumnScope.MainContentSwitcher(
 }
 
 @Composable
-private fun ModLaunchProfileMenu(
+internal fun ModLaunchProfileMenu(
     modifier: Modifier = Modifier,
     profiles: List<ModLaunchProfile>,
     activeProfileId: String,
     enabled: Boolean,
+    menuEnabled: Boolean = enabled,
     onSelectProfile: (String) -> Unit,
     onAddProfile: (String) -> Unit,
     onRenameProfile: (String, String) -> Unit,
@@ -6656,7 +6663,7 @@ private fun ModLaunchProfileMenu(
         TextButton(
             modifier = Modifier.fillMaxSize(),
             onClick = { expanded = true },
-            enabled = enabled,
+            enabled = menuEnabled,
             shape = RoundedCornerShape(14.dp),
             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp)
         ) {

@@ -603,34 +603,8 @@ class MainScreenViewModel : ViewModel() {
     }
 
     private fun refreshNow(host: Activity) {
-        if (!launchInFlight) {
-            clearLaunchInFlightState(clearPendingEnabledModSizeWarning = false)
-        }
-        val storageIssue = detectStorageIssue(host)
-        val dependencyAvailability = resolveDependencyAvailability(host)
-        currentModSuggestions = ModSuggestionService.loadCachedSuggestionMap(host)
-        currentReadModSuggestionKeys = ModSuggestionReadStateStore.loadReadKeys(host)
-
-        modManagementController.refresh(host, storageAccessible = storageIssue == null)
-        publishUiState(
-            host = host,
-            hasJar = dependencyAvailability.hasJar,
-            hasMts = dependencyAvailability.hasMts,
-            hasBaseMod = dependencyAvailability.hasBaseMod,
-            hasStsLib = dependencyAvailability.hasStsLib,
-            hasRuntimeCompat = dependencyAvailability.hasRuntimeCompat,
-            hasFloatingTools = dependencyAvailability.hasFloatingTools,
-            hasRamSaver = dependencyAvailability.hasRamSaver,
-            storageIssue = storageIssue
-        )
-        refreshSteamAchievementCache(host)
-        syncEasyTierProcessEventReceiver(host)
-        syncEasyTierRoomSelection(host)
-        lastFullRefreshAtElapsedMs = SystemClock.elapsedRealtime()
-        maybeStartStoredModNameMigration(host)
-        maybePromptPendingWorkshopJarSelection(host)
-        maybeSyncAgentPatchCatalogue(host, storageAccessible = storageIssue == null)
-        // Keep the ModTheSpire update implementation available, but do not auto-check it.
+        if (!launchInFlight) clearLaunchInFlightState(clearPendingEnabledModSizeWarning = false)
+        startInitialRefreshInBackground(host)
     }
 
     private fun maybeSyncAgentPatchCatalogue(host: Activity, storageAccessible: Boolean) {
@@ -689,8 +663,22 @@ class MainScreenViewModel : ViewModel() {
         initialRefreshInFlight = true
         initialRefreshHostReference = WeakReference(host)
         val generation = ++initialRefreshGeneration
-        uiState = uiState.copy(controlsEnabled = false)
+        uiState = uiState.copy(initializing = true, controlsEnabled = false)
         initialRefreshExecutor.execute {
+            // Publish persisted labels before any storage preparation or mod scan. Do not
+            // acquire the controller monitor or prune against an incomplete scan.
+            runCatching { ModLaunchProfileStore().readOnly(host) }
+                .onSuccess { profiles ->
+                    host.runOnUiThread {
+                        if (generation == initialRefreshGeneration && initialRefreshInFlight) {
+                            uiState = uiState.copy(
+                                modLaunchProfiles = profiles.profiles,
+                                activeModLaunchProfileId = profiles.activeProfileId,
+                            )
+                        }
+                    }
+                }
+                .onFailure { Log.w(LOGCAT_TAG, "Failed to preview saved mod profiles", it) }
             val preparationResult = runCatching {
                 val storageIssue = detectStorageIssue(host)
                 val dependencyAvailability = resolveDependencyAvailability(host)
@@ -729,8 +717,12 @@ class MainScreenViewModel : ViewModel() {
                 if (refreshFailure != null) {
                     pendingRefreshAfterInitial = false
                     pendingRepublishAfterInitial = false
-                    Log.e(LOGCAT_TAG, "Initial background refresh failed", refreshFailure)
-                    refreshNow(activeHost)
+                    Log.e(LOGCAT_TAG, "Background mod refresh failed", refreshFailure)
+                    // Keep the last good snapshot; a later explicit refresh can retry.
+                    uiState = uiState.copy(initializing = false, controlsEnabled = uiState.storageIssue == null)
+                    _effects.tryEmit(Effect.ShowSnackbar(UiText.DynamicString(
+                        refreshFailure.message ?: "Mod refresh failed",
+                    )))
                     return@runOnUiThread
                 }
 
@@ -3381,7 +3373,7 @@ class MainScreenViewModel : ViewModel() {
     }
 
     private fun canEditMainScreenState(): Boolean {
-        return !uiState.initializing &&
+        return !initialRefreshInFlight && !uiState.initializing &&
             resolveControlsEnabled(uiState.busy, uiState.busyOperation, uiState.storageIssue != null)
     }
 
