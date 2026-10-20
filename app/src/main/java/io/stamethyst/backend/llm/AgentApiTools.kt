@@ -56,6 +56,7 @@ class AgentSkillTool(private val context: Context) : AgentTool {
         .build()
 
     override val safety: AgentToolSafety = AgentToolSafety.READ_ONLY
+    override val concurrency = AgentToolConcurrency.PARALLEL
 
     override fun execute(arguments: String): String {
         val name = runCatching {
@@ -118,6 +119,7 @@ class AgentApiSearchTool(
         .build()
 
     override val safety: AgentToolSafety = AgentToolSafety.READ_ONLY
+    override val concurrency = AgentToolConcurrency.PARALLEL
 
     override fun execute(arguments: String): String {
         val json = runCatching { Json.parseToJsonElement(arguments).jsonObject }.getOrNull()
@@ -199,6 +201,7 @@ class AgentApiDescribeTool(
         .build()
 
     override val safety: AgentToolSafety = AgentToolSafety.READ_ONLY
+    override val concurrency = AgentToolConcurrency.PARALLEL
 
     override fun execute(arguments: String): String {
         val json = runCatching { Json.parseToJsonElement(arguments).jsonObject }.getOrNull()

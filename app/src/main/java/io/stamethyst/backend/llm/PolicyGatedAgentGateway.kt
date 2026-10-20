@@ -189,6 +189,8 @@ enum class AgentToolSafety {
 interface AgentTool {
     val specification: ToolSpecification
     val safety: AgentToolSafety
+    /** New/third-party tools remain serial until their implementation is audited. */
+    val concurrency: AgentToolConcurrency get() = AgentToolConcurrency.EXCLUSIVE
 
     fun execute(arguments: String): String
 }
@@ -213,34 +215,60 @@ class AgentToolRegistry(
     private val onToolExecution: (AgentToolExecutionEvent) -> Unit = {},
 ) {
     private val toolsByName = tools.associateBy { it.specification.name() }
+    private val eventLock = Any()
 
     init {
         require(toolsByName.size == tools.size) { "Agent tool names must be unique." }
     }
 
-    fun toolSpecifications(): List<ToolSpecification> = toolsByName.values
+    private val specifications: List<ToolSpecification> = toolsByName.values
         .filter(policyGate::allows)
         .map(AgentTool::specification)
+        .sortedBy { it.name() }
 
-    fun execute(request: ToolExecutionRequest): String {
+    fun toolSpecifications(): List<ToolSpecification> = specifications
+
+    fun concurrency(request: ToolExecutionRequest): AgentToolConcurrency = toolsByName[request.name()]
+        ?.takeIf(policyGate::allows)?.concurrency ?: AgentToolConcurrency.EXCLUSIVE
+
+    private fun notifyExecution(event: AgentToolExecutionEvent, checkCancelled: () -> Unit) = synchronized(eventLock) {
+        checkCancelled()
+        onToolExecution(event)
+    }
+
+    fun execute(request: ToolExecutionRequest, checkCancelled: () -> Unit = {}): String {
+        checkCancelled()
         val event = AgentToolExecutionEvent(
             id = java.util.UUID.randomUUID().toString(),
             name = request.name(),
             arguments = request.arguments(),
         )
-        onToolExecution(event)
+        notifyExecution(event, checkCancelled)
+        checkCancelled()
         val tool = toolsByName[request.name()]
         val result = when {
             tool == null -> failure("unknown_tool")
             !policyGate.allows(tool) -> failure("approval_required")
-            else -> runCatching { tool.execute(request.arguments()) }
-                .getOrElse { failure("tool_execution_failed") }
+            else -> try {
+                tool.execute(request.arguments())
+            } catch (error: java.util.concurrent.CancellationException) {
+                throw error
+            } catch (error: InterruptedException) {
+                Thread.currentThread().interrupt()
+                throw java.util.concurrent.CancellationException("Agent tool cancelled").apply { initCause(error) }
+            } catch (error: Exception) {
+                failure("tool_execution_failed")
+            }
         }
+        if (Thread.currentThread().isInterrupted) {
+            throw java.util.concurrent.CancellationException("Agent tool cancelled")
+        }
+        checkCancelled()
         Log.i(TAG, "tool=${request.name()} resultChars=${result.length}")
         val failed = runCatching {
             Json.parseToJsonElement(result).jsonObject.containsKey("error")
         }.getOrDefault(false)
-        onToolExecution(event.copy(result = result, failed = failed))
+        notifyExecution(event.copy(result = result, failed = failed), checkCancelled)
         return result
     }
 
@@ -268,6 +296,7 @@ class WorkspaceTextFileTool(
         .build()
 
     override val safety: AgentToolSafety = AgentToolSafety.READ_ONLY
+    override val concurrency = AgentToolConcurrency.PARALLEL
 
     override fun execute(arguments: String): String {
         val relativePath = runCatching {
@@ -316,6 +345,7 @@ class AgentWorkspaceListTool(
         .build()
 
     override val safety: AgentToolSafety = AgentToolSafety.READ_ONLY
+    override val concurrency = AgentToolConcurrency.PARALLEL
 
     override fun execute(arguments: String): String {
         val json = runCatching { Json.parseToJsonElement(arguments).jsonObject }.getOrNull()
@@ -406,6 +436,7 @@ class AgentWorkspaceFileTool(
         .build()
 
     override val safety: AgentToolSafety = AgentToolSafety.READ_ONLY
+    override val concurrency = AgentToolConcurrency.PARALLEL
 
     override fun execute(arguments: String): String {
         val json = runCatching { Json.parseToJsonElement(arguments).jsonObject }.getOrNull()
@@ -555,6 +586,7 @@ class AgentWorkspaceGlobTool(
         .build()
 
     override val safety: AgentToolSafety = AgentToolSafety.READ_ONLY
+    override val concurrency = AgentToolConcurrency.PARALLEL
 
     override fun execute(arguments: String): String {
         val json = runCatching { Json.parseToJsonElement(arguments).jsonObject }.getOrNull()
@@ -641,6 +673,7 @@ class AgentWorkspaceGrepTool(
         .build()
 
     override val safety: AgentToolSafety = AgentToolSafety.READ_ONLY
+    override val concurrency = AgentToolConcurrency.PARALLEL
 
     override fun execute(arguments: String): String {
         val json = runCatching { Json.parseToJsonElement(arguments).jsonObject }.getOrNull()
@@ -750,6 +783,7 @@ class AgentWorkspaceWriteTool(
         .build()
 
     override val safety: AgentToolSafety = AgentToolSafety.WORKSPACE_WRITE
+    override val concurrency = AgentToolConcurrency.EXCLUSIVE
 
     override fun execute(arguments: String): String {
         val json = runCatching { Json.parseToJsonElement(arguments).jsonObject }.getOrNull()
@@ -794,6 +828,7 @@ class AgentWorkspaceDeleteTool(
         .build()
 
     override val safety: AgentToolSafety = AgentToolSafety.WORKSPACE_WRITE
+    override val concurrency = AgentToolConcurrency.EXCLUSIVE
 
     override fun execute(arguments: String): String {
         val json = runCatching { Json.parseToJsonElement(arguments).jsonObject }.getOrNull()
@@ -853,6 +888,7 @@ class AgentModClassInspectTool(
         .build()
 
     override val safety: AgentToolSafety = AgentToolSafety.READ_ONLY
+    override val concurrency = AgentToolConcurrency.PARALLEL
 
     override fun execute(arguments: String): String {
         val json = runCatching { Json.parseToJsonElement(arguments).jsonObject }.getOrNull()
@@ -918,6 +954,8 @@ class AgentModClassDecompileTool(
         .build()
 
     override val safety: AgentToolSafety = AgentToolSafety.MOD_INSPECTION
+    // Decompilation materializes source and updates the shared inspection manifest/scratch cache.
+    override val concurrency = AgentToolConcurrency.EXCLUSIVE
 
     override fun execute(arguments: String): String {
         val json = runCatching { Json.parseToJsonElement(arguments).jsonObject }.getOrNull()
@@ -984,6 +1022,7 @@ class AgentModResourceReadTool(
         .build()
 
     override val safety: AgentToolSafety = AgentToolSafety.READ_ONLY
+    override val concurrency = AgentToolConcurrency.PARALLEL
 
     override fun execute(arguments: String): String {
         val json = runCatching { Json.parseToJsonElement(arguments).jsonObject }.getOrNull()
@@ -1051,6 +1090,7 @@ class AgentModEntriesListTool(
         .build()
 
     override val safety: AgentToolSafety = AgentToolSafety.READ_ONLY
+    override val concurrency = AgentToolConcurrency.PARALLEL
 
     override fun execute(arguments: String): String {
         val json = runCatching { Json.parseToJsonElement(arguments).jsonObject }.getOrNull()
@@ -1129,6 +1169,7 @@ class AgentPatchWorkspaceCreateTool(
         .build()
 
     override val safety: AgentToolSafety = AgentToolSafety.PATCH_CREATE
+    override val concurrency = AgentToolConcurrency.EXCLUSIVE
 
     override fun execute(arguments: String): String {
         val json = runCatching { Json.parseToJsonElement(arguments).jsonObject }.getOrNull()
@@ -1207,6 +1248,7 @@ class AgentPatchModCompileTool(
         .build()
 
     override val safety: AgentToolSafety = AgentToolSafety.PATCH_COMPILE
+    override val concurrency = AgentToolConcurrency.EXCLUSIVE
 
     override fun execute(arguments: String): String {
         val json = runCatching { Json.parseToJsonElement(arguments).jsonObject }.getOrNull()
@@ -1248,6 +1290,7 @@ class AgentModSourceDecompileTool(
         .build()
 
     override val safety: AgentToolSafety = AgentToolSafety.MOD_INSPECTION
+    override val concurrency = AgentToolConcurrency.EXCLUSIVE
 
     override fun execute(arguments: String): String {
         val inspection = runCatching {
@@ -1296,6 +1339,7 @@ class AgentPatchTargetInspectTool(
         .build()
 
     override val safety: AgentToolSafety = AgentToolSafety.READ_ONLY
+    override val concurrency = AgentToolConcurrency.PARALLEL
 
     override fun execute(arguments: String): String {
         val json = runCatching { Json.parseToJsonElement(arguments).jsonObject }.getOrNull()
@@ -1373,6 +1417,7 @@ class AgentPatchSkeletonTool(
         .build()
 
     override val safety: AgentToolSafety = AgentToolSafety.WORKSPACE_WRITE
+    override val concurrency = AgentToolConcurrency.EXCLUSIVE
 
     override fun execute(arguments: String): String {
         val json = runCatching { Json.parseToJsonElement(arguments).jsonObject }.getOrNull()
@@ -1444,6 +1489,7 @@ class AgentPatchPreflightTool(
         .build()
 
     override val safety: AgentToolSafety = AgentToolSafety.PATCH_COMPILE
+    override val concurrency = AgentToolConcurrency.EXCLUSIVE
 
     override fun execute(arguments: String): String {
         val json = runCatching { Json.parseToJsonElement(arguments).jsonObject }.getOrNull()
@@ -1503,6 +1549,7 @@ class AgentPatchModPackageTool(
         .build()
 
     override val safety: AgentToolSafety = AgentToolSafety.PATCH_PACKAGE
+    override val concurrency = AgentToolConcurrency.EXCLUSIVE
 
     override fun execute(arguments: String): String {
         val json = runCatching { Json.parseToJsonElement(arguments).jsonObject }.getOrNull()
@@ -1579,6 +1626,7 @@ class AgentPatchModUpdateTool(
         .build()
 
     override val safety: AgentToolSafety = AgentToolSafety.PATCH_PACKAGE
+    override val concurrency = AgentToolConcurrency.EXCLUSIVE
 
     override fun execute(arguments: String): String {
         val json = runCatching { Json.parseToJsonElement(arguments).jsonObject }.getOrNull()
@@ -1651,6 +1699,7 @@ class AgentPatchModSetEnabledTool(
         .build()
 
     override val safety: AgentToolSafety = AgentToolSafety.PATCH_ENABLE
+    override val concurrency = AgentToolConcurrency.EXCLUSIVE
 
     override fun execute(arguments: String): String {
         val json = runCatching { Json.parseToJsonElement(arguments).jsonObject }.getOrNull()
@@ -1690,6 +1739,7 @@ class AgentPatchModListTool(
         .build()
 
     override val safety: AgentToolSafety = AgentToolSafety.READ_ONLY
+    override val concurrency = AgentToolConcurrency.PARALLEL
 
     override fun execute(arguments: String): String = buildJsonObject {
         put("parent_mod_id", JsonPrimitive(parentModId))
@@ -1725,6 +1775,7 @@ class AgentPatchModDeleteTool(
         .build()
 
     override val safety: AgentToolSafety = AgentToolSafety.PATCH_DELETE
+    override val concurrency = AgentToolConcurrency.EXCLUSIVE
 
     override fun execute(arguments: String): String {
         val json = runCatching { Json.parseToJsonElement(arguments).jsonObject }.getOrNull()
@@ -1838,7 +1889,10 @@ class PolicyGatedAgentGateway(
     private val contextManager: AgentContextManager? = null,
     private val checkCancelled: () -> Unit = {},
     private val onRetry: (retryNumber: Int, delaySeconds: Long, error: Throwable) -> Unit = { _, _, _ -> },
+    private val maxParallelTools: Int = 4,
 ) {
+    private val toolScheduler = AgentToolScheduler(toolRegistry, maxParallelTools, checkCancelled)
+
     fun respond(systemPrompt: String, userPrompt: String): AgentReply {
         val messages = if (contextManager != null) mutableListOf() else mutableListOf<ChatMessage>(
             SystemMessage.from(systemPrompt),
@@ -1872,12 +1926,7 @@ class PolicyGatedAgentGateway(
             if (!aiMessage.hasToolExecutionRequests()) {
                 return AgentReply(text = text, toolRounds = round, contextTokens = completed.tokenUsage()?.totalTokenCount())
             }
-            aiMessage.toolExecutionRequests().forEach { request ->
-                checkCancelled()
-                val result = ToolExecutionResultMessage.from(request, boundedToolResult(toolRegistry.execute(request)))
-                messages += result
-                contextManager?.append(result)
-            }
+            executeTools(aiMessage, messages)
             round++
         }
     }
@@ -1952,13 +2001,16 @@ class PolicyGatedAgentGateway(
             if (!aiMessage.hasToolExecutionRequests()) {
                 return AgentReply(text = text, toolRounds = round, contextTokens = result.response.tokenUsage()?.totalTokenCount())
             }
-            aiMessage.toolExecutionRequests().forEach { request ->
-                checkCancelled()
-                val toolResult = ToolExecutionResultMessage.from(request, boundedToolResult(toolRegistry.execute(request)))
-                messages += toolResult
-                contextManager?.append(toolResult)
-            }
+            executeTools(aiMessage, messages)
             round++
+        }
+    }
+
+    private fun executeTools(aiMessage: AiMessage, messages: MutableList<ChatMessage>) {
+        toolScheduler.execute(aiMessage.toolExecutionRequests()) { request, output ->
+            val result = ToolExecutionResultMessage.from(request, boundedToolResult(output))
+            messages += result
+            contextManager?.append(result)
         }
     }
 
@@ -1967,8 +2019,8 @@ class PolicyGatedAgentGateway(
         var active = contextManager?.prepare() ?: history
         var lastError: Exception? = null
         repeat(MAX_REQUEST_RETRIES + 1) { attempt ->
-            try {
-                return request(active)
+            val result = try {
+                request(active)
             } catch (error: Exception) {
                 checkCancelled()
                 lastError = error

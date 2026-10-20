@@ -151,6 +151,9 @@ object AgentPatchSourceCompiler {
     internal fun resolveCompileClasspath(context: Context, parentJar: File?): List<File> =
         resolveCompileClasspathEntries(context, parentJar).entries
 
+    // Parallel API tools share the duplicate-free JAR cache and its write probe. Publish a cache
+    // entry completely before another query can inspect it; bytecode reads afterwards run in parallel.
+    @Synchronized
     internal fun resolveCompileClasspathEntries(
         context: Context,
         parentJar: File?,

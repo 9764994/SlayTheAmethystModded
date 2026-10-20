@@ -92,6 +92,46 @@ remain on disk; automatic storage garbage collection is not part of context comp
 References: [OpenCode compaction](https://github.com/anomalyco/opencode/blob/dev/packages/opencode/src/session/compaction.ts)
 and [overflow budgeting](https://github.com/anomalyco/opencode/blob/dev/packages/opencode/src/session/overflow.ts).
 
+## Tool Scheduling
+
+Both streaming and non-streaming agent loops use `AgentToolScheduler`. A model turn may return
+multiple calls; the next model request waits for all of them, not one request per tool. Consecutive
+`PARALLEL` tools run in a bounded pool (default **4**). Every `EXCLUSIVE` call is a barrier: all earlier
+calls finish first, it runs alone, and only then may later calls start. Even reads cannot cross a write
+barrier, so a read → write → read sequence observes the intended versions of a file.
+
+Every built-in `AgentTool` explicitly declares `concurrency`, independently of its safety/approval
+classification. The interface defaults to `EXCLUSIVE` for new or third-party implementations:
+
+- **Parallel:** workspace list/read/glob/grep, bundled skill reads, API search/describe, bytecode class
+  and patch-target inspection, JAR entries/resource reads, and packaged-patch lists.
+- **Exclusive:** workspace create/write/delete, source snapshot preparation and class decompilation
+  (shared metadata/scratch cache), skeleton generation, compile/preflight, package/update, enable/
+  disable, patch deletion, and smoke tests. Installed-mod listing is also exclusive because its
+  underlying catalog may normalize and persist the enabled-mod selection.
+
+API tools serialize only shared classpath cache resolution; subsequent bytecode queries can overlap.
+Tool start/completion callbacks are serialized for UI persistence, but tool bodies run concurrently.
+Results and context checkpoints are delivered on the agent thread in the original call order,
+regardless of completion order. Ordinary tool errors produce error results without cancelling sibling
+calls. Cancellation or infrastructure/checkpoint failures stop admitting work and interrupt outstanding
+workers; interrupted calls must not be automatically retried or reported as successfully completed.
+Blocking tool implementations must cooperate with interruption to stop promptly.
+
+This follows OpenCode V2's [step-scoped tool execution and cancellation](https://github.com/anomalyco/opencode/blob/dev/packages/core/src/session/runner/step.ts)
+(`forkScoped`, `awaitAll`, `interruptAll`), with explicit opt-in concurrency and exclusive barriers added
+for this editor's shared mutable patch workspace. Unlike OpenCode's streamed tool-call execution,
+the editor currently schedules calls after a full model response has been assembled.
+
+Scheduler/loop regression tests (no real LLM service or device required):
+
+```sh
+./gradlew :app:testDebugUnitTest \
+  --tests 'io.stamethyst.backend.llm.AgentToolSchedulerTest' \
+  --tests 'io.stamethyst.backend.llm.AgentToolSchedulerGatewayTest' \
+  --tests 'io.stamethyst.backend.llm.PolicyGatedAgentGatewayTest'
+```
+
 ## Agent Tools
 
 The editor exposes these tools for the selected mod workspace:

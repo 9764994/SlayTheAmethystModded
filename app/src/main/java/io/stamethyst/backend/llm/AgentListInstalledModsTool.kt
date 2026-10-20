@@ -35,6 +35,8 @@ class AgentListInstalledModsTool(
         .build()
 
     override val safety: AgentToolSafety = AgentToolSafety.READ_ONLY
+    // ModManager.listInstalledMods may normalize and persist the enabled-mod selection.
+    override val concurrency = AgentToolConcurrency.EXCLUSIVE
 
     override fun execute(arguments: String): String {
         val entries = AgentInstalledModCatalog.entries(

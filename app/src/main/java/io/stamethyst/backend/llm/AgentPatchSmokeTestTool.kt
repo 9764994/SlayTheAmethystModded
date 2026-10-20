@@ -69,6 +69,7 @@ class AgentPatchSmokeTestTool(
         .build()
 
     override val safety: AgentToolSafety = AgentToolSafety.PATCH_SMOKE_TEST
+    override val concurrency = AgentToolConcurrency.EXCLUSIVE
 
     override fun execute(arguments: String): String {
         val json = runCatching { Json.parseToJsonElement(arguments).jsonObject }.getOrNull()
