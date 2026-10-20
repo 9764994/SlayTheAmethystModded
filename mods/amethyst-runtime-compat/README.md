@@ -44,7 +44,7 @@ even without an enemy hover; `RenderTip` only reads the decision, so rendering m
 cannot consume movement or change the deadline. Normal hover without a recent drag is unaffected.
 `EnemyPanelHoverDelayTest` covers these release/post-drag regressions, deadline boundaries,
 continued drags, stationary release, cross-enemy movement, repeated render reads and player reset.
-Settings take effect on the next game launch. The bundled version is `1.0.42` so installed
+Settings take effect on the next game launch. The bundled version is `1.0.43` so installed
 copies are refreshed by component validation.
 
 0.1. `JavaSoundBootstrap`, `AndroidMixerProvider`, `AndroidMixer`, `AndroidClip`, and `PcmWavWriter`
