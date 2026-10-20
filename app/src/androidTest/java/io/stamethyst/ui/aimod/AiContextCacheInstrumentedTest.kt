@@ -3,10 +3,13 @@ package io.stamethyst.ui.aimod
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import io.stamethyst.R
@@ -35,14 +38,15 @@ class AiContextCacheInstrumentedTest {
         }
         val label = context.getString(R.string.ai_mod_editor_context)
         compose.onNodeWithContentDescription("$label: ${NumberFormat.getIntegerInstance().format(1000)}").performClick()
-        compose.onNodeWithText(context.getString(R.string.ai_mod_editor_cache_rates,
-            formatAiCacheRate(0.8), formatAiCacheRate(0.8))).assertIsDisplayed()
-        compose.onNodeWithText(context.getString(R.string.ai_mod_editor_cache_tokens,
-            NumberFormat.getIntegerInstance().format(800), NumberFormat.getIntegerInstance().format(1000), 1L, 1L))
-            .assertIsDisplayed()
+        compose.onNodeWithTag("cache-last", useUnmergedTree = true).assertTextEquals(formatAiCacheRate(0.8))
+        compose.onNodeWithTag("cache-total", useUnmergedTree = true).assertTextEquals(formatAiCacheRate(0.8))
+        compose.onNodeWithTag("cache-tokens", useUnmergedTree = true)
+            .assertTextEquals("${formatAiTokenCount(800)} / ${formatAiTokenCount(1000)}")
+        compose.onNodeWithTag("cache-coverage", useUnmergedTree = true)
+            .assertTextEquals("${formatAiTokenCount(1)} / ${formatAiTokenCount(1)}")
         compose.runOnIdle { state.value = state.value.copy(cacheStats = stats.observe(AgentCacheUsage(1500, null, null))) }
-        compose.onNodeWithText(context.getString(R.string.ai_mod_editor_cache_rates,
-            "--", formatAiCacheRate(0.8))).assertIsDisplayed()
+        compose.onNodeWithTag("cache-last", useUnmergedTree = true).assertTextEquals("--")
+        compose.onNodeWithTag("cache-total", useUnmergedTree = true).assertTextEquals(formatAiCacheRate(0.8))
     }
 
     @Test fun modelMismatchDoesNotShowPreviousModelsCacheRate() {
@@ -57,7 +61,8 @@ class AiContextCacheInstrumentedTest {
         val label = context.getString(R.string.ai_mod_editor_context)
         val unknown = context.getString(R.string.ai_mod_editor_context_unknown)
         compose.onNodeWithContentDescription("$label: $unknown").performClick()
-        compose.onNodeWithText(context.getString(R.string.ai_mod_editor_cache_rates, "--", "--")).assertIsDisplayed()
+        compose.onNodeWithTag("cache-last", useUnmergedTree = true).assertTextEquals("--")
+        compose.onNodeWithTag("cache-total", useUnmergedTree = true).assertTextEquals("--")
     }
 
     @Test fun changingEndpointDoesNotShowAnOldGatewaysAccountingConvention() {
@@ -73,6 +78,44 @@ class AiContextCacheInstrumentedTest {
         val label = context.getString(R.string.ai_mod_editor_context)
         val unknown = context.getString(R.string.ai_mod_editor_context_unknown)
         compose.onNodeWithContentDescription("$label: $unknown").performClick()
-        compose.onNodeWithText(context.getString(R.string.ai_mod_editor_cache_rates, "--", "--")).assertIsDisplayed()
+        compose.onNodeWithTag("cache-last", useUnmergedTree = true).assertTextEquals("--")
+        compose.onNodeWithTag("cache-total", useUnmergedTree = true).assertTextEquals("--")
+        compose.onNodeWithText(context.getString(R.string.ai_mod_editor_cache_normalized_badge)).assertDoesNotExist()
+    }
+
+    @Test fun explanationsAreCollapsedByDefaultAndCanBeOpenedAndClosed() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        compose.setContent {
+            MaterialTheme { AiContextCounter(tokens = 1000, modelKey = "guide-fixture", busy = false) }
+        }
+        val label = context.getString(R.string.ai_mod_editor_context)
+        compose.onNodeWithContentDescription("$label: ${formatAiTokenCount(1000)}").performClick()
+        val hint = context.getString(R.string.ai_mod_editor_cache_hint)
+        compose.onNodeWithText(hint).assertDoesNotExist()
+        compose.onNodeWithTag("context-explanation-toggle").performScrollTo().performClick()
+        compose.onNodeWithText(hint).performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("context-explanation-toggle").performScrollTo().performClick()
+        compose.waitForIdle()
+        compose.onNodeWithText(hint).assertDoesNotExist()
+    }
+
+    @Test fun gatewayNormalizationHasShortBadgeInsteadOfAnAlwaysVisibleParagraph() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        compose.setContent {
+            MaterialTheme {
+                AiContextCounter(tokens = 1000, modelKey = "normalized-fixture", busy = false,
+                    contextState = AgentContextState(modelKey = "normalized-fixture",
+                        lastInputTokens = 1000, lastOutputTokens = 200, compactionCount = 2,
+                        cacheStats = AgentCacheStats(inputExcludesCached = true)))
+            }
+        }
+        val label = context.getString(R.string.ai_mod_editor_context)
+        compose.onNodeWithContentDescription("$label: ${formatAiTokenCount(1000)}").performClick()
+        compose.onNodeWithTag("context-input", useUnmergedTree = true).assertTextEquals(formatAiTokenCount(1000))
+        compose.onNodeWithTag("context-output", useUnmergedTree = true).assertTextEquals(formatAiTokenCount(200))
+        compose.onNodeWithTag("context-compactions", useUnmergedTree = true).assertTextEquals(formatAiTokenCount(2))
+        compose.onNodeWithText(context.getString(R.string.ai_mod_editor_cache_normalized_badge))
+            .performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText(context.getString(R.string.ai_mod_editor_cache_normalized)).assertDoesNotExist()
     }
 }

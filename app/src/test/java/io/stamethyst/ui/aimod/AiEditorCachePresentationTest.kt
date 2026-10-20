@@ -11,6 +11,12 @@ class AiEditorCachePresentationTest {
         assertTrue(formatAiCacheRate(0.975).contains("97"))
     }
 
+    @Test fun unknownTokenCountsAreNotPresentedAsZero() {
+        assertEquals("--", formatAiTokenCount(null))
+        assertEquals(java.text.NumberFormat.getIntegerInstance().format(0), formatAiTokenCount(0))
+        assertEquals(java.text.NumberFormat.getIntegerInstance().format(200_000), formatAiTokenCount(200_000))
+    }
+
     @Test fun differentModsShareAllCommonRulesBeforeTheirSpecificEnvironment() {
         val a = buildAiEditorSystemPrompt("Alpha", "alpha", File("/synthetic/alpha"))
         val b = buildAiEditorSystemPrompt("Beta", "beta", File("/synthetic/beta"))

@@ -127,6 +127,9 @@ internal fun AiContextCounter(
     }
     if (showDetails) {
         val validLimit = limitDraft.isBlank() || (limitDraft.toIntOrNull() ?: 0) > 0
+        val state = contextState?.takeIf { it.modelKey == modelKey }
+        val cache = state?.cacheStats
+            ?.takeIf { endpoint == null || it.endpoint == endpoint } ?: AgentCacheStats()
         AlertDialog(
             onDismissRequest = { showDetails = false },
             title = { Text(usageLabel) },
@@ -135,44 +138,12 @@ internal fun AiContextCounter(
                     modifier = Modifier.verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    Text(stringResource(R.string.ai_mod_editor_context_count, countLabel))
-                    contextState?.takeIf { it.modelKey == modelKey }?.let { state ->
-                        Text(stringResource(
-                            R.string.ai_mod_editor_context_details,
-                            state.lastInputTokens?.toString() ?: "--",
-                            state.lastOutputTokens?.toString() ?: "--",
-                            state.compactionCount,
-                        ), style = MaterialTheme.typography.bodySmall)
-                    }
-                    val cache = contextState?.takeIf { it.modelKey == modelKey }?.cacheStats
-                        ?.takeIf { endpoint == null || it.endpoint == endpoint } ?: AgentCacheStats()
-                    Text(stringResource(
-                        R.string.ai_mod_editor_cache_rates,
-                        formatAiCacheRate(cache.lastRate), formatAiCacheRate(cache.totalRate),
-                    ), style = MaterialTheme.typography.bodySmall)
-                    Text(stringResource(
-                        R.string.ai_mod_editor_cache_tokens,
-                        cache.lastReadTokens?.let { NumberFormat.getIntegerInstance().format(it) } ?: "--",
-                        cache.lastInputTokens?.let { NumberFormat.getIntegerInstance().format(it) } ?: "--",
-                        cache.reportedRequests, cache.requests,
-                    ), style = MaterialTheme.typography.bodySmall)
-                    Text(stringResource(R.string.ai_mod_editor_cache_hint),
-                        style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
-                    if (cache.inputExcludesCached) Text(stringResource(R.string.ai_mod_editor_cache_normalized),
-                        style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
-                    if (tokens != null && limit > 0) {
-                        Text(stringResource(R.string.ai_mod_editor_context_fraction, tokens.toLong() * 100 / limit, NumberFormat.getIntegerInstance().format(limit)))
-                    }
-                    Text(
-                        stringResource(if (busy) R.string.ai_mod_editor_context_updating else R.string.ai_mod_editor_context_source),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = colors.onSurfaceVariant,
-                    )
+                    AiContextUsagePanel(tokens, limit, busy, state, cache)
                     OutlinedTextField(
                         value = limitDraft,
                         onValueChange = { limitDraft = it.filter(Char::isDigit) },
                         label = { Text(stringResource(R.string.ai_mod_editor_context_limit)) },
-                        supportingText = { Text(stringResource(R.string.ai_mod_editor_context_limit_hint)) },
+                        supportingText = { Text(stringResource(R.string.ai_mod_editor_context_limit_short_hint)) },
                         singleLine = true,
                         enabled = !busy,
                         isError = !validLimit,
