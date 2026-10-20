@@ -98,90 +98,6 @@ class LauncherUpdateServiceParsingTest {
     }
 
     @Test
-    fun buildPendingReleaseNotesText_excludesCurrentAndKeepsLatestHotfixPerPatch() {
-        val latestRelease = UpdateReleaseInfo(
-            rawTagName = "v1.3.4",
-            normalizedVersion = "1.3.4",
-            publishedAtRaw = "2026-05-03T12:00:00Z",
-            publishedAtDisplayText = "2026-05-03 20:00",
-            notesText = "latest fallback notes",
-            releasePageUrl = "https://github.com/example/releases/tag/v1.3.4",
-            assetName = "SlayTheAmethyst-release-1.3.4.apk",
-            assetDownloadUrl = "https://github.com/example/releases/download/v1.3.4/app.apk"
-        )
-        val history = listOf(
-            historyEntry("v1.3.4", "1.3.4", "fix four"),
-            historyEntry("v1.3.3", "1.3.3", "fix three"),
-            historyEntry("v1.3.2-hotfix2", "1.3.2-hotfix2", "fix two hotfix two"),
-            historyEntry("v1.3.2-hotfix1", "1.3.2-hotfix1", "fix two hotfix one"),
-            historyEntry("v1.3.2", "1.3.2", "fix two"),
-            historyEntry("v1.3.1", "1.3.1", "fix one"),
-            historyEntry("v1.3.0", "1.3.0", "old fix")
-        )
-
-        val notesText = LauncherUpdateService.buildPendingReleaseNotesText(
-            currentVersion = "1.3.1",
-            latestRelease = latestRelease,
-            historyEntries = history
-        )
-
-        assertEquals(
-            "# v1.3.2-hotfix2\n\nfix two hotfix two\n\n" +
-                "# v1.3.3\n\nfix three\n\n" +
-                "# v1.3.4\n\nfix four",
-            notesText
-        )
-    }
-
-    @Test
-    fun buildPendingReleaseNotesText_includesRcAfterDevAndKeepsLatestRcPerPatch() {
-        val latestRelease = UpdateReleaseInfo(
-            rawTagName = "v1.6.1-RC2",
-            normalizedVersion = "1.6.1-RC2",
-            publishedAtRaw = null,
-            publishedAtDisplayText = "",
-            notesText = "latest fallback notes",
-            assetName = "SlayTheAmethyst-release-1.6.1-RC2.apk",
-            assetDownloadUrl = "https://github.com/example/releases/download/v1.6.1-RC2/app.apk"
-        )
-
-        val notesText = LauncherUpdateService.buildPendingReleaseNotesText(
-            currentVersion = "1.6.1-dev2",
-            latestRelease = latestRelease,
-            historyEntries = listOf(
-                historyEntry("v1.6.1-RC2", "1.6.1-RC2", "rc two notes"),
-                historyEntry("v1.6.1-RC1", "1.6.1-RC1", "rc one notes"),
-                historyEntry("v1.6.1-dev2", "1.6.1-dev2", "dev notes")
-            )
-        )
-
-        assertEquals("# v1.6.1-RC2\n\nrc two notes", notesText)
-    }
-
-    @Test
-    fun buildPendingReleaseNotesText_fallsBackToLatestNotesWhenHistoryHasNoComparableEntries() {
-        val latestRelease = UpdateReleaseInfo(
-            rawTagName = "nightly-2",
-            normalizedVersion = "nightly-2",
-            publishedAtRaw = null,
-            publishedAtDisplayText = "",
-            notesText = "latest notes",
-            assetName = "SlayTheAmethyst-nightly.apk",
-            assetDownloadUrl = "https://github.com/example/releases/download/nightly-2/app.apk"
-        )
-
-        val notesText = LauncherUpdateService.buildPendingReleaseNotesText(
-            currentVersion = "nightly",
-            latestRelease = latestRelease,
-            historyEntries = listOf(
-                historyEntry("nightly-2", "nightly-2", "history notes")
-            )
-        )
-
-        assertEquals("latest notes", notesText)
-    }
-
-    @Test
     fun buildUrl_prefixesMirrorDownloadUrl() {
         assertEquals(
             "https://gh-proxy.com/https://github.com/example/release.apk",
@@ -231,17 +147,4 @@ class LauncherUpdateServiceParsingTest {
         assertTrue(UpdateSource.userSelectableSources().contains(UpdateSource.OFFICIAL))
     }
 
-    private fun historyEntry(
-        rawTagName: String,
-        normalizedVersion: String,
-        notesText: String,
-    ): UpdateReleaseHistoryEntry {
-        return UpdateReleaseHistoryEntry(
-            rawTagName = rawTagName,
-            normalizedVersion = normalizedVersion,
-            publishedAtRaw = null,
-            publishedAtDisplayText = "",
-            notesText = notesText
-        )
-    }
 }

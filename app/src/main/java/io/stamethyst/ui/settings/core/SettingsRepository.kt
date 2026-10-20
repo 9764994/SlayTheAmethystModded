@@ -621,15 +621,6 @@ internal object SettingsRepository {
             }
         )
 
-        if (hasUpdate) {
-            val downloadSource = resolveUpdateSourceDisplayName(
-                LauncherPreferences.readLastSuccessfulDownloadSourceId(context)
-            )
-            if (downloadSource != null) {
-                lines += context.getString(R.string.update_status_download_source, downloadSource)
-            }
-        }
-
         return lines.joinToString("\n")
     }
 

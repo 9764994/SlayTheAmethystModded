@@ -90,10 +90,6 @@ class LauncherUpdateUiReducerTest {
             currentVersion = "1.0.6",
             release = release,
             metadataSource = UpdateSource.GH_PROXY_VIP,
-            downloadResolution = UpdateDownloadResolution(
-                source = UpdateSource.GH_PROXY_VIP,
-                resolvedUrl = "https://ghproxy.vip/https://github.com/example/release.apk"
-            ),
             hasUpdate = hasUpdate
         )
     }

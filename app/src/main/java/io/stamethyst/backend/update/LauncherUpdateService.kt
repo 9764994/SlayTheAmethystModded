@@ -3,9 +3,13 @@ package io.stamethyst.backend.update
 import android.content.Context
 import io.stamethyst.backend.github.WattToolkitAcceleratedHttp
 import io.stamethyst.backend.github.GithubRequestClients
+import io.stamethyst.backend.github.HttpRequestControl
 import io.stamethyst.backend.network.NetworkAccelerationPolicy
 import java.io.IOException
 import java.nio.charset.StandardCharsets
+import java.util.concurrent.ExecutorCompletionService
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONArray
@@ -19,10 +23,9 @@ object LauncherUpdateService {
         "https://api.github.com/repos/ModinMobileSTS/SlayTheAmethystModded/releases"
     private const val DEFAULT_RELEASE_HISTORY_LIMIT = 10
     private const val MAX_RELEASE_HISTORY_LIMIT = 100
-    private const val PENDING_RELEASE_HISTORY_PAGE_SIZE = 100
-    private const val MAX_PENDING_RELEASE_HISTORY_PAGES = 5
     private const val CONNECT_TIMEOUT_MS = 8_000
     private const val READ_TIMEOUT_MS = 12_000
+    private const val UPDATE_CHECK_TIMEOUT_MS = 20_000L
     private const val USER_AGENT = "SlayTheAmethyst-LauncherUpdate"
 
     fun checkForUpdates(
@@ -33,73 +36,108 @@ object LauncherUpdateService {
         val clients = createGithubClients(context)
         val normalizedPreferredSource = UpdateSource.normalizePreferredUserSource(preferredUserSource.id)
         val bypassAcceleratedLinks = NetworkAccelerationPolicy.shouldBypassAcceleratedLinks(context)
-        val metadataResult = try {
-            GithubMirrorFallback.run(
-                normalizedPreferredSource,
-                bypassAcceleratedLinks = bypassAcceleratedLinks,
-            ) { source ->
-                val responseText = requestText(
-                    clients.pick(source.usesGithubAcceleration),
-                    source.buildUrl(LATEST_RELEASE_API_URL)
-                )
-                parseLatestRelease(responseText)
-                    ?: throw IOException("Invalid release payload.")
+        return checkForUpdates(
+            clients = clients,
+            currentVersion = currentVersion,
+            sources = UpdateSource.metadataCandidates(normalizedPreferredSource, bypassAcceleratedLinks),
+        )
+    }
+
+    /** Race metadata only: a stale or slow mirror must not hide another source's update. */
+    internal fun checkForUpdates(
+        clients: GithubRequestClients,
+        currentVersion: String,
+        sources: List<UpdateSource>,
+        timeoutMillis: Long = UPDATE_CHECK_TIMEOUT_MS,
+    ): UpdateCheckExecutionResult {
+        if (sources.isEmpty()) {
+            return UpdateCheckExecutionResult.Failure("No update metadata sources configured.")
+        }
+        val candidates = GithubMirrorHealthStore.orderByHealth(sources.distinct())
+        val executor = Executors.newFixedThreadPool(candidates.size)
+        val completion = ExecutorCompletionService<MetadataAttempt>(executor)
+        val deadlineNanos = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMillis)
+        val controls = candidates.map { HttpRequestControl(timeoutMillis) }
+        val tasks = candidates.mapIndexed { index, source ->
+            completion.submit {
+                try {
+                    controls[index].checkActive()
+                    val responseText = requestText(
+                        clients.pick(source.usesGithubAcceleration),
+                        source.buildUrl(LATEST_RELEASE_API_URL),
+                        controls[index],
+                    )
+                    val release = parseLatestRelease(responseText)
+                        ?: throw IOException("Invalid release payload.")
+                    MetadataAttempt(source, release = release)
+                } catch (error: Exception) {
+                    MetadataAttempt(source, error = error)
+                }
             }
-        } catch (error: Throwable) {
+        }
+        val failures = ArrayList<GithubMirrorFallbackFailure>()
+        var latestSuccessfulResult: GithubMirrorFallbackSuccess<UpdateReleaseInfo>? = null
+        try {
+            for (index in candidates.indices) {
+                val remainingNanos = deadlineNanos - System.nanoTime()
+                val completed = completion.poll(remainingNanos.coerceAtLeast(0), TimeUnit.NANOSECONDS)
+                    ?: return UpdateCheckExecutionResult.Failure("Update metadata check timed out.")
+                val attempt = completed.get()
+                val release = attempt.release
+                if (release != null) {
+                    GithubMirrorHealthStore.recordSuccess(attempt.source)
+                    if (LauncherUpdateVersioning.isRemoteNewer(currentVersion, release.normalizedVersion)) {
+                        return UpdateCheckExecutionResult.Success(
+                            currentVersion = currentVersion,
+                            release = release,
+                            metadataSource = attempt.source,
+                            hasUpdate = true
+                        )
+                    }
+                    val previousRelease = latestSuccessfulResult?.value
+                    if (previousRelease == null ||
+                        (LauncherUpdateVersioning.compareReleaseVersions(
+                            release.normalizedVersion,
+                            previousRelease.normalizedVersion,
+                        ) ?: 0) > 0
+                    ) {
+                        latestSuccessfulResult = GithubMirrorFallbackSuccess(attempt.source, release)
+                    }
+                } else {
+                    val error = attempt.error ?: IOException("Invalid release payload.")
+                    GithubMirrorHealthStore.recordFailure(attempt.source, error)
+                    failures += GithubMirrorFallbackFailure(attempt.source, error)
+                }
+            }
+        } catch (error: InterruptedException) {
+            Thread.currentThread().interrupt()
+            return UpdateCheckExecutionResult.Failure("Update metadata check cancelled.")
+        } finally {
+            controls.forEach(HttpRequestControl::cancel)
+            tasks.forEach { it.cancel(true) }
+            executor.shutdownNow()
+        }
+        val metadataResult = latestSuccessfulResult ?: run {
             return UpdateCheckExecutionResult.Failure(
-                errorSummary = GithubMirrorFallback.summarize(error),
+                errorSummary = GithubMirrorFallback.summarize(GithubMirrorFallbackException(failures)),
                 metadataSource = null
             )
         }
         val metadataSource = metadataResult.source
         val release = metadataResult.value
-
-        val hasUpdate = LauncherUpdateVersioning.isRemoteNewer(
-            currentVersion = currentVersion,
-            remoteVersionTag = release.normalizedVersion
-        )
-        if (!hasUpdate) {
-            return UpdateCheckExecutionResult.Success(
-                currentVersion = currentVersion,
-                release = release,
-                metadataSource = metadataSource,
-                downloadResolution = null,
-                hasUpdate = false
-            )
-        }
-        val releaseWithPendingNotes = fetchReleaseWithPendingNotes(
-            clients = clients,
-            release = release,
-            currentVersion = currentVersion,
-            preferredUserSource = normalizedPreferredSource,
-            bypassAcceleratedLinks = bypassAcceleratedLinks,
-        )
-
-        val downloadResolution = try {
-            resolveDownloadResolution(
-                clients = clients,
-                release = releaseWithPendingNotes,
-                preferredUserSource = normalizedPreferredSource,
-                metadataSource = metadataSource,
-                bypassAcceleratedLinks = bypassAcceleratedLinks,
-            )
-        } catch (error: Throwable) {
-            return UpdateCheckExecutionResult.Failure(
-                errorSummary = "Unable to resolve a reachable APK download link. ${GithubMirrorFallback.summarize(error)}"
-                    .trim(),
-                release = releaseWithPendingNotes,
-                metadataSource = metadataSource
-            )
-        }
-
         return UpdateCheckExecutionResult.Success(
             currentVersion = currentVersion,
-            release = releaseWithPendingNotes,
+            release = release,
             metadataSource = metadataSource,
-            downloadResolution = downloadResolution,
-            hasUpdate = true
+            hasUpdate = false
         )
     }
+
+    private data class MetadataAttempt(
+        val source: UpdateSource,
+        val release: UpdateReleaseInfo? = null,
+        val error: Exception? = null,
+    )
 
     fun fetchReleaseHistory(
         context: Context,
@@ -213,57 +251,6 @@ object LauncherUpdateService {
         return entries
     }
 
-    internal fun buildPendingReleaseNotesText(
-        currentVersion: String,
-        latestRelease: UpdateReleaseInfo,
-        historyEntries: List<UpdateReleaseHistoryEntry>,
-    ): String {
-        val pendingEntries = selectPendingReleaseHistoryEntries(
-            currentVersion = currentVersion,
-            latestVersion = latestRelease.normalizedVersion,
-            historyEntries = historyEntries,
-        )
-        if (pendingEntries.isEmpty()) {
-            return latestRelease.notesText
-        }
-        return pendingEntries.joinToString(separator = "\n\n") { entry ->
-            buildString {
-                append("# ")
-                append(entry.rawTagName.ifBlank { "v${entry.normalizedVersion}" })
-                val notesText = entry.notesText.trim()
-                if (notesText.isNotBlank()) {
-                    append("\n\n")
-                    append(notesText)
-                }
-            }
-        }.trim()
-    }
-
-    internal fun resolveDownloadResolution(
-        clients: GithubRequestClients,
-        release: UpdateReleaseInfo,
-        preferredUserSource: UpdateSource,
-        metadataSource: UpdateSource,
-        bypassAcceleratedLinks: Boolean = false,
-    ): UpdateDownloadResolution {
-        return GithubMirrorFallback.run(
-            UpdateSource.downloadCandidates(
-                preferredUserSource = preferredUserSource,
-                metadataSource = metadataSource,
-                bypassAcceleratedLinks = bypassAcceleratedLinks,
-            )
-        ) { source ->
-            val candidateUrl = source.buildUrl(release.assetDownloadUrl)
-            if (!isDownloadCandidateReachable(clients.pick(source.usesGithubAcceleration), candidateUrl)) {
-                throw IOException("Unreachable APK download link.")
-            }
-            UpdateDownloadResolution(
-                source = source,
-                resolvedUrl = candidateUrl
-            )
-        }.value
-    }
-
     private fun createGithubClients(context: Context): GithubRequestClients {
         return WattToolkitAcceleratedHttp.createClientPair(
             context = context,
@@ -273,173 +260,26 @@ object LauncherUpdateService {
         )
     }
 
-    private fun fetchReleaseWithPendingNotes(
-        clients: GithubRequestClients,
-        release: UpdateReleaseInfo,
-        currentVersion: String,
-        preferredUserSource: UpdateSource,
-        bypassAcceleratedLinks: Boolean,
-    ): UpdateReleaseInfo {
-        if (LauncherUpdateVersioning.compareReleaseVersions(currentVersion, release.normalizedVersion) == null) {
-            return release
-        }
-        return runCatching {
-            val historyEntries = fetchPendingReleaseHistory(
-                clients = clients,
-                currentVersion = currentVersion,
-                preferredUserSource = preferredUserSource,
-                bypassAcceleratedLinks = bypassAcceleratedLinks,
-            )
-            val notesText = buildPendingReleaseNotesText(
-                currentVersion = currentVersion,
-                latestRelease = release,
-                historyEntries = historyEntries,
-            )
-            if (notesText.isBlank() || notesText == release.notesText) {
-                release
-            } else {
-                release.copy(notesText = notesText)
-            }
-        }.getOrElse {
-            release
-        }
-    }
-
-    private fun fetchPendingReleaseHistory(
-        clients: GithubRequestClients,
-        currentVersion: String,
-        preferredUserSource: UpdateSource,
-        bypassAcceleratedLinks: Boolean,
-    ): List<UpdateReleaseHistoryEntry> {
-        return GithubMirrorFallback.run(
-            preferredUserSource,
-            bypassAcceleratedLinks = bypassAcceleratedLinks,
-        ) { source ->
-            val entries = ArrayList<UpdateReleaseHistoryEntry>()
-            for (page in 1..MAX_PENDING_RELEASE_HISTORY_PAGES) {
-                val requestUrl = source.buildUrl(
-                    "$RELEASE_HISTORY_API_URL?per_page=$PENDING_RELEASE_HISTORY_PAGE_SIZE&page=$page"
-                )
-                val responseText = requestText(
-                    clients.pick(source.usesGithubAcceleration),
-                    requestUrl
-                )
-                val pageEntries = parseReleaseHistory(
-                    responseText,
-                    PENDING_RELEASE_HISTORY_PAGE_SIZE
-                )
-                if (pageEntries.isEmpty()) {
-                    break
-                }
-                entries += pageEntries
-                if (
-                    pageEntries.size < PENDING_RELEASE_HISTORY_PAGE_SIZE ||
-                    pageEntries.any { entry ->
-                        val comparison = LauncherUpdateVersioning.compareReleaseVersions(
-                            entry.normalizedVersion,
-                            currentVersion
-                        )
-                        comparison != null && comparison < 0
-                    }
-                ) {
-                    break
-                }
-            }
-            entries.takeIf { it.isNotEmpty() } ?: throw IOException("Release history is empty.")
-        }.value
-    }
-
-    private fun selectPendingReleaseHistoryEntries(
-        currentVersion: String,
-        latestVersion: String,
-        historyEntries: List<UpdateReleaseHistoryEntry>,
-    ): List<UpdateReleaseHistoryEntry> {
-        return historyEntries
-            .filter { entry ->
-                val currentToEntry = LauncherUpdateVersioning.compareReleaseVersions(
-                    currentVersion,
-                    entry.normalizedVersion
-                )
-                val entryToLatest = LauncherUpdateVersioning.compareReleaseVersions(
-                    entry.normalizedVersion,
-                    latestVersion
-                )
-                currentToEntry != null &&
-                    entryToLatest != null &&
-                    currentToEntry < 0 &&
-                    entryToLatest <= 0
-            }
-            .groupBy { entry ->
-                LauncherUpdateVersioning.releaseVersionFamilyKey(entry.normalizedVersion)
-            }
-            .values
-            .mapNotNull { familyEntries ->
-                familyEntries.maxWithOrNull { left, right ->
-                    LauncherUpdateVersioning.compareReleaseVersions(
-                        left.normalizedVersion,
-                        right.normalizedVersion
-                    ) ?: left.normalizedVersion.compareTo(right.normalizedVersion)
-                }
-            }
-            .sortedWith { left, right ->
-                LauncherUpdateVersioning.compareReleaseVersions(
-                    left.normalizedVersion,
-                    right.normalizedVersion
-                ) ?: left.normalizedVersion.compareTo(right.normalizedVersion)
-            }
-    }
-
-    private fun requestText(client: OkHttpClient, requestUrl: String): String {
+    private fun requestText(
+        client: OkHttpClient,
+        requestUrl: String,
+        control: HttpRequestControl? = null,
+    ): String {
         val request = Request.Builder()
             .url(requestUrl)
             .get()
             .header("Accept", "application/vnd.github+json")
             .header("User-Agent", USER_AGENT)
+            .tag(HttpRequestControl::class.java, control)
             .build()
 
-        client.newCall(request).execute().use { response ->
+        val call = client.newCall(request)
+        control?.register(call)
+        call.execute().use { response ->
             if (!response.isSuccessful) {
                 throw response.toGithubMirrorHttpException()
             }
             return response.body.bytes().toString(StandardCharsets.UTF_8)
-        }
-    }
-
-    private fun isDownloadCandidateReachable(client: OkHttpClient, requestUrl: String): Boolean {
-        return requestProbe(client, requestUrl, "HEAD") || requestRangeProbe(client, requestUrl)
-    }
-
-    private fun requestProbe(client: OkHttpClient, requestUrl: String, method: String): Boolean {
-        val requestBuilder = Request.Builder()
-            .url(requestUrl)
-            .header("User-Agent", USER_AGENT)
-        val request = if (method.equals("HEAD", ignoreCase = true)) {
-            requestBuilder.head().build()
-        } else {
-            requestBuilder.method(method, null).build()
-        }
-        return try {
-            client.newCall(request).execute().use { response ->
-                response.isSuccessful
-            }
-        } catch (_: Throwable) {
-            false
-        }
-    }
-
-    private fun requestRangeProbe(client: OkHttpClient, requestUrl: String): Boolean {
-        val request = Request.Builder()
-            .url(requestUrl)
-            .get()
-            .header("User-Agent", USER_AGENT)
-            .header("Range", "bytes=0-0")
-            .build()
-        return try {
-            client.newCall(request).execute().use { response ->
-                response.isSuccessful || response.code == 206
-            }
-        } catch (_: Throwable) {
-            false
         }
     }
 

@@ -117,7 +117,6 @@ import io.stamethyst.config.RichPresenceDisplayPreferences
 import io.stamethyst.backend.update.LauncherUpdateService
 import io.stamethyst.backend.update.LauncherUpdateUiReducer
 import io.stamethyst.backend.update.UpdateCheckExecutionResult
-import io.stamethyst.backend.update.UpdateDownloadResolution
 import io.stamethyst.backend.update.UpdateMirrorManager
 import io.stamethyst.backend.update.UpdateReleaseHistoryEntry
 import io.stamethyst.backend.update.UpdateReleaseHistoryResult
@@ -1241,14 +1240,8 @@ class SettingsScreenViewModel : ViewModel() {
         LauncherPreferences.saveLastKnownRemoteTag(host, result.release.normalizedVersion)
         LauncherPreferences.saveLastSuccessfulMetadataSourceId(host, result.metadataSource.id)
         LauncherPreferences.saveLastUpdateErrorSummary(host, null)
-        if (result.downloadResolution != null) {
-            LauncherPreferences.saveLastSuccessfulDownloadSourceId(
-                host,
-                result.downloadResolution.source.id
-            )
-        }
         val promptState = if (result.hasUpdate) {
-            buildUpdatePromptState(host, result.release, result.downloadResolution)
+            buildUpdatePromptState(host, result.release)
         } else {
             null
         }
@@ -1303,11 +1296,10 @@ class SettingsScreenViewModel : ViewModel() {
     private fun buildUpdatePromptState(
         host: Activity,
         release: UpdateReleaseInfo,
-        downloadResolution: UpdateDownloadResolution?,
-    ): UpdatePromptState? {
-        val resolvedDownload = downloadResolution ?: return null
+    ): UpdatePromptState {
+        val defaultDownloadSource = resolveSelectedMirrorSource(host)
         val downloadOptions = UpdateSource.oneShotDownloadSelectionSources(
-            primarySource = resolvedDownload.source,
+            primarySource = defaultDownloadSource,
             bypassAcceleratedLinks = NetworkAccelerationPolicy.shouldBypassAcceleratedLinks(host),
         )
             .map { source ->
@@ -1327,12 +1319,12 @@ class SettingsScreenViewModel : ViewModel() {
             publishedAtText = release.publishedAtDisplayText.ifBlank {
                 host.getString(R.string.update_unknown_date)
             },
-            downloadSourceDisplayName = resolvedDownload.source.displayName,
+            downloadSourceDisplayName = defaultDownloadSource.displayName,
             notesText = release.notesText.ifBlank {
                 host.getString(R.string.update_dialog_notes_empty)
             },
             downloadOptions = downloadOptions,
-            defaultDownloadSourceId = resolvedDownload.source.id
+            defaultDownloadSourceId = defaultDownloadSource.id
         )
     }
 

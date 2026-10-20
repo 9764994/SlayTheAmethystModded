@@ -213,17 +213,11 @@ data class UpdateReleaseHistoryResult(
     val entries: List<UpdateReleaseHistoryEntry>,
 )
 
-data class UpdateDownloadResolution(
-    val source: UpdateSource,
-    val resolvedUrl: String,
-)
-
 sealed interface UpdateCheckExecutionResult {
     data class Success(
         val currentVersion: String,
         val release: UpdateReleaseInfo,
         val metadataSource: UpdateSource,
-        val downloadResolution: UpdateDownloadResolution?,
         val hasUpdate: Boolean,
     ) : UpdateCheckExecutionResult
 
