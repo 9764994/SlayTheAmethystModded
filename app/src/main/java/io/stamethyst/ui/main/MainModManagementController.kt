@@ -9,6 +9,7 @@ import io.stamethyst.R
 import io.stamethyst.backend.file_interactive.FileShareCompat
 import io.stamethyst.backend.file_interactive.SafFileExporter
 import io.stamethyst.backend.mods.AgentPatchModManager
+import io.stamethyst.backend.mods.AgentPatchCatalogueService
 import io.stamethyst.backend.mods.ImportedModPatchRegistry
 import io.stamethyst.backend.mods.ModManager
 import io.stamethyst.backend.mods.ModJarSupport
@@ -174,7 +175,8 @@ internal class MainModManagementController(
             return
         }
         WorkshopMetadataStore(host).markMissingFiles()
-        val mods = loadModItems(host)
+        val cataloguePatchParents = AgentPatchCatalogueService.readCachedParentModIds(host)
+        val mods = loadModItems(host, cataloguePatchParents)
         requiredModsSnapshot.clear()
         requiredModsSnapshot.addAll(mods.filter { it.required }.map { it.copy(enabled = it.installed) })
         val optionalMods = mods.filter { !it.required }
@@ -224,6 +226,19 @@ internal class MainModManagementController(
 
     fun currentOptionalMods(): List<ModItemUi> {
         return resolveOptionalModsWithPendingSelection()
+    }
+
+    @Synchronized
+    fun refreshAgentPatchCatalogueAvailability(context: android.content.Context) {
+        val parents = AgentPatchCatalogueService.readCachedParentModIds(context)
+        fun update(mod: ModItemUi) = mod.copy(
+            hasAgentPatchCatalogueEntries = ModManager.normalizeModId(
+                mod.manifestModId.ifBlank { mod.modId }
+            ) in parents,
+        )
+        for (index in requiredModsSnapshot.indices) requiredModsSnapshot[index] = update(requiredModsSnapshot[index])
+        for (index in optionalModsSnapshot.indices) optionalModsSnapshot[index] = update(optionalModsSnapshot[index])
+        optionalModsWithPendingSelectionDirty = true
     }
 
     fun addModLaunchProfile(host: Activity, name: String) {
@@ -864,6 +879,20 @@ internal class MainModManagementController(
         )
     }
 
+    fun onExportAgentPatch(host: Activity, patch: AgentPatchModUi) {
+        val source = File(patch.jarPath)
+        if (!source.isFile) {
+            emitSnackbar(host.getString(R.string.main_mod_export_missing))
+            return
+        }
+        hostCallbacks.emitEffect(
+            MainScreenViewModel.Effect.OpenExportModPicker(
+                sourcePath = source.absolutePath,
+                suggestedName = source.name,
+            ),
+        )
+    }
+
     fun onExportModPicked(host: Activity, sourcePath: String?, uri: Uri?) {
         if (uri == null) {
             return
@@ -963,6 +992,52 @@ internal class MainModManagementController(
                         )
                     )
                 }
+            }
+        }
+    }
+
+    fun onShareAgentPatch(host: Activity, patch: AgentPatchModUi) {
+        val sourceFile = File(patch.jarPath)
+        if (!sourceFile.isFile || hostCallbacks.isBusy()) {
+            emitSnackbar(host.getString(R.string.main_mod_share_missing))
+            return
+        }
+        hostCallbacks.setBusy(true, UiText.DynamicString("Preparing AI patch share…"))
+        executor.execute {
+            try {
+                val shareFile = prepareModShareFile(host, sourceFile)
+                host.runOnUiThread {
+                    hostCallbacks.setBusy(false, null)
+                    val intent = FileShareCompat.buildShareIntent(
+                        host = host,
+                        uri = FileShareCompat.resolveShareUri(host, shareFile),
+                        fileName = sourceFile.name,
+                        mimeType = "application/java-archive",
+                    )
+                    hostCallbacks.emitEffect(
+                        MainScreenViewModel.Effect.LaunchIntent(
+                            Intent.createChooser(intent, host.getString(R.string.main_mod_share_chooser_title)),
+                        ),
+                    )
+                }
+            } catch (error: Throwable) {
+                host.runOnUiThread {
+                    hostCallbacks.setBusy(false, null)
+                    emitSnackbar("Unable to share AI patch: ${error.message ?: error.javaClass.simpleName}")
+                }
+            }
+        }
+    }
+
+    fun onRenameAgentPatch(host: Activity, mod: ModItemUi, patch: AgentPatchModUi, name: String, description: String) {
+        if (hostCallbacks.isBusy()) return
+        executor.execute {
+            val result = runCatching {
+                AgentPatchModManager.renamePackagedPatch(host, mod.modId, patch.patchId, name, description)
+            }
+            host.runOnUiThread {
+                result.onSuccess { refresh(host, storageAccessible = true); hostCallbacks.republish(host) }
+                    .onFailure { emitSnackbar(host.getString(R.string.main_mod_agent_patch_rename_failed, it.message.orEmpty())) }
             }
         }
     }
@@ -1837,7 +1912,7 @@ internal class MainModManagementController(
         return RuntimeResourceProvider(host).exists(assetPath)
     }
 
-    private fun loadModItems(host: Activity): List<ModItemUi> {
+    private fun loadModItems(host: Activity, cataloguePatchParents: Set<String>): List<ModItemUi> {
         val aliases = ModAliasStore.loadAliases(host)
         val importedPatchInfoByPath = ImportedModPatchRegistry.readAll(host)
         val workshopRecords = WorkshopMetadataStore(host).list()
@@ -1848,13 +1923,11 @@ internal class MainModManagementController(
             }
             .toMap()
         val downloadTasksByPublishedFileId = loadDownloadCenterTaskRecords(host)
-        var installedMods = ModManager.listInstalledMods(host)
-        if (AgentPatchModManager.migrateLegacyLibraryPatches(host, installedMods)) {
-            installedMods = ModManager.listInstalledMods(host)
-        }
-        val agentPatchesByParent = installedMods
-            .flatMap { parent ->
-                AgentPatchModManager.listPackaged(host, parent.modId).map { patch ->
+        val installedMods = ModManager.listInstalledMods(host)
+        val agentPatchesByParent = AgentPatchModManager.listPackagedForParents(host, installedMods.map { it.modId })
+            .groupBy { it.parentModId }
+            .mapValues { (_, patches) ->
+                patches.map { patch ->
                     AgentPatchModUi(
                         patchId = patch.patchId,
                         patchModId = patch.patchModId,
@@ -1862,10 +1935,11 @@ internal class MainModManagementController(
                         version = patch.version,
                         description = patch.description,
                         enabled = patch.enabled,
+                        jarPath = patch.jarFile.absolutePath,
                     )
-                }.map { patch -> ModManager.normalizeModId(parent.modId) to patch }
+                }
             }
-            .groupBy({ it.first }, { it.second })
+        val importPatchStates = ImportPatchRegistry.moduleStates(host).associateBy { it.id }
         return installedMods.asSequence()
             .map { mod ->
             val workshopRecord = workshopRecordsByInstalledPath[mod.jarFile.absolutePath]
@@ -1879,15 +1953,11 @@ internal class MainModManagementController(
                 SettingsFileService.buildModImportPatchDetailMessage(host, patchInfo)
             }
             val importPatches = if (mod.required) emptyList() else {
-                val relevantModuleIds = ImportPatchRegistry.modulesForInstalledMod(
+                ImportPatchRegistry.statesForInstalledMod(
                     ModManager.normalizeModId(mod.manifestModId),
-                    importPatchInfo
-                ).mapTo(HashSet()) { it.id }
-                ImportPatchRegistry.moduleStates(host, importPatchInfo)
-                    .asSequence()
-                    .filter { state ->
-                        state.id in relevantModuleIds && (state.appliedVersion != null || state.available)
-                    }
+                    importPatchInfo,
+                    importPatchStates,
+                ).asSequence()
                     .map { state ->
                         ModImportPatchUi(
                             moduleId = state.id,
@@ -1934,6 +2004,9 @@ internal class MainModManagementController(
                     )
                 },
                 agentPatchMods = agentPatchesByParent[ModManager.normalizeModId(mod.modId)].orEmpty(),
+                hasAgentPatchCatalogueEntries = ModManager.normalizeModId(
+                    mod.manifestModId.ifBlank { mod.modId }
+                ) in cataloguePatchParents,
             )
             }
             .toList()

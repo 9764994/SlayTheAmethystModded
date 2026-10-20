@@ -79,11 +79,15 @@ internal fun ModCardBodyContent(
     workshopBadgeEnabled: Boolean = true,
     agentPatchMods: List<io.stamethyst.model.AgentPatchModUi> = emptyList(),
     onSetAgentPatchEnabled: (io.stamethyst.model.AgentPatchModUi, Boolean) -> Unit = { _, _ -> },
+    onOpenAgentPatchCatalogue: () -> Unit = {},
+    onAgentPatchExport: (io.stamethyst.model.AgentPatchModUi) -> Unit = {},
+    onAgentPatchShare: (io.stamethyst.model.AgentPatchModUi) -> Unit = {},
+    onAgentPatchUpload: (io.stamethyst.model.AgentPatchModUi) -> Unit = {},
+    onAgentPatchRename: (io.stamethyst.model.AgentPatchModUi, String) -> Unit = { _, _ -> },
     headerLeading: @Composable RowScope.() -> Unit = {},
     headerTrailing: @Composable RowScope.() -> Unit
 ) {
     val resolvedName = resolveModDisplayName(mod, showModFileName = showModFileName)
-    val resolvedModId = mod.manifestModId.ifBlank { mod.modId }
     val resolvedVersion = mod.version.ifBlank { stringResource(R.string.main_mod_unknown_version) }
     val resolvedFileSize = formatModFileSize(mod.fileSizeBytes)
     val resolvedDescription = mod.description.ifBlank { stringResource(R.string.main_mod_no_description) }
@@ -105,13 +109,6 @@ internal fun ModCardBodyContent(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
-            Text(
-                text = stringResource(R.string.main_mod_modid_format, resolvedModId),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.outline,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
             ModCardBadges(
                 mod = mod,
                 modSuggestionText = modSuggestionText,
@@ -126,7 +123,8 @@ internal fun ModCardBodyContent(
                 updateBadgeEnabled = updateBadgeEnabled,
                 onUpdateBadgeClick = onUpdateBadgeClick,
                 workshopBadgeEnabled = workshopBadgeEnabled,
-                onWorkshopBadgeClick = { onOpenWorkshopDetails(mod) }
+                onWorkshopBadgeClick = { onOpenWorkshopDetails(mod) },
+                onOpenAgentPatchCatalogue = onOpenAgentPatchCatalogue,
             )
         }
         headerTrailing()
@@ -163,43 +161,6 @@ internal fun ModCardBodyContent(
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.secondary
         )
-    }
-    if (isExpanded && agentPatchMods.isNotEmpty()) {
-        Spacer(modifier = Modifier.height(8.dp))
-        Text(
-            text = stringResource(R.string.main_mod_agent_patches),
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.primary,
-        )
-        agentPatchMods.forEach { patch ->
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = patch.name.ifBlank { patch.patchModId },
-                        style = MaterialTheme.typography.bodySmall,
-                        maxLines = 1,
-                    )
-                    Text(
-                        text = buildString {
-                            append(patch.version)
-                            append(" · ")
-                            append(patch.patchId)
-                        },
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                    )
-                }
-                Checkbox(
-                    checked = patch.enabled,
-                    enabled = mod.enabled,
-                    onCheckedChange = { enabled -> onSetAgentPatchEnabled(patch, enabled) },
-                )
-            }
-        }
     }
 }
 
@@ -349,6 +310,7 @@ private fun ModCardBadges(
     onUpdateBadgeClick: () -> Unit,
     workshopBadgeEnabled: Boolean,
     onWorkshopBadgeClick: () -> Unit,
+    onOpenAgentPatchCatalogue: () -> Unit,
 ) {
     val showSuggestion = !modSuggestionText.isNullOrBlank()
     val showImportPatch = !mod.importPatchDetails.isNullOrBlank() || mod.importPatches.isNotEmpty()
@@ -365,10 +327,6 @@ private fun ModCardBadges(
             it != WorkshopModState.UpdateAvailable
     }
     val effectivePriority = mod.effectivePriority
-    val hasBadges = showSuggestion || showImportPatch || associationBadge != null || showUpdate || mod.favorite ||
-        mod.newlyImported || workshopBadgeState != null || effectivePriority != null
-    if (!hasBadges) return
-
     FlowRow(
         modifier = Modifier
             .fillMaxWidth()
@@ -376,6 +334,17 @@ private fun ModCardBadges(
         horizontalArrangement = Arrangement.spacedBy(6.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
+        if (mod.hasAgentPatchCatalogueEntries) {
+            ModCardLabelBadge(
+                iconResId = R.drawable.ic_code,
+                text = stringResource(R.string.main_mod_agent_patch_badge),
+                contentDescription = stringResource(R.string.main_mod_agent_patch_github_tab),
+                enabled = true,
+                onClick = onOpenAgentPatchCatalogue,
+                containerColor = MaterialTheme.colorScheme.tertiaryContainer,
+                contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
+            )
+        }
         if (showSuggestion) {
             ModSuggestionBadge(
                 enabled = suggestionBadgeEnabled,

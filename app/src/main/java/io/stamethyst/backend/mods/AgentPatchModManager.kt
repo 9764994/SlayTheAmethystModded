@@ -327,18 +327,112 @@ object AgentPatchModManager {
         return info.copy(enabled = false)
     }
 
+    /** Renames a packaged patch in its manifest and launcher descriptor without changing its ID. */
+    @Throws(IOException::class)
+    fun renamePackagedPatch(
+        context: Context,
+        parentModId: String,
+        patchId: String,
+        name: String,
+        description: String,
+    ): AgentPatchModInfo {
+        val existing = listPackaged(context, parentModId).firstOrNull { it.patchId == patchId }
+            ?: throw IOException("AI patch not found: $patchId")
+        val normalizedName = name.trim()
+        if (normalizedName.isBlank() || normalizedName.length > 120 || normalizedName.any { it == '/' || it == '\\' }) {
+            throw IOException("Invalid AI patch name.")
+        }
+        val normalizedDescription = description.trim()
+        if (normalizedDescription.length > 4000 || normalizedDescription.any { it == '\u0000' }) {
+            throw IOException("Invalid AI patch description.")
+        }
+        val parent = existing.jarFile.parentFile ?: throw IOException("AI patch has no parent directory.")
+        val temp = File(parent, ".${existing.jarFile.name}.${System.nanoTime()}.tmp")
+        try {
+            ZipFile(existing.jarFile).use { input ->
+                ZipOutputStream(temp.outputStream().buffered()).use { output ->
+                    input.entries().asSequence().forEach { entry ->
+                        val replacement = when (entry.name) {
+                            MANIFEST_ENTRY -> {
+                                JSONObject(input.getInputStream(entry).use { it.readBytes().toString(StandardCharsets.UTF_8) })
+                                    .put("name", normalizedName)
+                                    .put("description", normalizedDescription)
+                                    .toString(2)
+                                    .toByteArray(StandardCharsets.UTF_8)
+                            }
+                            DESCRIPTOR_ENTRY -> {
+                                JSONObject(input.getInputStream(entry).use { it.readBytes().toString(StandardCharsets.UTF_8) })
+                                    .put("name", normalizedName)
+                                    .put("description", normalizedDescription)
+                                    .toString(2)
+                                    .toByteArray(StandardCharsets.UTF_8)
+                            }
+                            else -> null
+                        }
+                        output.putNextEntry(ZipEntry(entry.name).apply { time = entry.time })
+                        if (replacement != null) {
+                            output.write(replacement)
+                        } else {
+                            input.getInputStream(entry).use { stream ->
+                                val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                                var copied = 0L
+                                while (true) {
+                                    val count = stream.read(buffer)
+                                    if (count < 0) break
+                                    copied += count
+                                    if (copied > MAX_ENTRY_BYTES) throw IOException("Patch entry is too large: ${entry.name}")
+                                    output.write(buffer, 0, count)
+                                }
+                            }
+                        }
+                        output.closeEntry()
+                    }
+                }
+            }
+            verifyZip(temp)
+            try {
+                Files.move(temp.toPath(), existing.jarFile.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+            } catch (_: java.nio.file.AtomicMoveNotSupportedException) {
+                Files.move(temp.toPath(), existing.jarFile.toPath(), StandardCopyOption.REPLACE_EXISTING)
+            }
+        } finally {
+            temp.delete()
+        }
+        return existing.copy(name = normalizedName, description = normalizedDescription)
+    }
+
     fun listPackaged(context: Context, parentModId: String): List<AgentPatchModInfo> {
         val normalizedParent = ModManager.normalizeModId(parentModId)
         val parentSegment = safeSegmentOrNull(normalizedParent) ?: return emptyList()
-        val packagedRoot = RuntimePaths.agentModsForModRoot(context, parentSegment)
+        return listPackagedInDirectory(
+            RuntimePaths.agentModsForModRoot(context, parentSegment),
+            normalizedParent,
+            readEnabledPatchModIds(context),
+        )
+    }
+
+    /** One directory snapshot and one enablement read for the entire launcher refresh. */
+    fun listPackagedForParents(context: Context, parentModIds: Collection<String>): List<AgentPatchModInfo> {
+        val parents = parentModIds.mapNotNull { safeSegmentOrNull(ModManager.normalizeModId(it)) }.toSet()
+        if (parents.isEmpty()) return emptyList()
         val enabledIds = readEnabledPatchModIds(context)
-        return packagedRoot.listFiles().orEmpty()
+        return RuntimePaths.agentModsRoot(context).listFiles().orEmpty()
             .asSequence()
+            .filter { it.name in parents && it.isDirectory }
+            .sortedBy { it.name }
+            .flatMap { parent -> listPackagedInDirectory(parent, parent.name, enabledIds).asSequence() }
+            .toList()
+    }
+
+    private fun listPackagedInDirectory(
+        directory: File,
+        parentModId: String,
+        enabledIds: Set<String>,
+    ): List<AgentPatchModInfo> {
+        return directory.listFiles().orEmpty().asSequence()
             .filter { it.isFile && it.extension.equals("jar", ignoreCase = true) }
             .sortedBy { it.name.lowercase(Locale.ROOT) }
-            .mapNotNull { jar ->
-                readDescriptor(jar)?.takeIf { it.parentModId == normalizedParent }
-            }
+            .mapNotNull { jar -> readDescriptor(jar)?.takeIf { it.parentModId == parentModId } }
             .map { descriptor ->
                 descriptor.copy(enabled = descriptor.patchModId in enabledIds)
             }
@@ -385,55 +479,7 @@ object AgentPatchModManager {
         return result
     }
 
-    /**
-     * Moves AI patch revisions that older launcher versions installed into the optional-mod
-     * library over to `agent_mods/`, preserving their enabled state.
-     *
-     * Returns `true` when at least one library copy was migrated, so callers holding a stale
-     * installed-mod list can refresh it.
-     */
-    @Throws(IOException::class)
-    fun migrateLegacyLibraryPatches(
-        context: Context,
-        installedMods: List<ModManager.InstalledMod>,
-    ): Boolean {
-        var migrated = false
-        val enabledIds = readEnabledPatchModIds(context)
-        var enabledChanged = false
-        installedMods.forEach { mod ->
-            if (mod.required) return@forEach
-            val descriptor = readDescriptor(mod.jarFile) ?: return@forEach
-            val parentSegment = safeSegmentOrNull(descriptor.parentModId) ?: return@forEach
-            val targetDir = RuntimePaths.agentModsForModRoot(context, parentSegment)
-            targetDir.mkdirs()
-            val target = targetDir.resolve("${descriptor.patchModId}.jar")
-            if (!target.isFile) {
-                val copied = runCatching {
-                    Files.copy(
-                        mod.jarFile.toPath(),
-                        target.toPath(),
-                        StandardCopyOption.REPLACE_EXISTING,
-                    )
-                }.isSuccess
-                if (!copied) return@forEach
-            }
-            if (mod.enabled && enabledIds.add(descriptor.patchModId)) {
-                enabledChanged = true
-            }
-            val deleted = runCatching {
-                ModManager.deleteOptionalModByStoragePath(context, mod.jarFile.absolutePath)
-            }.getOrDefault(false)
-            if (deleted) {
-                migrated = true
-            }
-        }
-        if (enabledChanged) {
-            writeEnabledPatchModIds(context, enabledIds)
-        }
-        return migrated
-    }
-
-    fun readDescriptor(jarFile: File): AgentPatchModInfo? = runCatching {
+    private fun readDescriptor(jarFile: File): AgentPatchModInfo? = runCatching {
         ZipFile(jarFile).use { zip ->
             val entry = zip.getEntry(DESCRIPTOR_ENTRY) ?: return null
             val descriptor = JSONObject(zip.getInputStream(entry).use { it.readBytes() }.toString(StandardCharsets.UTF_8))

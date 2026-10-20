@@ -206,6 +206,10 @@ object RuntimePaths {
     fun agentModsForModRoot(context: Context, modId: String): File =
         File(agentModsRoot(context), modId)
 
+    @JvmStatic
+    fun agentPatchCatalogueCacheFile(context: Context): File =
+        File(File(context.filesDir, "ai_patch_catalogue"), "index.json")
+
     /**
      * Coordinates the AI patch smoke test between the launcher process (which writes the request and
      * reads the verdict) and the `:game` process service that actually runs the game.

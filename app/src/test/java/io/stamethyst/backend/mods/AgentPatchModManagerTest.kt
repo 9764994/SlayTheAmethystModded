@@ -6,6 +6,7 @@ import android.content.ContextWrapper
 import io.stamethyst.config.RuntimePaths
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
@@ -333,6 +334,41 @@ class AgentPatchModManagerTest {
 
             assertTrue(error is IOException)
             assertTrue(error!!.message.orEmpty().contains("patch_sources_not_compiled"))
+        }
+    }
+
+    @Test
+    fun renamePackagedPatch_updatesNameAndDescriptionWithoutChangingIdentity() {
+        withWorkspace { context, workspace ->
+            val packaged = AgentPatchModManager.packagePatchMod(context, workspace, "Old name", "1.0.0", "Old description")
+            RuntimePaths.enabledAgentPatchModsConfig(context).apply {
+                parentFile?.mkdirs()
+                writeText(packaged.patchModId + "\n", StandardCharsets.UTF_8)
+            }
+
+            val renamed = AgentPatchModManager.renamePackagedPatch(
+                context = context,
+                parentModId = "parent",
+                patchId = workspace.patchId,
+                name = "New name",
+                description = "New description for the patch.",
+            )
+
+            assertEquals(packaged.patchId, renamed.patchId)
+            assertEquals(packaged.patchModId, renamed.patchModId)
+            assertEquals(packaged.jarFile, renamed.jarFile)
+            assertEquals("New name", renamed.name)
+            assertEquals("New description for the patch.", renamed.description)
+            assertTrue(renamed.enabled)
+            ZipFile(renamed.jarFile).use { jar ->
+                val manifest = JSONObject(jar.getInputStream(jar.getEntry("ModTheSpire.json")).use { it.readBytes().toString(StandardCharsets.UTF_8) })
+                val descriptor = JSONObject(jar.getInputStream(jar.getEntry("agent-patch.json")).use { it.readBytes().toString(StandardCharsets.UTF_8) })
+                assertEquals("New name", manifest.getString("name"))
+                assertEquals("New description for the patch.", manifest.getString("description"))
+                assertEquals("New name", descriptor.getString("name"))
+                assertEquals("New description for the patch.", descriptor.getString("description"))
+            }
+            assertEquals("New description for the patch.", AgentPatchModManager.listPackaged(context, "parent").single().description)
         }
     }
 

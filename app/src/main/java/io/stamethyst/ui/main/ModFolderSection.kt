@@ -1169,9 +1169,13 @@ internal fun ModFolderSection(
                                     },
                                      onOpenWorkshopDetails = { latestCallbacks.value.onOpenWorkshopDetails(it) },
                                      onOpenAiEditor = { latestCallbacks.value.onOpenAiEditor(it) },
-                                    onSetAgentPatchEnabled = { item, patch, enabled ->
-                                        latestCallbacks.value.onSetAgentPatchEnabled(item, patch, enabled)
-                                    },
+                                     onSetAgentPatchEnabled = { item, patch, enabled ->
+                                         latestCallbacks.value.onSetAgentPatchEnabled(item, patch, enabled)
+                                     },
+                                      onExportAgentPatch = { _, patch -> latestCallbacks.value.onExportAgentPatch(patch) },
+                                      onShareAgentPatch = { _, patch -> latestCallbacks.value.onShareAgentPatch(patch) },
+                                      onRenameAgentPatch = { item, patch, name, description -> latestCallbacks.value.onRenameAgentPatch(item, patch, name, description) },
+                                       onRefreshAgentPatchMods = { latestCallbacks.value.onRefreshAgentPatchMods() },
                                     onSetImportPatchEnabled = { item, moduleId, enabled ->
                                         latestCallbacks.value.onSetImportPatchEnabled(item, moduleId, enabled)
                                     },

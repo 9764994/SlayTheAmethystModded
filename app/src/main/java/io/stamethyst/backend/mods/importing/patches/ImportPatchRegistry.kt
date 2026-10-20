@@ -114,6 +114,22 @@ internal object ImportPatchRegistry {
         return moduleStates(context, patchInfo).firstOrNull { it.id == moduleId }
     }
 
+    /** Reuse context/settings work for a refresh without sharing per-JAR applied versions. */
+    fun statesForInstalledMod(
+        normalizedModId: String,
+        patchInfo: ImportedModPatchInfo?,
+        baseStates: Map<String, ImportPatchModuleState>,
+    ): List<ImportPatchModuleState> {
+        return modulesForInstalledMod(normalizedModId, patchInfo).mapNotNull { module ->
+            val state = baseStates[module.id] ?: return@mapNotNull null
+            val appliedVersion = patchInfo?.appliedPatchVersion(module.id)
+            state.copy(
+                appliedVersion = appliedVersion,
+                outdated = appliedVersion != null && appliedVersion < state.version,
+            ).takeIf { it.appliedVersion != null || it.available }
+        }
+    }
+
     fun hasOutdatedAppliedPatches(patchInfo: ImportedModPatchInfo): Boolean {
         return patchInfo.appliedPatches.any { record ->
             val currentVersion = currentVersion(record.moduleId) ?: return@any false

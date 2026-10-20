@@ -35,6 +35,9 @@ internal data class MainScreenActions(
     val onOpenWorkshopDetails: (ModItemUi) -> Unit = {},
     val onOpenAiEditor: (ModItemUi) -> Unit = {},
     val onSetAgentPatchEnabled: (ModItemUi, AgentPatchModUi, Boolean) -> Unit = { _, _, _ -> },
+    val onExportAgentPatch: (AgentPatchModUi) -> Unit = {},
+    val onShareAgentPatch: (AgentPatchModUi) -> Unit = {},
+    val onRenameAgentPatch: (ModItemUi, AgentPatchModUi, String, String) -> Unit = { _, _, _, _ -> },
     val onSetImportPatchEnabled: (ModItemUi, String, Boolean) -> Unit = { _, _, _ -> },
     val onToggleMod: (ModItemUi, Boolean) -> Unit = { _, _ -> },
     val onAssociateMods: (ModItemUi, ModItemUi) -> Unit = { _, _ -> },
@@ -151,6 +154,9 @@ internal fun rememberMainScreenActions(
                 onSetAgentPatchEnabled = { mod, patch, enabled ->
                     viewModel.onSetAgentPatchEnabled(activity, mod, patch, enabled)
                 },
+                onExportAgentPatch = { patch -> viewModel.onExportAgentPatch(activity, patch) },
+                onShareAgentPatch = { patch -> viewModel.onShareAgentPatch(activity, patch) },
+                onRenameAgentPatch = { mod, patch, name, description -> viewModel.onRenameAgentPatch(activity, mod, patch, name, description) },
                 onSetImportPatchEnabled = { mod, moduleId, enabled ->
                     viewModel.onSetImportPatchEnabled(activity, mod, moduleId, enabled)
                 },

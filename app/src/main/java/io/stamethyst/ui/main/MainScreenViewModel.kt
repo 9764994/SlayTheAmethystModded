@@ -69,6 +69,7 @@ import io.stamethyst.backend.launch.AutoplayMode
 import io.stamethyst.backend.launch.AutoplaySaveMode
 import io.stamethyst.backend.launch.StsLaunchSpec
 import io.stamethyst.backend.mods.CompatibilitySettings
+import io.stamethyst.backend.mods.AgentPatchCatalogueService
 import io.stamethyst.backend.mods.ModManager
 import io.stamethyst.backend.mods.ModSuggestionService
 import io.stamethyst.backend.mods.importing.patches.ImportPatchRegistry
@@ -473,9 +474,14 @@ class MainScreenViewModel : ViewModel() {
     private var easyTierProcessEventReceiverContext: Context? = null
     private var easyTierHostActivityReference: WeakReference<Activity>? = null
     private var lastFullRefreshAtElapsedMs: Long? = null
+    private var agentPatchCatalogueSyncInFlight = false
+    private var agentPatchCatalogueSynced = false
+    private var agentPatchCatalogueHostReference: WeakReference<Activity>? = null
     private var initialRefreshHostReference: WeakReference<Activity>? = null
     @Volatile
     private var launchInFlight = false
+    // Acknowledgement is scoped to one launch attempt, not persisted like "Don't show again".
+    private var acknowledgedImportPatchUpdateKeys: Set<String> = emptySet()
     @Volatile
     private var initialRefreshInFlight = false
     private var initialRefreshGeneration = 0L
@@ -622,7 +628,33 @@ class MainScreenViewModel : ViewModel() {
         lastFullRefreshAtElapsedMs = SystemClock.elapsedRealtime()
         maybeStartStoredModNameMigration(host)
         maybePromptPendingWorkshopJarSelection(host)
+        maybeSyncAgentPatchCatalogue(host, storageAccessible = storageIssue == null)
         // Keep the ModTheSpire update implementation available, but do not auto-check it.
+    }
+
+    private fun maybeSyncAgentPatchCatalogue(host: Activity, storageAccessible: Boolean) {
+        agentPatchCatalogueHostReference = WeakReference(host)
+        if (!storageAccessible || agentPatchCatalogueSyncInFlight || agentPatchCatalogueSynced) return
+        agentPatchCatalogueSyncInFlight = true
+        val appContext = host.applicationContext
+        viewModelScope.launch {
+            try {
+                val changed = AgentPatchCatalogueService.refreshIndex(appContext)
+                agentPatchCatalogueSynced = true
+                if (changed) {
+                    modManagementController.refreshAgentPatchCatalogueAvailability(appContext)
+                    agentPatchCatalogueHostReference?.get()
+                        ?.takeUnless { it.isFinishing || it.isDestroyed }
+                        ?.let(::republish)
+                }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                Log.w(LOGCAT_TAG, "AI patch catalogue sync failed; keeping the cached index", error)
+            } finally {
+                agentPatchCatalogueSyncInFlight = false
+            }
+        }
     }
 
     fun refreshIfStale(host: Activity) {
@@ -727,6 +759,7 @@ class MainScreenViewModel : ViewModel() {
                 lastFullRefreshAtElapsedMs = SystemClock.elapsedRealtime()
                 maybeStartStoredModNameMigration(activeHost)
                 maybePromptPendingWorkshopJarSelection(activeHost)
+                maybeSyncAgentPatchCatalogue(activeHost, storageAccessible = preparation.storageIssue == null)
                 when {
                     shouldRefreshAgain -> refreshNow(activeHost)
                     shouldRepublish -> republish(activeHost)
@@ -2195,6 +2228,19 @@ class MainScreenViewModel : ViewModel() {
         enabled: Boolean,
     ) {
         modManagementController.onSetAgentPatchEnabled(host, mod, patch, enabled)
+        refresh(host)
+    }
+
+    fun onExportAgentPatch(host: Activity, patch: AgentPatchModUi) {
+        modManagementController.onExportAgentPatch(host, patch)
+    }
+
+    fun onShareAgentPatch(host: Activity, patch: AgentPatchModUi) {
+        modManagementController.onShareAgentPatch(host, patch)
+    }
+
+    fun onRenameAgentPatch(host: Activity, mod: ModItemUi, patch: AgentPatchModUi, name: String, description: String) {
+        modManagementController.onRenameAgentPatch(host, mod, patch, name, description)
         refresh(host)
     }
 

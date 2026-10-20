@@ -79,6 +79,7 @@ internal fun ModActionsDialog(
     onOpenWorkshopDetails: () -> Unit = {},
     showAiEditorNewBadge: Boolean = false,
     onOpenAiEditor: () -> Unit = {},
+    onUploadAgentPatch: () -> Unit = {},
     onAssociate: () -> Unit,
     onExport: () -> Unit,
     onShare: () -> Unit,
@@ -180,6 +181,16 @@ internal fun ModActionsDialog(
                             }
                         )
                         ModActionOptionItem(
+                            text = stringResource(R.string.main_mod_agent_patch_upload_test),
+                            description = stringResource(R.string.main_mod_agent_patch_upload_test_desc),
+                            icon = R.drawable.ic_code,
+                            enabled = controlsEnabled,
+                            onClick = {
+                                onDismiss()
+                                onUploadAgentPatch()
+                            },
+                        )
+                        ModActionOptionItem(
                             text = stringResource(R.string.main_mod_export),
                             description = stringResource(R.string.main_mod_action_desc_export),
                             icon = R.drawable.ic_workshop_download,
@@ -261,7 +272,7 @@ private fun ModActionDialogSection(
 }
 
 @Composable
-private fun ModActionOptionItem(
+internal fun ModActionOptionItem(
     text: String,
     description: String,
     icon: Int,
@@ -885,7 +896,7 @@ private fun ModActionDialogListItem(
 }
 
 @Composable
-private fun PillCancelButton(
+internal fun PillCancelButton(
     onClick: () -> Unit,
     content: @Composable () -> Unit
 ) {

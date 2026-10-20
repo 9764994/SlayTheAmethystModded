@@ -10,6 +10,7 @@ data class AgentPatchModUi(
     val version: String,
     val description: String,
     val enabled: Boolean,
+    val jarPath: String = "",
 )
 
 @Stable
@@ -35,6 +36,7 @@ data class ModItemUi(
     val workshop: WorkshopModUi? = null,
     val alias: String = "",
     val agentPatchMods: List<AgentPatchModUi> = emptyList(),
+    val hasAgentPatchCatalogueEntries: Boolean = false,
 ) {
     val needsImportPatchUpdate: Boolean
         get() = hasOutdatedImportPatches || importPatches.any { it.appliedVersion == null || it.isOutdated }
