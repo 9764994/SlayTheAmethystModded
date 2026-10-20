@@ -144,6 +144,11 @@ internal class AiModAgentExecutor(
             contextManager = manager,
             checkCancelled = checkCancelled,
             onRetry = onRetry,
+            streamingTimeoutMillis = config.requestTimeoutSeconds.toLong()
+                .coerceIn(
+                    io.stamethyst.backend.llm.MIN_LLM_REQUEST_TIMEOUT_SECONDS.toLong(),
+                    io.stamethyst.backend.llm.MAX_LLM_REQUEST_TIMEOUT_SECONDS.toLong(),
+                ) * 1_000L,
         )
         val streamingModel = AgentChatModelFactory.createStreaming(config)
         return if (streamingModel == null) {

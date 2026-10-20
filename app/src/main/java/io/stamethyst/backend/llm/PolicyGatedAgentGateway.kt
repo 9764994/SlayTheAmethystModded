@@ -75,7 +75,7 @@ private const val MAX_GREP_FILE_BYTES = 2L * 1024L * 1024L
 
 /** How many extra times an empty model turn is retried before it is reported as a failure. */
 private const val MAX_EMPTY_RETRIES = 1
-private const val MAX_REQUEST_RETRIES = 5
+private const val MAX_REQUEST_RETRIES = 2
 private const val INITIAL_RETRY_DELAY_SECONDS = 1L
 
 data class OpenAiCompatibleModelConfig(
@@ -147,7 +147,8 @@ object AgentChatModelFactory {
             .returnThinking(true)
             .sendThinking(true)
             .timeout(requestTimeout(config))
-            .maxRetries(1)
+            // The gateway owns retries and reports every attempt to the editor.
+            .maxRetries(0)
             .build()
         LlmEndpoint.RESPONSES -> OpenAiResponsesChatModel.builder()
             .httpClientBuilder(httpClientBuilder(config))
@@ -1898,6 +1899,7 @@ class PolicyGatedAgentGateway(
     private val checkCancelled: () -> Unit = {},
     private val onRetry: (retryNumber: Int, delaySeconds: Long, error: Throwable) -> Unit = { _, _, _ -> },
     private val maxParallelTools: Int = 4,
+    private val streamingTimeoutMillis: Long = DEFAULT_LLM_REQUEST_TIMEOUT_SECONDS * 1_000L,
 ) {
     private val toolScheduler = AgentToolScheduler(toolRegistry, maxParallelTools, checkCancelled)
 
@@ -2026,20 +2028,24 @@ class PolicyGatedAgentGateway(
         var lastError: Exception? = null
         repeat(MAX_REQUEST_RETRIES + 1) { attempt ->
             val result = try {
+                checkCancelled()
                 request(active)
             } catch (error: Exception) {
                 checkCancelled()
                 lastError = error
-                if (attempt == MAX_REQUEST_RETRIES) throw error
                 if (contextManager != null && isAgentContextOverflow(error)) {
                     // Context overflow gets an immediate compaction retry, not a delayed network retry.
                     active = contextManager.prepare(force = true)
                     return observeTurn(request(active))
                 }
+                if (attempt == MAX_REQUEST_RETRIES || !isRetryableAgentRequestFailure(error)) throw error
                 val delaySeconds = INITIAL_RETRY_DELAY_SECONDS shl attempt
                 onRetry(attempt + 1, delaySeconds, error)
                 try {
-                    Thread.sleep(delaySeconds * 1_000L)
+                    repeat((delaySeconds * 10L).toInt()) {
+                        checkCancelled()
+                        Thread.sleep(100L)
+                    }
                 } catch (interrupted: InterruptedException) {
                     Thread.currentThread().interrupt()
                     throw java.util.concurrent.CancellationException("LLM retry cancelled")
@@ -2210,35 +2216,47 @@ class PolicyGatedAgentGateway(
         onText: (String) -> Unit,
         onThinking: (String) -> Unit,
     ): StreamingResult {
+        val startedAt = System.nanoTime()
         val lock = Object()
         val response = java.util.concurrent.atomic.AtomicReference<ChatResponse?>()
         val failure = java.util.concurrent.atomic.AtomicReference<Throwable?>()
         val closed = java.util.concurrent.atomic.AtomicBoolean(false)
         val text = StringBuilder()
-        val thinking = StringBuilder()
         streamingModel.chat(
             chatRequest(messages),
             object : StreamingChatResponseHandler {
                 override fun onPartialResponse(partialResponse: String) {
-                    if (closed.get()) return
-                    text.append(partialResponse)
-                    // Deliver only after the request completes, so a retry cannot duplicate output.
+                    synchronized(lock) {
+                        if (closed.get()) return
+                        text.append(partialResponse)
+                        onText(partialResponse)
+                    }
                 }
 
                 override fun onPartialThinking(partialThinking: dev.langchain4j.model.chat.response.PartialThinking) {
-                    if (closed.get()) return
-                    val value = partialThinking.text()
-                    if (value.isNotEmpty()) thinking.append(value)
+                    synchronized(lock) {
+                        if (closed.get()) return
+                        val value = partialThinking.text()
+                        if (value.isNotEmpty()) {
+                            onThinking(value)
+                        }
+                    }
                 }
 
                 override fun onCompleteResponse(completed: ChatResponse) {
-                    response.set(completed)
-                    synchronized(lock) { lock.notifyAll() }
+                    synchronized(lock) {
+                        if (closed.getAndSet(true)) return
+                        response.set(completed)
+                        lock.notifyAll()
+                    }
                 }
 
                 override fun onError(error: Throwable) {
-                    failure.set(error)
-                    synchronized(lock) { lock.notifyAll() }
+                    synchronized(lock) {
+                        if (closed.getAndSet(true)) return
+                        failure.set(error)
+                        lock.notifyAll()
+                    }
                 }
             },
         )
@@ -2246,18 +2264,19 @@ class PolicyGatedAgentGateway(
             synchronized(lock) {
                 while (response.get() == null && failure.get() == null) {
                     checkCancelled()
-                    lock.wait(1000L)
+                    val remaining = streamingTimeoutMillis -
+                        TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt)
+                    if (remaining <= 0L) throw java.net.SocketTimeoutException("Streaming model response timed out")
+                    lock.wait(minOf(1000L, remaining))
                 }
             }
         } catch (interrupted: InterruptedException) {
             Thread.currentThread().interrupt()
             throw java.util.concurrent.CancellationException("Streaming request cancelled")
         } finally {
-            closed.set(true)
+            synchronized(lock) { closed.set(true) }
         }
         failure.get()?.let { throw it }
-        onText(text.toString())
-        onThinking(thinking.toString())
         return StreamingResult(requireNotNull(response.get()), text.toString())
     }
 
