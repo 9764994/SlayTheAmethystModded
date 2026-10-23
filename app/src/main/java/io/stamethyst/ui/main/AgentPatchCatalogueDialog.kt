@@ -1568,10 +1568,12 @@ private fun AgentPatchCelebrationParticles(modifier: Modifier = Modifier) {
     val celebrationScale = remember { Animatable(0f) }
     LaunchedEffect(Unit) {
         progress.snapTo(0f)
-        progress.animateTo(
-            targetValue = 1f,
-            animationSpec = tween(durationMillis = 2200, easing = LinearEasing),
-        )
+        launch {
+            progress.animateTo(
+                targetValue = 1f,
+                animationSpec = tween(durationMillis = 2200, easing = LinearEasing),
+            )
+        }
         celebrationScale.animateTo(
             targetValue = 1f,
             animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow),
