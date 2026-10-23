@@ -6,6 +6,9 @@ import android.content.SharedPreferences
 import io.stamethyst.backend.mods.ModManager
 import io.stamethyst.backend.mods.OptionalModStorageCoordinator
 import io.stamethyst.backend.mods.OptionalModMetadataIndex
+import io.stamethyst.backend.workshop.WorkshopInstalledModRecord
+import io.stamethyst.backend.workshop.WorkshopMetadataStore
+import io.stamethyst.backend.workshop.WorkshopModCardState
 import io.stamethyst.config.RuntimePaths
 import io.stamethyst.ui.UiBusyOperation
 import io.stamethyst.ui.UiText
@@ -153,6 +156,118 @@ class ModLaunchProfileLoadingDiagnosisTest {
         assertTrue("Selection normalization must resolve roots once per batch", selectedCalls - emptySelectionCalls <= 4)
         println("INDEX_DIAG warm 260 mods: empty selections=$emptySelectionCalls storage calls; " +
             "all enabled + priority=$selectedCalls calls")
+    }
+
+    @Test
+    fun workshopMissingFileChecks_skipStorageLookupsForMissingRecords() = withFixture { host, _ ->
+        val store = WorkshopMetadataStore(host)
+        fun seed(count: Int) {
+            store.save((0 until count).map { i ->
+                WorkshopInstalledModRecord(
+                    appId = 646570u,
+                    publishedFileId = (i + 1).toULong(),
+                    title = "Diagnosis $i",
+                    description = "",
+                    previewUrl = "",
+                    versionText = "1",
+                    updatedAtMillis = 0,
+                    installedAtMillis = 0,
+                    localJarPath = "mods/Diagnosis$i.jar",
+                )
+            })
+            // Missing records remain in the index on subsequent launcher starts.
+            store.markMissingFiles()
+        }
+        seed(20)
+        host.storageCalls.set(0)
+        store.markMissingFiles()
+        val smallCalls = host.storageCalls.get()
+        seed(260)
+        host.storageCalls.set(0)
+        host.injectStorageDelay = true
+        val start = System.nanoTime()
+        try {
+            store.markMissingFiles()
+        } finally {
+            host.injectStorageDelay = false
+        }
+        val elapsedMs = (System.nanoTime() - start) / 1_000_000.0
+        val largeCalls = host.storageCalls.get()
+        val records = store.list()
+        assertEquals(260, records.size)
+        assertTrue(records.all { it.cardState == WorkshopModCardState.FileMissing })
+        assertEquals("Missing records must not resolve storage paths", 0, smallCalls)
+        assertEquals("Storage lookups must not grow with missing record count", 0, largeCalls)
+        println("WORKSHOP_DIAG warm markMissingFiles: 20 records=$smallCalls storage calls; " +
+            "260 records=$largeCalls calls, ${elapsedMs}ms with injected 1ms/call; NOT device timing")
+    }
+
+    @Test
+    fun workshopMissingFileChecks_preserveInactiveStatesWithoutStorageAccess() = withFixture { host, _ ->
+        val states = listOf(
+            WorkshopModCardState.Downloading,
+            WorkshopModCardState.DownloadPaused,
+            WorkshopModCardState.DownloadFailed,
+            WorkshopModCardState.FileMissing,
+        )
+        val store = WorkshopMetadataStore(host)
+        val records = states.mapIndexed { i, state ->
+            WorkshopInstalledModRecord(
+                appId = 646570u,
+                publishedFileId = (i + 1).toULong(),
+                title = "Inactive $i",
+                description = "",
+                previewUrl = "",
+                versionText = "1",
+                updatedAtMillis = 0,
+                installedAtMillis = 0,
+                localJarPath = "mods/missing-$i.jar",
+                cardState = state,
+            )
+        }
+        store.save(records)
+        host.storageCalls.set(0)
+        store.markMissingFiles()
+        assertEquals(0, host.storageCalls.get())
+        assertEquals(records.toSet(), store.list().toSet())
+    }
+
+    @Test
+    fun workshopMissingFileChecks_stillDetectMissingInstalledContent() = withFixture { host, _ ->
+        val states = listOf(
+            WorkshopModCardState.ImportedPatched,
+            WorkshopModCardState.ImportedUnpatched,
+            WorkshopModCardState.NonStandardDownloaded,
+            WorkshopModCardState.TexturePackInstalled,
+            WorkshopModCardState.UpdateAvailable,
+        )
+        val store = WorkshopMetadataStore(host)
+        val records = states.mapIndexed { i, state ->
+            val path = "content"
+            val file = File(RuntimePaths.workshopItemDir(host, 646570u, (i + 1).toULong()), path)
+            file.parentFile!!.mkdirs()
+            if (state == WorkshopModCardState.TexturePackInstalled) file.mkdirs() else file.writeText("installed")
+            WorkshopInstalledModRecord(
+                appId = 646570u,
+                publishedFileId = (i + 1).toULong(),
+                title = "Installed $i",
+                description = "",
+                previewUrl = "",
+                versionText = "1",
+                updatedAtMillis = 0,
+                installedAtMillis = 0,
+                localJarPath = path,
+                cardState = state,
+            )
+        }
+        store.save(records)
+        store.markMissingFiles()
+        assertEquals("Existing content must retain its state", records.toSet(), store.list().toSet())
+        records.forEach { record ->
+            assertTrue(File(RuntimePaths.workshopItemDir(host, record.appId, record.publishedFileId), record.localJarPath).delete())
+        }
+        store.markMissingFiles()
+        assertTrue(store.list().all { it.cardState == WorkshopModCardState.FileMissing })
     }
 
     @Test

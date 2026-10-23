@@ -300,6 +300,15 @@ private fun WorkshopInstalledModRecord.restoredImportedState(): WorkshopModCardS
 }
 
 private fun WorkshopInstalledModRecord.shouldMarkFileMissing(context: Context): Boolean {
+    // These states cannot become FileMissing. Avoid resolving storage paths (and
+    // querying external storage) for every inactive record on each launcher scan.
+    when (cardState) {
+        WorkshopModCardState.Downloading,
+        WorkshopModCardState.DownloadPaused,
+        WorkshopModCardState.DownloadFailed,
+        WorkshopModCardState.FileMissing -> return false
+        else -> Unit
+    }
     val files = allLocalJarPaths().map { path ->
         if (File(path).isAbsolute) {
             File(path)
