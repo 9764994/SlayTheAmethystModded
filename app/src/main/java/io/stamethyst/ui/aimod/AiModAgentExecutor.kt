@@ -11,6 +11,7 @@ import io.stamethyst.backend.llm.AgentContextState
 import io.stamethyst.backend.llm.AgentListInstalledModsTool
 import io.stamethyst.backend.llm.AgentModClassDecompileTool
 import io.stamethyst.backend.llm.AgentModClassInspectTool
+import io.stamethyst.backend.llm.AgentModReadTargets
 import io.stamethyst.backend.llm.AgentModEntriesListTool
 import io.stamethyst.backend.llm.AgentModResourceReadTool
 import io.stamethyst.backend.llm.AgentModSourceDecompileTool
@@ -41,6 +42,7 @@ import io.stamethyst.backend.llm.LlmReasoningEffort
 import io.stamethyst.backend.llm.OpenAiCompatibleModelConfig
 import io.stamethyst.backend.llm.PolicyGatedAgentGateway
 import io.stamethyst.backend.mods.AgentPatchModManager
+import io.stamethyst.backend.mods.ModManager
 import io.stamethyst.backend.mods.AgentPatchWorkspace
 import io.stamethyst.config.RuntimePaths
 import io.stamethyst.ui.LauncherNavigationRequestBus
@@ -166,6 +168,11 @@ internal class AiModAgentExecutor(
         }
     }
 
+    private val modReadTargets by lazy {
+        val installedMods = ModManager.listInstalledMods(context)
+        AgentModReadTargets(modId, File(storagePath)) { installedMods }
+    }
+
     private fun createAgentTools(): List<AgentTool> = listOf(
         AgentWorkspaceListTool(workspaceAccessRoot),
         AgentWorkspaceFileTool(workspaceAccessRoot),
@@ -193,14 +200,16 @@ internal class AiModAgentExecutor(
         AgentModClassInspectTool(
             parentModId = modId,
             parentJar = File(storagePath),
+            readTargets = modReadTargets,
         ),
         AgentModClassDecompileTool(
             context = context,
             parentModId = modId,
             parentJar = File(storagePath),
+            readTargets = modReadTargets,
         ),
-        AgentModResourceReadTool(File(storagePath)),
-        AgentModEntriesListTool(File(storagePath)),
+        AgentModResourceReadTool(File(storagePath), modReadTargets),
+        AgentModEntriesListTool(File(storagePath), modReadTargets),
         AgentPatchTargetInspectTool(
             context = context,
             parentJar = File(storagePath),
@@ -271,6 +280,7 @@ internal fun buildAiEditorSystemPrompt(modName: String, modId: String, workspace
         The current active patch ID, when available, is supplied in launcher state update messages. The latest update takes precedence over older state. Inspect existing files and patch IDs in conversation memory before creating a workspace.
         Do not create a workspace unless the user asked for a new patch and no existing patch workspace should be reused. create_agent_patch_workspace prepares a dedicated patch_source/<patch_id>/ directory and returns the exact paths to use. It does not compile, package, install, or enable a mod.
         If the user asks to inspect or explain the parent mod, call decompile_agent_mod_source to prepare its SHA-256 snapshot, then inspect_agent_class or decompile_agent_class for the needed classes. Do not expect source/ to contain every parent file.
+        To read another installed mod (including disabled mods), call list_installed_mods, then pass its mod_id to list_agent_mod_entries, inspect_agent_class, decompile_agent_class, or read_agent_mod_resource. Discover classes with list_agent_mod_entries(entry_type="classes", mod_id=...) rather than search_agent_api, whose classpath only covers the parent and built-in dependencies. Other mods' decompiled code is returned inline, not materialized in the current workspace. These tools are read-only with respect to installed JARs; inspecting another mod does not change the patch target or compile classpath.
         Use write_agent_workspace_file to create or replace files under the current patch_workspace_path returned by create_agent_patch_workspace, and delete_agent_workspace_file to remove files or directories there with recursive=true when needed. Do not attempt to modify source/ or another patch mod's directory.
         The launcher creates ModTheSpire.json and agent-patch.json in the current patch_source/<patch_id>/ directory. Keep the patch mod's modid and parent dependency intact.
         ModTheSpire resolves dependencies case-sensitively: copy the exact 'modid' text from source/ModTheSpire.json when listing the parent or any dependency, and never change its casing.

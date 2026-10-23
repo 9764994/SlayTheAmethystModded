@@ -874,15 +874,16 @@ class AgentWorkspaceDeleteTool(
     }.toString()
 }
 
-/** Inspects one parent-mod class without creating an extracted source tree. */
+/** Inspects one installed-mod class without creating an extracted source tree. */
 class AgentModClassInspectTool(
     private val parentModId: String,
     private val parentJar: File,
+    private val readTargets: AgentModReadTargets = AgentModReadTargets(parentModId, parentJar) { emptyList() },
 ) : AgentTool {
     override val specification: ToolSpecification = ToolSpecification.builder()
         .name("inspect_agent_class")
         .description(
-            "Inspect one class from the selected parent mod without extracting the JAR. Returns the " +
+            "Inspect one class from the parent or another installed mod without extracting the JAR. Returns the " +
                 "exact bytecode origin and declared public/protected API; use decompile_agent_class " +
                 "when method behavior or private implementation is needed.",
         )
@@ -890,6 +891,7 @@ class AgentModClassInspectTool(
             JsonObjectSchema.builder()
                 .addStringProperty("class_name", "Binary class name, for example com.example.MyCard.")
                 .addStringProperty("member_filter", "Optional case-insensitive member-name filter.")
+                .addStringProperty("mod_id", "Optional id from list_installed_mods; defaults to the parent mod.")
                 .required("class_name")
                 .additionalProperties(false)
                 .build(),
@@ -905,13 +907,16 @@ class AgentModClassInspectTool(
         val className = json["class_name"]?.jsonPrimitive?.content?.takeIf(String::isNotBlank)
             ?: return failure("invalid_arguments")
         val memberFilter = json["member_filter"]?.jsonPrimitive?.content?.takeIf(String::isNotBlank)
-        val detail = AgentApiIndex.describe(listOf(parentJar), className, memberFilter)
+        val target = runCatching { readTargets.resolve(json["mod_id"]?.jsonPrimitive?.content) }
+            .getOrElse { return failure(it.message ?: "mod_resolution_failed") }
+        val detail = AgentApiIndex.describe(listOf(target.jar), className, memberFilter)
             ?: return failure("class_not_found")
-        val entry = AgentModJarReader.classEntryName(parentJar, className)
+        val entry = AgentModJarReader.classEntryName(target.jar, className)
         return buildJsonObject {
             put("name", JsonPrimitive(detail.summary.binaryName))
             put("origin", JsonPrimitive(if (entry == null) detail.summary.origin else entry))
             put("parent_mod_id", JsonPrimitive(parentModId))
+            put("mod_id", JsonPrimitive(target.modId))
             put("constructors", members(detail.constructors))
             put("methods", members(detail.methods))
             put("fields", members(detail.fields))
@@ -940,22 +945,25 @@ class AgentModClassInspectTool(
     }
 }
 
-/** Decompiles one parent-mod class and optionally materializes it in the small source cache. */
+/** Decompiles one installed-mod class; only parent classes may enter the workspace source cache. */
 class AgentModClassDecompileTool(
     private val context: Context,
     private val parentModId: String,
     private val parentJar: File,
+    private val readTargets: AgentModReadTargets = AgentModReadTargets(parentModId, parentJar) { emptyList() },
 ) : AgentTool {
     override val specification: ToolSpecification = ToolSpecification.builder()
         .name("decompile_agent_class")
         .description(
-            "Decompile one class from the selected parent mod on demand. The full parent JAR is not " +
-                "extracted. The result is cached under source/ and includes the parent JAR SHA-256.",
+            "Decompile one class from the parent or another installed mod on demand. Use mod_id from " +
+                "list_installed_mods and list_agent_mod_entries to discover its classes. Other mods " +
+                "are read-only: their source is returned inline, never added to the patch workspace.",
         )
         .parameters(
             JsonObjectSchema.builder()
                 .addStringProperty("class_name", "Binary class name from search_agent_api or inspect_agent_class.")
-                .addBooleanProperty("materialize", "Write the source into source/; defaults to true.")
+                .addBooleanProperty("materialize", "Cache parent source under source/; defaults to true. Always false for other mods.")
+                .addStringProperty("mod_id", "Optional id from list_installed_mods; defaults to the parent mod.")
                 .required("class_name")
                 .additionalProperties(false)
                 .build(),
@@ -971,23 +979,26 @@ class AgentModClassDecompileTool(
             ?: return failure("invalid_arguments")
         val className = json["class_name"]?.jsonPrimitive?.content?.takeIf(String::isNotBlank)
             ?: return failure("invalid_arguments")
-        val materialize = json["materialize"]?.jsonPrimitive?.booleanOrNull ?: true
-        val inspection = runCatching {
+        val target = runCatching { readTargets.resolve(json["mod_id"]?.jsonPrimitive?.content) }
+            .getOrElse { return failure(it.message ?: "mod_resolution_failed") }
+        val isParent = target.jar.canonicalFile == parentJar.canonicalFile
+        val materialize = isParent && (json["materialize"]?.jsonPrimitive?.booleanOrNull ?: true)
+        val inspection = if (isParent) runCatching {
             AgentModInspectionManager.createInspection(context, parentModId, parentJar)
-        }.getOrElse { return failure(it.message ?: "inspection_failed") }
+        }.getOrElse { return failure(it.message ?: "inspection_failed") } else null
         val classpath = runCatching {
-            AgentPatchSourceCompiler.buildClasspath(context, parentJar)
+            AgentPatchSourceCompiler.buildClasspath(context, target.jar)
         }.getOrElse { return failure(it.message ?: "classpath_unavailable") }
         val result = runCatching {
             AgentPatchClassDecompiler.decompileClass(
-                jarFile = parentJar,
+                jarFile = target.jar,
                 binaryName = className,
                 classpath = classpath,
                 scratchDir = File(context.cacheDir, "agent-class-decompile"),
             )
         }.getOrElse { return failure(it.message ?: "decompile_failed") }
-        val sourceFile = AgentModSourceSnapshot.sourceFileForEntry(inspection.sourceRoot, result.classEntry)
-        if (materialize) {
+        val sourceFile = inspection?.let { AgentModSourceSnapshot.sourceFileForEntry(it.sourceRoot, result.classEntry) }
+        if (materialize && sourceFile != null && inspection != null) {
             sourceFile.parentFile?.mkdirs()
             sourceFile.writeText(result.source, StandardCharsets.UTF_8)
             AgentModInspectionManager.recordOnDemandClass(inspection, className)
@@ -996,9 +1007,12 @@ class AgentModClassDecompileTool(
             put("status", JsonPrimitive("decompiled"))
             put("class_name", JsonPrimitive(result.requestedClass))
             put("class_entry", JsonPrimitive(result.classEntry))
+            put("mod_id", JsonPrimitive(target.modId))
             put("materialized", JsonPrimitive(materialize))
-            put("source_path", JsonPrimitive(sourceFile.relativeTo(inspection.root).invariantSeparatorsPath))
-            put("source_sha256", JsonPrimitive(inspection.sourceSha256))
+            if (sourceFile != null && inspection != null) {
+                put("source_path", JsonPrimitive(sourceFile.relativeTo(inspection.root).invariantSeparatorsPath))
+                put("source_sha256", JsonPrimitive(inspection.sourceSha256))
+            }
             put("source", JsonPrimitive(result.source))
         }.toString()
     }
@@ -1008,19 +1022,21 @@ class AgentModClassDecompileTool(
     }.toString()
 }
 
-/** Reads one resource entry or byte range without extracting the parent archive. */
+/** Reads one resource entry or byte range without extracting the selected archive. */
 class AgentModResourceReadTool(
     private val parentJar: File,
+    private val readTargets: AgentModReadTargets = AgentModReadTargets("", parentJar) { emptyList() },
 ) : AgentTool {
     override val specification: ToolSpecification = ToolSpecification.builder()
         .name("read_agent_mod_resource")
         .description(
-            "Read a resource entry from the selected parent mod without extracting the JAR. Use " +
+            "Read a resource entry from the parent or another installed mod without extracting the JAR. Use " +
                 "utf8 for JSON/XML/text and base64 for binary assets; reads are bounded and pageable.",
         )
         .parameters(
             JsonObjectSchema.builder()
                 .addStringProperty("entry", "JAR-relative resource path, for example resources/cards.json.")
+                .addStringProperty("mod_id", "Optional id from list_installed_mods; defaults to the parent mod.")
                 .addStringProperty("encoding", "utf8 or base64; defaults to utf8.")
                 .addStringProperty("offset", "Zero-based byte offset; defaults to 0.")
                 .addStringProperty("limit", "Maximum bytes to return; defaults to 16384.")
@@ -1043,12 +1059,15 @@ class AgentModResourceReadTool(
         val offset = json["offset"]?.jsonPrimitive?.content?.toLongOrNull()?.coerceAtLeast(0L) ?: 0L
         val limit = (json["limit"]?.jsonPrimitive?.content?.toIntOrNull() ?: DEFAULT_LIMIT)
             .coerceIn(1, DEFAULT_LIMIT)
+        val target = runCatching { readTargets.resolve(json["mod_id"]?.jsonPrimitive?.content) }
+            .getOrElse { return failure(it.message ?: "mod_resolution_failed") }
         val range = runCatching {
-            AgentModJarReader.readEntryRange(parentJar, entry, offset, limit)
+            AgentModJarReader.readEntryRange(target.jar, entry, offset, limit)
         }.getOrElse { return failure(it.message ?: "resource_read_failed") }
             ?: return failure("resource_not_found")
         return buildJsonObject {
             put("entry", JsonPrimitive(entry))
+            put("mod_id", JsonPrimitive(target.modId))
             put("encoding", JsonPrimitive(encoding))
             put("offset", JsonPrimitive(range.offset))
             put("total_bytes", JsonPrimitive(range.totalBytes))
@@ -1080,16 +1099,18 @@ class AgentModResourceReadTool(
 /** Lists archive paths so resources can be discovered before reading them. */
 class AgentModEntriesListTool(
     private val parentJar: File,
+    private val readTargets: AgentModReadTargets = AgentModReadTargets("", parentJar) { emptyList() },
 ) : AgentTool {
     override val specification: ToolSpecification = ToolSpecification.builder()
         .name("list_agent_mod_entries")
         .description(
-            "List paths in the selected parent mod JAR without extracting it. Filter with a path prefix " +
+            "List paths in the parent or another installed mod JAR without extracting it. Filter with a path prefix " +
                 "and choose resources, classes, or all entries; use read_agent_mod_resource to read resources.",
         )
         .parameters(
             JsonObjectSchema.builder()
                 .addStringProperty("prefix", "Optional case-sensitive JAR path prefix.")
+                .addStringProperty("mod_id", "Optional id from list_installed_mods; defaults to the parent mod.")
                 .addStringProperty("entry_type", "resources, classes, or all; defaults to resources.")
                 .addStringProperty("offset", "Zero-based result offset; defaults to 0.")
                 .addStringProperty("limit", "Maximum entries to return; defaults to 100.")
@@ -1110,8 +1131,10 @@ class AgentModEntriesListTool(
         val offset = (json["offset"]?.jsonPrimitive?.content?.toIntOrNull() ?: 0).coerceAtLeast(0)
         val limit = (json["limit"]?.jsonPrimitive?.content?.toIntOrNull() ?: DEFAULT_LIMIT)
             .coerceIn(1, MAX_LIMIT)
+        val target = runCatching { readTargets.resolve(json["mod_id"]?.jsonPrimitive?.content) }
+            .getOrElse { return failure(it.message ?: "mod_resolution_failed") }
         val entries = runCatching {
-            AgentModJarReader.listEntries(parentJar)
+            AgentModJarReader.listEntries(target.jar)
                 .asSequence()
                 .filterNot { it.endsWith("/") }
                 .filter { it.startsWith(prefix) }
@@ -1127,6 +1150,7 @@ class AgentModEntriesListTool(
         }.getOrElse { return failure(it.message ?: "archive_list_failed") }
         return buildJsonObject {
             put("entry_type", JsonPrimitive(type))
+            put("mod_id", JsonPrimitive(target.modId))
             put("prefix", JsonPrimitive(prefix))
             put("total_entries", JsonPrimitive(entries.size))
             put("offset", JsonPrimitive(offset))

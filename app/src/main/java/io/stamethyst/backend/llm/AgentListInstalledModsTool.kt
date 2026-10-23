@@ -28,7 +28,8 @@ class AgentListInstalledModsTool(
         .description(
             "List the mods installed in the launcher: mod_id, manifest_mod_id, name, version, " +
                 "dependencies, whether it is a built-in mod that is always loaded, and whether the " +
-                "user currently has it enabled. Use the ids with smoke_test_agent_patch_mod's " +
+                "user currently has it enabled. Use mod_id with list_agent_mod_entries, inspect_agent_class, " +
+                "decompile_agent_class, and read_agent_mod_resource to read another installed mod. Use the ids with smoke_test_agent_patch_mod's " +
                 "mod_ids to test a patch together with the mods it interacts with.",
         )
         .parameters(JsonObjectSchema.builder().additionalProperties(false).build())
