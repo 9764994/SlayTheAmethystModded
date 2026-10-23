@@ -81,7 +81,7 @@ public final class SlingAssetServer {
             String headers = request.toString("ISO-8859-1");
             String[] parts = headers.substring(0, headers.indexOf("\r\n")).split(" ");
             OutputStream out = client.getOutputStream();
-            if (parts.length != 3 || !parts[0].equals("GET")) { respond(out, 405); return; }
+            if (parts.length != 3 || !(parts[0].equals("GET") || parts[0].equals("POST"))) { respond(out, 405); return; }
             String rawPath = parts[1].split("\\?", 2)[0];
             String path = URLDecoder.decode(rawPath.replace("+", "%2B"), "UTF-8");
             String expectedHost = "127.0.0.1:" + socket.getLocalPort();
@@ -97,9 +97,26 @@ public final class SlingAssetServer {
                     (headerValues.containsKey("origin") && !("http://" + expectedHost).equals(headerValues.get("origin"))) ||
                     "cross-site".equals(headerValues.get("sec-fetch-site"))) { respond(out, 403); return; }
                 String[] bridge = path.substring((prefix + "bridge/").length()).split("/", -1);
-                if (bridge.length != 2) { respond(out, 404); return; }
+                if (bridge.length != 2 && bridge.length != 3) { respond(out, 404); return; }
                 SlingLauncherChannel channel = channels.get(bridge[0]);
                 if (channel == null) { respond(out, 410); return; }
+                if (bridge.length == 3 && bridge[1].equals("audio")) {
+                    if (!parts[0].equals("POST")) { respond(out, 405); return; }
+                    int length;
+                    try { length = Integer.parseInt(headerValues.getOrDefault("content-length", "0")); }
+                    catch (NumberFormatException e) { respond(out, 400); return; }
+                    if (length < 2 || length > 13 * 1024 * 1024) { respond(out, 413); return; }
+                    byte[] data = new byte[length];
+                    for (int offset = 0; offset < length;) {
+                        int n = input.read(data, offset, length - offset); if (n < 0) return; offset += n;
+                    }
+                    String body;
+                    try { body = channel.audio(bridge[2], new String(data, StandardCharsets.UTF_8)); }
+                    catch (org.json.JSONException e) { respond(out, 400); return; }
+                    writeHeaders(out, "application/json; charset=utf-8");
+                    out.write(body.getBytes(StandardCharsets.UTF_8)); return;
+                }
+                if (bridge.length != 2 || !parts[0].equals("GET")) { respond(out, 405); return; }
                 String body = "[]";
                 if (bridge[1].equals("poll")) body = channel.poll();
                 else if (bridge[1].equals("onPageReady") || bridge[1].equals("enterGame") || bridge[1].equals("scriptError"))
@@ -109,6 +126,7 @@ public final class SlingAssetServer {
                 out.write(body.getBytes(StandardCharsets.UTF_8));
                 return;
             }
+            if (!parts[0].equals("GET")) { respond(out, 405); return; }
             if (!path.startsWith(prefix + "slingbreak/") || path.contains("\\") || path.contains("\u0000")) { respond(out, 404); return; }
             for (String segment : path.split("/")) if (segment.equals("..") || segment.equals(".")) { respond(out, 404); return; }
             String asset = path.substring(prefix.length());

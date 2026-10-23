@@ -80,7 +80,7 @@ internal class SlingBreakWebViewHost private constructor(
         }
 
         /**
-         * External GeckoView with a narrowly scoped launcher bridge and Web Audio fallback.
+         * External GeckoView with scoped launcher and native audio capabilities.
          */
         private fun createCompatibility(context: Context): SlingBreakWebViewHost {
             val host = GeckoDependencyLoader.createHost(context)
@@ -89,32 +89,39 @@ internal class SlingBreakWebViewHost private constructor(
             val active = type.getMethod("setActive", Boolean::class.javaPrimitiveType)
             val stop = type.getMethod("stop")
             val close = type.getMethod("close")
-            var channel: SlingLauncherChannel? = null
+            val audio = SlingNativeAudioBridge.create(context)
+            val channel = SlingLauncherChannel(null, audio)
+            try {
+                SlingAssetServer.register(context, channel)
+            } catch (failure: Exception) {
+                channel.close()
+                runCatching { close.invoke(host) }
+                throw failure
+            }
             return SlingBreakWebViewHost(
                 view = type.getMethod("getView").invoke(host) as View,
                 loadUrlImpl = { requestedUrl ->
-                    val url = resolveSlingBreakGeckoUrl(requestedUrl, channel?.token) {
+                    if (requestedUrl != "about:blank") audio?.reset()
+                    val url = resolveSlingBreakGeckoUrl(requestedUrl, channel.token) {
                         SlingAssetServer.url(context, it)
                     }
                     load.invoke(host, url)
                 },
                 evaluateJavascriptImpl = { script, callback ->
-                    channel?.evaluate(script)
+                    channel.evaluate(script)
                     callback?.invoke(null)
                 },
                 addJavascriptInterfaceImpl = { instance, name ->
                     require(name == "AndroidSlingBreakLauncher") { "Unsupported Gecko JS interface: $name" }
-                    channel?.let(SlingAssetServer::unregister)
-                    channel = SlingLauncherChannel(instance).also { SlingAssetServer.register(context, it) }
+                    channel.setLauncher(instance)
                 },
                 onResumeImpl = { },
                 onPauseImpl = { },
-                setActiveImpl = { active.invoke(host, it); Unit },
+                setActiveImpl = { audio?.activate(it); active.invoke(host, it); Unit },
                 stopLoadingImpl = { stop.invoke(host); Unit },
-                closeAudioImpl = { },
+                closeAudioImpl = { audio?.shutdown() },
                 destroyImpl = {
-                    channel?.let(SlingAssetServer::unregister)
-                    channel = null
+                    SlingAssetServer.unregister(channel)
                     runCatching { close.invoke(host) }
                 },
                 engine = "gecko"

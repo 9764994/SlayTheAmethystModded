@@ -85,7 +85,7 @@ internal fun WebView.configureSlingBreakGame() {
     settings.apply {
         javaScriptEnabled = true
         domStorageEnabled = true
-        // SlingBreak uses Web Audio rather than HTML media elements. Android WebView can keep its
+        // SlingBreak's fallback uses Web Audio rather than HTML media elements. WebView can keep its
         // AudioContext suspended when this autoplay restriction is enabled, even after the game
         // receives a touch gesture.
         mediaPlaybackRequiresUserGesture = false

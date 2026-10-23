@@ -9,8 +9,8 @@ about that WebView path, not a hardware latency floor or a speaker measurement.
 
 ## Integration
 
-`SlingNativeAudioBridge` exposes a versioned capability to the bundled game in
-both the standalone activity and boot overlay. The web code checks the capability,
+`SlingNativeAudioBridge` exposes a v2 capability to the bundled game in
+both the standalone activity and boot overlay, with system WebView or Gecko. The web code checks the capability,
 not the UA, model, or manufacturer. Without it, the existing Web Audio graph is used.
 
 `sling_audio.cpp` opens a float-stereo AAudio callback stream with low-latency
@@ -44,6 +44,31 @@ below 50 ms; if no further bounded increase is possible, playback falls back.
 Native initialization/upload/start failures also fall back. A failed native
 session is not retried until the page is reloaded.
 
+## v2 compatibility fixes
+
+- The web recipe catalogue owns sound names; native playback validates uploaded
+  sample IDs instead of the obsolete 13-name list. Boss cues no longer invalidate
+  the session. Banks support 512 samples / 32 MiB and 16 voices per request.
+- `setState` applies continuous gain at every nonzero game volume. Separate
+  effects/UI/music buses preserve dialog cues while paused, discarding gameplay
+  voices, echoes and stale queued commands.
+- Music supports bounded PCM caching, seven instrument buses, delayed notes,
+  filtered mix, echo, fade and stop. Evicted buffers remain alive while queued or
+  playing; final PCM reclamation stays on the control thread. Bus limits are
+  64 effects, 16 UI and 48 music voices.
+- `playBatch` accepts up to 96 independent requests and returns one result each.
+- Gecko receives the same API through a per-view random-token loopback channel,
+  also for standalone play. Only named audio methods are allowed; POST sizes,
+  origin/Host and bridge headers are checked. The synchronous facade matches the
+  game's host ABI. PCM uploads occur during preparation/warmup, not impacts;
+  actual Gecko transport latency still needs device measurement.
+- Host pause/resume, reset and destruction also govern Gecko native audio.
+  Channel closure revokes the capability and releases the stream.
+- The build-time adapter in `StsAndroidAppBuildPlugin.kt` preserves the host's
+  reported AAudio backend and relinquishes v2 ownership after native failure,
+  restoring Web Audio instead of leaving output silently native-only. Changes
+  are applied when packaging, not to generated/downloaded files.
+
 ## Packaging local changes
 
 The app now fetches web sources by default. To include uncommitted sibling web
@@ -67,7 +92,18 @@ snapshot at close. Web JSON contains `native-ready`, `native-sound-enqueued`,
 `native-fallback`, and `backend: native-aaudio` snapshots including xruns and drops.
 Enqueued means accepted for rendering, not confirmed speaker output.
 
-This implementation has been statically reviewed only. No builds, automated
-tests, game runs, or device latency measurements were performed for this change.
-Device verification still needs to establish actual audible latency, focus and
-pause/resume behavior, sound fidelity, and safe fallback on route changes.
+Host-side regression commands:
+
+```sh
+python3 -m unittest scripts.tools.tests.test_sling_audio
+# Run prepareCommonRuntimeAssets first; tests use the actual packaged scripts.
+node --test scripts/tools/tests/sling_audio_protocol.test.cjs
+```
+
+The C++ tests exercise the production mixer with AddressSanitizer/UBSan: gain,
+pause/UI isolation, mute/flush, music/stop and voice bounds. JS tests cover v2
+preparation, Boss cues, partial gain, UI, music, fallback and Gecko forwarding.
+Kotlin/Java and Android native compilation have been checked.
+Device verification still needs audible latency, focus/pause/resume, fidelity,
+Gecko IPC latency and route-change fallback checks. The connected device's ADB
+shell timed out during investigation; host tests do not prove speaker output.

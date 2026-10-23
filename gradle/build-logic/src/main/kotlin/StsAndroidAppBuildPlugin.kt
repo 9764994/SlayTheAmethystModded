@@ -353,6 +353,19 @@ private fun Project.registerPackagedRuntimeAssetTasks(
         from(slingBreakBundleDir) {
             into("slingbreak")
             exclude(".git/**", "**/*.test.cjs", "**/*.txt", "libghostty")
+            filesMatching(listOf("**/audio-native.js", "audio-native.js")) {
+                // Upstream's v2 default names its own AudioTrack host. Our v2 host
+                // retains AAudio; diagnostics must report the negotiated backend.
+                filter { line: String ->
+                    line.replace("fullPlayback?'native-audiotrack':'native-aaudio'",
+                        "fullPlayback?(capabilities.backend||'native-audiotrack'):'native-aaudio'")
+                        // Keep the existing safe Web Audio fallback even with a v2 host.
+                        .replace("return {fullPlayback,musicPlayback,", "return {get fullPlayback(){return fullPlayback&&state!=='failed';},get musicPlayback(){return musicPlayback&&state!=='failed';},")
+                        .replace("return !!fullPlayback;", "return !!fullPlayback&&state!=='failed';")
+                        .replace("if(state==='idle'||state==='closed')return;",
+                            "if(state==='idle'||state==='closed'||state==='failed')return;")
+                }
+            }
         }
         from(generatedRuntimeAssetsDir) {
             exclude(externalizedAssetPatterns + obsoleteCommonAssetPatterns)
