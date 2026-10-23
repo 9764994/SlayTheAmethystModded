@@ -142,6 +142,9 @@ internal fun AgentPatchCatalogueDialog(
     var uploadProgress by remember {
         mutableStateOf(AgentPatchUploadProgress(AgentPatchUploadStage.PREPARING, 0f))
     }
+    var uploadCheckpointProgress by remember {
+        mutableStateOf(AgentPatchUploadProgress(AgentPatchUploadStage.PREPARING, 0f))
+    }
     var uploadError by remember { mutableStateOf<String?>(null) }
     var uploadResult by remember { mutableStateOf<AgentPatchUploadResult?>(null) }
     var deleteTarget by remember { mutableStateOf<AgentPatchModUi?>(null) }
@@ -226,6 +229,7 @@ internal fun AgentPatchCatalogueDialog(
         if (patch != null && uploadPhase != AgentPatchUploadPhase.UPLOADING) {
             uploadPhase = AgentPatchUploadPhase.UPLOADING
             uploadProgress = AgentPatchUploadProgress(AgentPatchUploadStage.PREPARING, 0f)
+            uploadCheckpointProgress = uploadProgress
             uploadError = null
             uploadResult = null
             workingPatchModId = patch.patchModId
@@ -242,7 +246,7 @@ internal fun AgentPatchCatalogueDialog(
                 }
                 val progressUpdates = Channel<AgentPatchUploadProgress>(Channel.CONFLATED)
                 val progressJob = launch {
-                    val presenter = AgentPatchUploadProgressPresenter(show = { uploadProgress = it })
+                    val presenter = AgentPatchUploadProgressPresenter(show = { uploadCheckpointProgress = it })
                     for (value in progressUpdates) presenter.update(value)
                 }
                 val result = runCatching {
@@ -255,6 +259,9 @@ internal fun AgentPatchCatalogueDialog(
                         consent,
                         listOf(mod.version),
                         onProgress = { value ->
+                            scope.launch(Dispatchers.Main.immediate) {
+                                uploadProgress = value
+                            }
                             progressUpdates.trySend(value)
                         },
                     )
@@ -518,6 +525,7 @@ internal fun AgentPatchCatalogueDialog(
             patch = patch,
             phase = uploadPhase,
             progress = uploadProgress,
+            checkpointProgress = uploadCheckpointProgress,
             error = uploadError,
             result = uploadResult,
             username = username,
@@ -1132,6 +1140,7 @@ private fun AgentPatchUploadDialog(
     patch: AgentPatchModUi,
     phase: AgentPatchUploadPhase,
     progress: AgentPatchUploadProgress,
+    checkpointProgress: AgentPatchUploadProgress,
     error: String?,
     result: AgentPatchUploadResult?,
     username: String,
@@ -1205,7 +1214,7 @@ private fun AgentPatchUploadDialog(
                             onCancel = onClose,
                             onUpload = onStartUpload,
                         )
-                        AgentPatchUploadPhase.UPLOADING -> AgentPatchUploadProgressContent(progress)
+                        AgentPatchUploadPhase.UPLOADING -> AgentPatchUploadProgressContent(progress, checkpointProgress)
                         AgentPatchUploadPhase.THANKS -> AgentPatchUploadThanksContent(
                             result = result,
                             onClose = onClose,
@@ -1296,7 +1305,10 @@ private fun AgentPatchUploadForm(
 }
 
 @Composable
-private fun AgentPatchUploadProgressContent(progress: AgentPatchUploadProgress) {
+private fun AgentPatchUploadProgressContent(
+    progress: AgentPatchUploadProgress,
+    checkpointProgress: AgentPatchUploadProgress,
+) {
     val animated by animateFloatAsState(
         targetValue = progress.fraction.coerceIn(0f, 1f),
         animationSpec = tween(320),
@@ -1320,25 +1332,25 @@ private fun AgentPatchUploadProgressContent(progress: AgentPatchUploadProgress) 
         }
         HorizontalDivider()
         Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
-            val currentIndex = UPLOAD_STAGES.indexOf(progress.stage)
+            val currentIndex = UPLOAD_STAGES.indexOf(checkpointProgress.stage)
                 .let { if (it < 0) UPLOAD_STAGES.size else it }
             UPLOAD_STAGES.forEachIndexed { index, stage ->
                 val status = when {
-                    progress.stage == AgentPatchUploadStage.DONE || index < currentIndex -> AgentPatchStepStatus.DONE
+                    checkpointProgress.stage == AgentPatchUploadStage.DONE || index < currentIndex -> AgentPatchStepStatus.DONE
                     index == currentIndex -> AgentPatchStepStatus.ACTIVE
                     else -> AgentPatchStepStatus.PENDING
                 }
                 val detail = when {
                     status != AgentPatchStepStatus.ACTIVE -> null
-                    stage == AgentPatchUploadStage.UPLOADING && progress.totalBytes > 0L -> {
-                        val percent = ((progress.uploadedBytes * 100) / progress.totalBytes)
+                    stage == AgentPatchUploadStage.UPLOADING && checkpointProgress.totalBytes > 0L -> {
+                        val percent = ((checkpointProgress.uploadedBytes * 100) / checkpointProgress.totalBytes)
                             .toInt()
                             .coerceIn(0, 100)
                         stringResource(
                             R.string.main_mod_agent_patch_progress_detail,
                             percent,
-                            formatBytes(progress.uploadedBytes),
-                            formatBytes(progress.totalBytes),
+                            formatBytes(checkpointProgress.uploadedBytes),
+                            formatBytes(checkpointProgress.totalBytes),
                         )
                     }
                     else -> stringResource(R.string.main_mod_agent_patch_stage_processing)
