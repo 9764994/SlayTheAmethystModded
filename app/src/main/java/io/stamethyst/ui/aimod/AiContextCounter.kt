@@ -66,6 +66,7 @@ internal fun agentToolDescriptionRes(name: String): Int = when (name) {
     "decompile_agent_mod_source" -> R.string.ai_mod_editor_tool_desc_decompile_agent_mod_source
     "inspect_agent_class" -> R.string.ai_mod_editor_tool_desc_inspect_agent_class
     "decompile_agent_class" -> R.string.ai_mod_editor_tool_desc_decompile_agent_class
+    "decompile_agent_api_class" -> R.string.ai_mod_editor_tool_desc_decompile_agent_api_class
     "read_agent_mod_resource" -> R.string.ai_mod_editor_tool_desc_read_agent_mod_resource
     "list_agent_mod_entries" -> R.string.ai_mod_editor_tool_desc_list_agent_mod_entries
     "compile_agent_patch_source" -> R.string.ai_mod_editor_tool_desc_compile_agent_patch_source

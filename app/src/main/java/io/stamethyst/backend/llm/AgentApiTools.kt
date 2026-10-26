@@ -226,6 +226,14 @@ class AgentApiDescribeTool(
             put("constructors", members(detail.constructors))
             put("methods", members(detail.methods))
             put("fields", members(detail.fields))
+            put(
+                "next_step",
+                JsonPrimitive(
+                    "When behavior is unclear, call decompile_agent_api_class to read the installed " +
+                        "implementation. Before patching a method, call inspect_agent_patch_target for " +
+                        "the exact overloads and bytecode.",
+                ),
+            )
             if (detail.methods.size >= MAX_MEMBERS) {
                 put("note", JsonPrimitive("Member list truncated to $MAX_MEMBERS entries; pass member_filter to narrow it."))
             }

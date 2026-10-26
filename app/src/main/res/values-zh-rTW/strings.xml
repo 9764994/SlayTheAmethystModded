@@ -1384,6 +1384,7 @@
     <string name="ai_mod_editor_tool_desc_decompile_agent_mod_source">準備父模組 JAR 的按需原始碼快照。</string>
     <string name="ai_mod_editor_tool_desc_inspect_agent_class">無需解壓 JAR 即可檢查單個父模組類別。</string>
     <string name="ai_mod_editor_tool_desc_decompile_agent_class">按需反編譯單個父模組類別並快取原始碼。</string>
+    <string name="ai_mod_editor_tool_desc_decompile_agent_api_class">反編譯單個遊戲或 BaseMod 類別為 Java 原始碼。</string>
     <string name="ai_mod_editor_tool_desc_read_agent_mod_resource">按需讀取父模組 JAR 的資源項目。</string>
     <string name="ai_mod_editor_tool_desc_list_agent_mod_entries">無需解壓即可列出父模組 JAR 項目。</string>
     <string name="ai_mod_editor_tool_desc_compile_agent_patch_source">將 patch/src 中的 Java 原始碼編譯為補丁類別。</string>

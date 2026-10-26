@@ -60,6 +60,9 @@ private const val MAX_TEXT_READ_BYTES = 16L * 1024L * 1024L
 private const val MAX_TOOL_RESULT_LINES = 2000
 private const val MAX_TOOL_RESULT_BYTES = 51_200
 
+/** Cap for one decompiled game/API class returned inline to the model. */
+private const val MAX_API_SOURCE_CHARS = 32_000
+
 /** Workspace subdirectory where oversized tool results are persisted for later reading. */
 private const val TOOL_OUTPUT_DIR = "tool_output"
 
@@ -1014,6 +1017,120 @@ class AgentModClassDecompileTool(
                 put("source_sha256", JsonPrimitive(inspection.sourceSha256))
             }
             put("source", JsonPrimitive(result.source))
+        }.toString()
+    }
+
+    private fun failure(code: String): String = buildJsonObject {
+        put("error", JsonPrimitive(code))
+    }.toString()
+}
+
+/**
+ * Decompiles one game/BaseMod/StSLib/dependency class from the compile classpath. The class may
+ * live in the game JAR, ModTheSpire, a required mod, or the parent mod; installed-mod classes
+ * should still use decompile_agent_class so their source can be cached under the parent workspace.
+ */
+class AgentApiClassDecompileTool(
+    private val context: Context,
+    private val parentJar: File,
+) : AgentTool {
+    override val specification: ToolSpecification = ToolSpecification.builder()
+        .name("decompile_agent_api_class")
+        .description(
+            "Decompile one game, BaseMod, StSLib, ModTheSpire, or bundled dependency class from the " +
+                "compile classpath to Java source. Use this when the behavior of a vanilla class is " +
+                "unclear before writing a patch; for installed mod classes use decompile_agent_class. " +
+                "The source is returned inline and capped, and no files are added to the patch workspace.",
+        )
+        .parameters(
+            JsonObjectSchema.builder()
+                .addStringProperty(
+                    "class_name",
+                    "Binary class name from search_agent_api or describe_agent_api_class.",
+                )
+                .required("class_name")
+                .additionalProperties(false)
+                .build(),
+        )
+        .build()
+
+    override val safety: AgentToolSafety = AgentToolSafety.MOD_INSPECTION
+    // CFR writes a temporary single-class JAR, so keep decompilation serialized.
+    override val concurrency = AgentToolConcurrency.EXCLUSIVE
+
+    override fun execute(arguments: String): String {
+        val json = runCatching { Json.parseToJsonElement(arguments).jsonObject }.getOrNull()
+            ?: return failure("invalid_arguments")
+        val className = json["class_name"]?.jsonPrimitive?.content?.takeIf(String::isNotBlank)
+            ?: return failure("invalid_arguments")
+        val binaryName = AgentPatchTargetInspector.normalizeClassName(className)
+        val resolution = runCatching {
+            AgentPatchSourceCompiler.resolveCompileClasspathEntries(context, parentJar)
+        }.getOrElse { error ->
+            return buildJsonObject {
+                put("error", JsonPrimitive("classpath_unavailable"))
+                put("message", JsonPrimitive(error.message ?: error.javaClass.simpleName))
+            }.toString()
+        }
+        val jar = resolution.entries.asSequence()
+            .filter { it.isFile }
+            .firstOrNull { AgentModJarReader.classEntryName(it, binaryName) != null }
+            ?: return buildJsonObject {
+                put("error", JsonPrimitive("class_not_found"))
+                put("class_name", JsonPrimitive(binaryName))
+                put(
+                    "next_step",
+                    JsonPrimitive(
+                        "Use search_agent_api to find the exact binary name. Game, BaseMod, StSLib, " +
+                            "ModTheSpire and bundled dependency classes are on this classpath.",
+                    ),
+                )
+            }.toString()
+        val classpath = resolution.entries.joinToString(File.pathSeparator) { it.absolutePath }
+        val result = runCatching {
+            AgentPatchClassDecompiler.decompileClass(
+                jarFile = jar,
+                binaryName = binaryName,
+                classpath = classpath,
+                scratchDir = File(context.cacheDir, "agent-api-decompile"),
+            )
+        }.getOrElse { error ->
+            return buildJsonObject {
+                put("error", JsonPrimitive("decompile_failed"))
+                put("message", JsonPrimitive(error.message ?: error.javaClass.simpleName))
+                put(
+                    "next_step",
+                    JsonPrimitive(
+                        "Use inspect_agent_patch_target for the exact method bytecode, or decompile " +
+                            "a smaller helper class.",
+                    ),
+                )
+            }.toString()
+        }
+        val truncated = result.source.length > MAX_API_SOURCE_CHARS
+        return buildJsonObject {
+            put("status", JsonPrimitive("decompiled"))
+            put("class_name", JsonPrimitive(result.requestedClass))
+            put("class_entry", JsonPrimitive(result.classEntry))
+            put("origin", JsonPrimitive(jar.name))
+            put("source_chars", JsonPrimitive(result.source.length))
+            put("truncated", JsonPrimitive(truncated))
+            put(
+                "source",
+                JsonPrimitive(if (truncated) result.source.take(MAX_API_SOURCE_CHARS) else result.source),
+            )
+            put(
+                "next_step",
+                JsonPrimitive(
+                    if (truncated) {
+                        "Source truncated; use inspect_agent_patch_target for the exact method bytecode, " +
+                            "or decompile a smaller helper class."
+                    } else {
+                        "Use inspect_agent_patch_target to confirm the exact overload, descriptor and " +
+                            "local variables before patching."
+                    },
+                ),
+            )
         }.toString()
     }
 

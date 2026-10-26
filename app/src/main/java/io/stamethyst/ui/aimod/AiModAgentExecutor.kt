@@ -1,6 +1,7 @@
 package io.stamethyst.ui.aimod
 
 import android.content.Context
+import io.stamethyst.backend.llm.AgentApiClassDecompileTool
 import io.stamethyst.backend.llm.AgentApiDescribeTool
 import io.stamethyst.backend.llm.AgentApiSearchTool
 import io.stamethyst.backend.llm.AgentChatModelFactory
@@ -208,6 +209,10 @@ internal class AiModAgentExecutor(
             parentJar = File(storagePath),
             readTargets = modReadTargets,
         ),
+        AgentApiClassDecompileTool(
+            context = context,
+            parentJar = File(storagePath),
+        ),
         AgentModResourceReadTool(File(storagePath), modReadTargets),
         AgentModEntriesListTool(File(storagePath), modReadTargets),
         AgentPatchTargetInspectTool(
@@ -275,7 +280,7 @@ internal class AiModAgentExecutor(
 internal fun buildAiEditorSystemPrompt(modName: String, modId: String, workspaceAccessRoot: File): String = """
         You are a safe mod editing assistant inside a mobile launcher.
         Independent read/search/inspect tool calls may be issued together in one response; the launcher runs parallel-safe tools concurrently. Workspace changes, decompilation, compilation, packaging, activation, deletion, and smoke tests run exclusively in call order. If a call needs an earlier tool's output, wait for that output before choosing its arguments.
-        Use workspace tools for listing and reading the patch workspace. source/ is a read-only, on-demand cache; it is not a full extraction of the parent JAR and must never be written or deleted through workspace tools. Use list_agent_mod_entries to discover JAR paths, inspect_agent_class for bytecode metadata, decompile_agent_class for one class, and read_agent_mod_resource for one resource. patch_source/ is the agent-owned patch tree and is the only directory writable or deletable through workspace tools.
+        Use workspace tools for listing and reading the patch workspace. source/ is a read-only, on-demand cache; it is not a full extraction of the parent JAR and must never be written or deleted through workspace tools. Use list_agent_mod_entries to discover JAR paths, inspect_agent_class for bytecode metadata, decompile_agent_class for one parent or installed-mod class, decompile_agent_api_class for one game/BaseMod/StSLib/dependency class, and read_agent_mod_resource for one resource. patch_source/ is the agent-owned patch tree and is the only directory writable or deletable through workspace tools.
         To find something in the workspace, locate it before reading: use grep_agent_workspace to search file contents by regular expression and glob_agent_workspace to find files by pattern like '**/*.java'. Fall back to list_agent_workspace only when you do not know what to look for; it is capped and lists paths only.
         The current active patch ID, when available, is supplied in launcher state update messages. The latest update takes precedence over older state. Inspect existing files and patch IDs in conversation memory before creating a workspace.
         Do not create a workspace unless the user asked for a new patch and no existing patch workspace should be reused. create_agent_patch_workspace prepares a dedicated patch_source/<patch_id>/ directory and returns the exact paths to use. It does not compile, package, install, or enable a mod.
@@ -286,7 +291,7 @@ internal fun buildAiEditorSystemPrompt(modName: String, modId: String, workspace
         ModTheSpire resolves dependencies case-sensitively: copy the exact 'modid' text from source/ModTheSpire.json when listing the parent or any dependency, and never change its casing.
         For a new patch with no suitable existing workspace, call create_agent_patch_workspace first. For any change to an existing patch, inspect or list the existing revisions and continue directly in that revision's patch_source/<patch_id>/ tree; do not create another workspace. After changing an already packaged revision, compile it with its patch_id and call update_agent_patch_mod so the same revision is replaced.
         Before writing any Java against the game, BaseMod, or StSLib, read the bundled reference with read_agent_skill (skill name: basemod-and-stslib). It covers the registration lifecycle and ordering, where each content type is registered, hook names, StSLib keywords, and the mistakes that crash the game when it loads.
-        Never write an API call from memory. Find the type with search_agent_api, then confirm the exact overload with describe_agent_api_class before calling or extending it; the declarations come from the installed bytecode.
+        Never write an API call from memory, and never guess what a vanilla method does. Find the type with search_agent_api, confirm the exact overload with describe_agent_api_class, and when behavior matters call decompile_agent_api_class to read the installed game/BaseMod source before designing the patch.
         Prefer the BaseMod API over ModTheSpire patches: content such as cards, relics, potions, events, keywords, characters, and colors is registered through BaseMod from one @SpireInitializer class. Use @SpirePatch2 only where no API exists, and never use a Replace patch.
         For code changes, write Java 8 sources under <patch_workspace_path>/src/<package>/... using ModTheSpire's @SpirePatch2 and the game/BaseMod APIs, then call compile_agent_patch_source to compile them into that patch workspace. A patch mod does not have to be a @SpirePatch2 hook set: a resource-only patch mod and a mod that registers content through a single @SpireInitializer class with a public static void initialize() are valid too.
         Compilation is fixed to Java 8 and the classpath already contains the game jar, ModTheSpire, the required mods and the parent mod; do not add a build file or a classpath argument.

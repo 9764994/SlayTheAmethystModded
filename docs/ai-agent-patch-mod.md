@@ -155,6 +155,9 @@ The editor exposes these tools for the selected mod workspace:
 - `list_agent_mod_entries`: discover resource or class paths in the parent JAR without extraction.
 - `inspect_agent_class`: inspect one parent class and its exact declared API without extraction.
 - `decompile_agent_class`: decompile one parent class into the shared on-demand `source/` cache.
+- `decompile_agent_api_class`: decompile one game, BaseMod, StSLib, ModTheSpire, or bundled
+  dependency class from the compile classpath and return the Java source inline. Use this for
+  vanilla behavior; installed mod classes still go through `decompile_agent_class`.
 - `read_agent_mod_resource`: read a bounded byte range from one parent JAR resource.
   The `source/` tree is available to the agent through read/list tools and cannot be modified
   through workspace write/delete tools. See "On-device decompilation" below.
@@ -406,6 +409,12 @@ are read with `read_agent_mod_resource` and are never copied into the workspace 
 tree remains readable agent context and is protected from workspace writes/deletes. Agent-authored
 patch sources and generated patch metadata live under the separate writable `patch_source/<patch_id>/`
 tree for each patch mod.
+
+`decompile_agent_api_class` covers the other half of the classpath: game classes, BaseMod, StSLib,
+ModTheSpire, and bundled dependencies. It locates the class in the resolved compile classpath, gives CFR
+the same one-class temporary JAR treatment, and returns the source inline (capped at 32,000 characters)
+instead of writing it into `source/`. That keeps vanilla source out of the parent-mod cache while still
+letting the agent read the actual installed implementation before designing a patch.
 
 - CFR (`org.benf:cfr`, 0.152) is bundled in the APK and invoked through its `CfrDriver` API from the
   launcher process. CFR is compiled to class file 50 and does not execute the class it reads.
