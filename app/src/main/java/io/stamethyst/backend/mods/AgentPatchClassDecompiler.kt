@@ -37,9 +37,9 @@ object AgentPatchClassDecompiler {
     const val DEFAULT_MAX_DECOMPILE_CLASSES = 3000
 
     /**
-     * Decompiles one class without extracting the parent archive. CFR receives a tiny temporary JAR
-     * containing only the requested class while the original parent JAR remains on its classpath
-     * for reference resolution.
+     * Decompiles one class without extracting the source archive. CFR receives a tiny temporary JAR
+     * containing only the requested class while the original archive remains on its classpath for
+     * reference resolution. The archive may be the parent mod or a game/API dependency.
      */
     fun decompileClass(
         jarFile: File,
@@ -48,7 +48,7 @@ object AgentPatchClassDecompiler {
         scratchDir: File? = null,
     ): AgentSingleClassDecompileResult {
         val entryName = AgentModJarReader.classEntryName(jarFile, binaryName)
-            ?: throw IllegalArgumentException("Class not found in parent mod: $binaryName")
+            ?: throw IllegalArgumentException("Class not found in archive: $binaryName")
         val classBytes = AgentModJarReader.readEntryBytes(jarFile, entryName)
             ?: throw IllegalArgumentException("Class bytes could not be read: $entryName")
         val directory = scratchDir?.takeIf { it.isDirectory || it.mkdirs() }
