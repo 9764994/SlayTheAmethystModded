@@ -1309,9 +1309,19 @@ class AgentPatchWorkspaceCreateTool(
         )
         .parameters(
             JsonObjectSchema.builder()
-                .addStringProperty("name", "Short display name for the patch mod; you choose this.")
+                .addStringProperty(
+                    "name",
+                    "Use a concise Chinese display name identifying the main feature or fix. Preserve proper mod " +
+                        "names when needed. Avoid generic names such as 'AI补丁', '测试补丁', or '优化补丁', " +
+                        "and do not include the version number.",
+                )
                 .addStringProperty("version", "Semantic version of the patch mod; defaults to 0.1.0.")
-                .addStringProperty("description", "What this patch changes.")
+                .addStringProperty(
+                    "description",
+                    "Briefly describe in Chinese the problem or request addressed and the concrete changes. " +
+                        "Briefly list distinct changes when applicable. Describe only implemented behavior, not " +
+                        "plans or unverified results. Revise this description whenever it no longer matches the actual patch.",
+                )
                 .required("name")
                 .additionalProperties(false)
                 .build(),
@@ -1731,9 +1741,19 @@ class AgentPatchModPackageTool(
         )
         .parameters(
             JsonObjectSchema.builder()
-                .addStringProperty("name", "Display name of the patch mod.")
+                .addStringProperty(
+                    "name",
+                    "Use a concise Chinese display name identifying the main feature or fix. Preserve proper mod " +
+                        "names when needed. Avoid generic names such as 'AI补丁', '测试补丁', or '优化补丁', " +
+                        "and do not include the version number. Reuse the workspace name unless the patch's purpose changed.",
+                )
                 .addStringProperty("version", "Patch mod version.")
-                .addStringProperty("description", "What this patch changes.")
+                .addStringProperty(
+                    "description",
+                    "Briefly describe in Chinese the problem or request addressed and the concrete implemented changes. " +
+                        "Briefly list distinct changes when applicable; do not claim plans or unverified results. " +
+                        "Check the actual patch contents before packaging and revise any outdated or inconsistent description.",
+                )
                 .additionalProperties(false)
                 .build(),
         )
@@ -1808,8 +1828,19 @@ class AgentPatchModUpdateTool(
             JsonObjectSchema.builder()
                 .addStringProperty("patch_id", "Patch ID from list_agent_patch_mods.")
                 .addStringProperty("version", "New semantic version, for example 1.1.0.")
-                .addStringProperty("name", "New display name; unchanged when omitted.")
-                .addStringProperty("description", "New description; unchanged when omitted.")
+                .addStringProperty(
+                    "name",
+                    "New concise Chinese display name identifying the main feature or fix; unchanged when omitted. " +
+                        "Preserve proper mod names when needed. Avoid generic names such as 'AI补丁', '测试补丁', " +
+                        "or '优化补丁' and do not include the version number. Keep the existing name unless the patch's purpose changed.",
+                )
+                .addStringProperty(
+                    "description",
+                    "New brief Chinese description of the problem or request addressed and the concrete implemented changes. " +
+                        "Briefly list distinct changes when applicable; do not claim plans or unverified results. " +
+                        "Unchanged when omitted: if the existing description no longer matches the actual patch, " +
+                        "you must supply a corrected description.",
+                )
                 .required("patch_id", "version")
                 .additionalProperties(false)
                 .build(),
