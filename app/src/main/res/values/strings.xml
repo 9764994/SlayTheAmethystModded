@@ -561,6 +561,7 @@ Do you still want to continue?</string>
     <string name="main_folder_summary_format">%1$d mods total, %2$d uncategorized</string>
     <string name="main_folder_filter_hint">Filter by name or description</string>
     <string name="main_mod_filter_menu">Filter mods</string>
+    <string name="load_stage_progress_percent">%1$d%%</string>
     <string name="main_game_card_visibility_title">Choose visible cards</string>
     <string name="main_game_card_visibility_overview">Game overview</string>
     <string name="main_game_card_visibility_feedback">Feedback activity</string>
@@ -2901,7 +2902,6 @@ Patch rule: keep Ori full-resolution glow/bloom rendering, but replace the blur 
     <string name="workshop_error_loading_title">Loading failed</string>
     <string name="workshop_load_failure_steam_hint">This page is powered by Steam Workshop. The launcher\'s preferred Steam connection route cannot solve every issue. If loading keeps failing, use any accelerator for the Steam Store, then reopen this page.</string>
     <string name="workshop_load_failure_website_hint">You can also use our website to download mods: %1$s</string>
-    <string name="workshop_load_progress_percent">%1$d%%</string>
     <string name="workshop_load_phase_preparing">Preparing request</string>
     <string name="workshop_load_phase_authenticating">Signing in to Steam</string>
     <string name="workshop_load_phase_resolving_route">Resolving connection route</string>

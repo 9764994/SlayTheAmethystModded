@@ -115,7 +115,7 @@ internal fun WorkshopDetailTopBarLoadProgress(
                 )
             }
             Text(
-                text = stringResource(R.string.workshop_load_progress_percent, (fraction * 100f).toInt()),
+                text = stringResource(R.string.load_stage_progress_percent, (fraction * 100f).toInt()),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
