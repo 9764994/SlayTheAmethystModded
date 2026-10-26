@@ -399,6 +399,11 @@ private fun platformX509TrustManager(): X509TrustManager? = runCatching {
     factory.trustManagers.filterIsInstance<X509TrustManager>().firstOrNull()
 }.getOrNull()
 
+internal fun interface AcceleratedResponseValidator {
+    /** Throw IOException to reject this candidate before it is recorded as successful. */
+    fun validate(response: Response)
+}
+
 /**
  * Routes matching requests through a Watt forward target.
  *
@@ -711,6 +716,7 @@ internal class ExperimentalGithubDirectAccessInterceptor(
                 if (candidateRoute == null || candidateRoute.isOfficial) {
                     AcceleratedRouteEvents.emit(AcceleratedRouteEvent.OfficialAttempt(logicalHost))
                     val officialResponse = officialRequestExecutor(logicalRequest)
+                    validateCandidateResponse(logicalRequest, officialResponse)
                     AcceleratedRouteEvents.emit(AcceleratedRouteEvent.OfficialSucceeded(logicalHost))
                     return ForwardedExecution(
                         response = officialResponse,
@@ -728,6 +734,7 @@ internal class ExperimentalGithubDirectAccessInterceptor(
                     ?.register(call)
                 forwardedRequest.tag(HttpRequestControl::class.java)?.register(call)
                 val response = call.execute()
+                validateCandidateResponse(logicalRequest, response)
                 AcceleratedRouteEvents.emit(
                     AcceleratedRouteEvent.ForwardTargetSucceeded(logicalHost, candidateTarget.orEmpty()),
                 )
@@ -760,6 +767,18 @@ internal class ExperimentalGithubDirectAccessInterceptor(
             }
         }
         throw lastError ?: IOException("No acceleration route candidate was available")
+    }
+
+    private fun validateCandidateResponse(request: Request, response: Response) {
+        val validator = request.tag(AcceleratedResponseValidator::class.java) ?: return
+        // Redirects are checked after following them, not parsed as catalogue JSON.
+        if (response.isRedirect) return
+        try {
+            validator.validate(response)
+        } catch (error: IOException) {
+            response.close()
+            throw error
+        }
     }
 
     private fun forwardTargetsEquivalent(left: String, right: String): Boolean {

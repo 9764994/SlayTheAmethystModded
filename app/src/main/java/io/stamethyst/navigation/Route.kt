@@ -30,6 +30,10 @@ sealed interface Route : NavKey {
     @Serializable
     data object Mods : Route
     @Serializable
+    data object CommunityPatches : Route
+    @Serializable
+    data class CommunityModPatches(val modId: String) : Route
+    @Serializable
     data object Settings : Route
     @Serializable
     data object SettingsLauncher : Route

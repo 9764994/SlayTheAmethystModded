@@ -378,7 +378,15 @@ internal fun BannerReveal(fraction: Float, content: @Composable () -> Unit) {
     }
 }
 
-/** Existing Scaffold top bars use the same outer banner; their inset follows its compact row. */
+/**
+ * Existing Scaffold top bars use the same outer banner; their inset follows its compact row.
+ *
+ * @param footer composed inside the very same header surface, directly under the title row. This is
+ *   the slot the market uses for its load-progress bar, so a transient status stays glued to the
+ *   header instead of scrolling away with the page body.
+ * @param footerHeight current height of [footer]. The in-page inset follows it, otherwise the header
+ *   would grow over the first rows while the footer animates in.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun LauncherTopAppBar(
@@ -386,20 +394,25 @@ internal fun LauncherTopAppBar(
     modifier: Modifier = Modifier,
     navigationIcon: @Composable () -> Unit = {},
     actions: @Composable RowScope.() -> Unit = {},
+    footer: (@Composable () -> Unit)? = null,
+    footerHeight: Dp = 0.dp,
 ) {
     val page = LocalLauncherBannerPage.current
     val content: @Composable () -> Unit = {
-        TopAppBar(
-            modifier = modifier,
-            title = title,
-            navigationIcon = navigationIcon,
-            actions = actions,
-            expandedHeight = lerp(80.dp, 64.dp, LocalLauncherBannerCollapseFraction.current),
-            colors = TopAppBarDefaults.topAppBarColors(
-                containerColor = Color.Transparent,
-                scrolledContainerColor = Color.Transparent,
-            ),
-        )
+        Column(Modifier.fillMaxWidth()) {
+            TopAppBar(
+                modifier = modifier,
+                title = title,
+                navigationIcon = navigationIcon,
+                actions = actions,
+                expandedHeight = lerp(80.dp, 64.dp, LocalLauncherBannerCollapseFraction.current),
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = Color.Transparent,
+                    scrolledContainerColor = Color.Transparent,
+                ),
+            )
+            footer?.invoke()
+        }
     }
     if (page == null) {
         content()
@@ -407,7 +420,7 @@ internal fun LauncherTopAppBar(
         RegisterLauncherBanner(content)
         Column {
             Spacer(Modifier.statusBarsPadding())
-            Spacer(Modifier.height(lerp(80.dp, 64.dp, page.collapseFraction)))
+            Spacer(Modifier.height(lerp(80.dp, 64.dp, page.collapseFraction) + footerHeight))
         }
     }
 }

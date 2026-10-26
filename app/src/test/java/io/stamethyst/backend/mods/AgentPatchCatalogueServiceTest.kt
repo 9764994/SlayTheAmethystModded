@@ -51,6 +51,46 @@ class AgentPatchCatalogueServiceTest {
         assertTrue(AgentPatchCatalogueService.parseParentModIds("{bad json".toByteArray()).isEmpty())
     }
 
+    @Test
+    fun parseModsUsesCatalogueEntriesAndCountsValidatedPatches() {
+        val root = JSONObject(index(
+            patch("Useful", "1.0", "useful_patch", 10),
+            patch("Example", "1.0", "example_patch", 10).put("example", true),
+        ))
+        root.getJSONObject("mods").getJSONObject("basemod")
+            .put("name", "BaseMod").put("count", 999)
+        val result = AgentPatchCatalogueService.parseMods(root.toString().toByteArray())
+        assertEquals(1, result.size)
+        assertEquals("basemod", result.single().modId)
+        assertEquals("BaseMod", result.single().name)
+        assertEquals("1605833019", result.single().workshopId.toString())
+        assertEquals(1, result.single().patches.size)
+    }
+
+    @Test
+    fun parseModsHandlesMissingWorkshopIdsAndExcludesEmptyMods() {
+        val noWorkshop = patch("Useful", "1.0", "useful_patch", 10)
+        noWorkshop.getJSONObject("target").remove("workshopId")
+        val root = JSONObject(index(noWorkshop))
+        val mods = root.getJSONObject("mods")
+        mods.getJSONObject("basemod").remove("workshopId")
+        mods.put("empty", JSONObject().put("patches", JSONArray()))
+        mods.put("examples", JSONObject().put("patches", JSONArray().put(
+            patch("Example", "1.0", "example_patch", 10, modId = "examples").put("example", true)
+        )))
+        val result = AgentPatchCatalogueService.parseMods(root.toString().toByteArray())
+        assertEquals(listOf("basemod"), result.map { it.modId })
+        assertEquals("basemod", result.single().name)
+        assertEquals(null, result.single().workshopId)
+    }
+
+    @Test
+    fun parseModsFallsBackToPatchTargetWorkshopId() {
+        val root = JSONObject(index(patch("Useful", "1.0", "useful_patch", 10)))
+        root.getJSONObject("mods").getJSONObject("basemod").put("workshopId", "invalid")
+        assertEquals("1605833019", AgentPatchCatalogueService.parseMods(root.toString().toByteArray()).single().workshopId.toString())
+    }
+
     private fun index(vararg entries: JSONObject): String = JSONObject()
         .put("schemaVersion", 3)
         .put("count", entries.size)

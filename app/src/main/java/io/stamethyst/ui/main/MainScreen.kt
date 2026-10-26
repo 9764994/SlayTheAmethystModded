@@ -667,10 +667,8 @@ private fun ModsHeaderPinnedContent(
     onAddFolderClick: () -> Unit,
     onCheckWorkshopUpdates: () -> Unit,
     onOpenFeedbackUpdates: () -> Unit,
+    onOpenCommunityPatches: () -> Unit,
 ) {
-    val canEditFolders = folderControlsEnabled && hostAvailable
-    var modFilterMenuExpanded by remember { mutableStateOf(false) }
-    val hasActiveModFilter = showEnabledModsOnly || showUpdateAvailableModsOnly
     HeaderPinnedRow(
         iconResId = R.drawable.ic_dock_mods,
         iconContentDescription = null,
@@ -680,120 +678,21 @@ private fun ModsHeaderPinnedContent(
         subtitle = "",
         iconSize = 28.dp,
     ) {
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(2.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            if (feedbackUnreadCount > 0) {
-                CompactTopBarIconButton(
-                    onClick = onOpenFeedbackUpdates,
-                    enabled = true,
-                ) {
-                    NotificationBadge(
-                        count = feedbackUnreadCount,
-                        badgeShape = RoundedCornerShape(999.dp),
-                    ) {
-                        Icon(
-                            painter = painterResource(R.drawable.ic_feedback_updates),
-                            contentDescription = stringResource(R.string.main_feedback_updates_content_description),
-                        )
-                    }
-                }
-            }
-            Box {
-                CompactTopBarIconButton(
-                    onClick = { modFilterMenuExpanded = true },
-                    enabled = true,
-                ) {
-                    Icon(
-                        painter = painterResource(R.drawable.ic_filter_list),
-                        contentDescription = stringResource(R.string.main_mod_filter_menu),
-                        tint = if (hasActiveModFilter) {
-                            MaterialTheme.colorScheme.primary
-                        } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                        },
-                    )
-                }
-                DropdownMenu(
-                    expanded = modFilterMenuExpanded,
-                    onDismissRequest = { modFilterMenuExpanded = false },
-                ) {
-                    DropdownMenuItem(
-                        text = { Text(stringResource(R.string.main_mod_filter_update_available)) },
-                        onClick = {
-                            onShowUpdateAvailableModsOnlyChange(!showUpdateAvailableModsOnly)
-                        },
-                        leadingIcon = {
-                            Checkbox(
-                                checked = showUpdateAvailableModsOnly,
-                                onCheckedChange = null,
-                            )
-                        },
-                    )
-                    DropdownMenuItem(
-                        text = { Text(stringResource(R.string.main_mod_filter_enabled)) },
-                        onClick = {
-                            onShowEnabledModsOnlyChange(!showEnabledModsOnly)
-                        },
-                        leadingIcon = {
-                            Checkbox(
-                                checked = showEnabledModsOnly,
-                                onCheckedChange = null,
-                            )
-                        },
-                    )
-                }
-            }
-            WorkshopUpdateCheckButton(
-                state = workshopUpdateCheckState,
-                enabled = canEditFolders,
-                onClick = onCheckWorkshopUpdates,
-            )
-            CompactTopBarIconButton(
-                onClick = onToggleDragLocked,
-                enabled = canEditFolders,
-            ) {
-                DragLockStateIcon(dragLocked = dragLocked)
-            }
-            CompactTopBarIconButton(
-                onClick = onAddFolderClick,
-                enabled = canEditFolders,
-            ) {
-                Icon(
-                    painter = painterResource(R.drawable.ic_folder_add),
-                    contentDescription = stringResource(R.string.main_action_add_folder),
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun WorkshopUpdateCheckButton(
-    state: WorkshopUpdateCheckUiState,
-    enabled: Boolean,
-    onClick: () -> Unit,
-) {
-    val checking = state.checking
-    CompactTopBarIconButton(
-        onClick = onClick,
-        enabled = enabled && !checking,
-    ) {
-        Box(contentAlignment = Alignment.Center) {
-            Icon(
-                painter = painterResource(R.drawable.ic_check_circle),
-                contentDescription = if (checking) stringResource(R.string.main_workshop_checking) else stringResource(R.string.main_workshop_up_to_date),
-            )
-            if (checking) {
-                CircularProgressIndicator(
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .size(12.dp),
-                    strokeWidth = 1.6.dp,
-                )
-            }
-        }
+        ModsActionsMenu(
+            canEditFolders = folderControlsEnabled && hostAvailable,
+            dragLocked = dragLocked,
+            showEnabledModsOnly = showEnabledModsOnly,
+            showUpdateAvailableModsOnly = showUpdateAvailableModsOnly,
+            feedbackUnreadCount = feedbackUnreadCount,
+            checkingUpdates = workshopUpdateCheckState.checking,
+            onToggleDragLocked = onToggleDragLocked,
+            onShowEnabledModsOnlyChange = onShowEnabledModsOnlyChange,
+            onShowUpdateAvailableModsOnlyChange = onShowUpdateAvailableModsOnlyChange,
+            onAddFolderClick = onAddFolderClick,
+            onCheckWorkshopUpdates = onCheckWorkshopUpdates,
+            onOpenFeedbackUpdates = onOpenFeedbackUpdates,
+            onOpenCommunityPatches = onOpenCommunityPatches,
+        )
     }
 }
 
@@ -4201,6 +4100,7 @@ fun LauncherModsScreen(
     feedbackUnreadCount: Int = 0,
     onOpenFeedbackUpdates: () -> Unit = {},
     onBatchSelectionModeChange: (Boolean) -> Unit = {},
+    onOpenCommunityPatches: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val workshopUpdateCheckState by WorkshopUpdateCheckCoordinator.uiState.collectAsState()
@@ -4233,6 +4133,7 @@ fun LauncherModsScreen(
             onOpenFeedbackUpdates = onOpenFeedbackUpdates,
             workshopUpdateCheckState = workshopUpdateCheckState,
             onBatchSelectionModeChange = onBatchSelectionModeChange,
+            onOpenCommunityPatches = onOpenCommunityPatches,
             onCheckWorkshopUpdates = {
                 WorkshopUpdateCheckCoordinator.requestCheck(
                     context = context.applicationContext,
@@ -4928,12 +4829,14 @@ internal fun LauncherModsScreenContent(
     onBatchSelectionModeChange: (Boolean) -> Unit = {},
     onCheckWorkshopUpdates: () -> Unit = {},
     showSteamCloudBottomSheetHost: Boolean = true,
+    onOpenCommunityPatches: () -> Unit = {},
 ) {
     LauncherMainScreenContent(
         modifier = modifier,
         uiState = uiState,
         actions = actions,
         contentMode = LauncherMainContentMode.MODS,
+        onOpenCommunityPatches = onOpenCommunityPatches,
         onOpenFeedback = onOpenFeedback,
         onOpenWorkshop = onOpenWorkshop,
         feedbackUnreadCount = feedbackUnreadCount,
@@ -4970,6 +4873,7 @@ private fun LauncherMainScreenContent(
     },
     onOpenTutorialWorkshopDetails: (WorkshopItemSummary) -> Unit = {},
     onDownloadTutorialWorkshopItem: (WorkshopItemSummary) -> Unit = {},
+    onOpenCommunityPatches: () -> Unit = {},
 ) {
     val density = LocalDensity.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -5365,6 +5269,7 @@ private fun LauncherMainScreenContent(
                                             }
                                         },
                                         onOpenFeedbackUpdates = onOpenFeedbackUpdates,
+                                        onOpenCommunityPatches = onOpenCommunityPatches,
                                     )
                                 },
                                 expandedContent = {
@@ -6450,11 +6355,15 @@ private fun formatLauncherByteSize(bytes: Long): String {
 }
 
 @Composable
-private fun NotificationBadge(
+internal fun NotificationBadge(
     count: Int,
     badgeShape: Shape,
     content: @Composable () -> Unit
 ) {
+    if (count <= 0) {
+        content()
+        return
+    }
     Box {
         content()
         Box(

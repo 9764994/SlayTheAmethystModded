@@ -2,6 +2,7 @@ package io.stamethyst.backend.mods
 
 import android.content.Context
 import io.stamethyst.backend.github.WattToolkitAcceleratedHttp
+import io.stamethyst.backend.github.AcceleratedResponseValidator
 import io.stamethyst.config.RuntimePaths
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -13,8 +14,8 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
 import java.util.zip.ZipOutputStream
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaType
@@ -48,6 +49,19 @@ data class AgentPatchCatalogueSnapshot(
     val patches: List<RemoteAgentPatch>,
     val refreshedAtMs: Long,
     val fromCache: Boolean,
+)
+
+data class CommunityPatchMod(
+    val modId: String,
+    val name: String,
+    val workshopId: ULong?,
+    val patches: List<RemoteAgentPatch>,
+)
+
+data class AgentPatchCatalogueData internal constructor(
+    val mods: List<CommunityPatchMod>,
+    internal val bytes: ByteArray,
+    internal val changed: Boolean,
 )
 
 data class AgentPatchUploadAuthor(
@@ -110,7 +124,37 @@ object AgentPatchCatalogueService {
     private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
     private val clients = ConcurrentHashMap<String, okhttp3.OkHttpClient>()
     private val parsedCache = ConcurrentHashMap<String, AgentPatchCatalogueSnapshot>()
-    private val indexRefreshMutex = Mutex()
+    private val catalogueRequests = CatalogueRequestStateMachine<AgentPatchCatalogueData>(
+        CoroutineScope(SupervisorJob() + Dispatchers.IO),
+    )
+    val requestState = catalogueRequests.state
+
+    fun readCachedMods(context: Context): List<CommunityPatchMod>? {
+        val file = RuntimePaths.agentPatchCatalogueCacheFile(context)
+        if (!file.isFile || file.length() !in 1..MAX_INDEX_BYTES) return null
+        return runCatching { parseMods(file.readBytes()) }.getOrNull()
+    }
+
+    suspend fun refreshMods(context: Context, force: Boolean = false): List<CommunityPatchMod> =
+        loadCatalogue(context, force).mods
+
+    internal fun parseMods(bytes: ByteArray): List<CommunityPatchMod> {
+        val root = parseIndex(bytes)
+        val mods = root.getJSONObject("mods")
+        return mods.keys().asSequence().mapNotNull { key ->
+            val entry = mods.optJSONObject(key) ?: return@mapNotNull null
+            val patches = parseForParent(root, key, fromCache = true).patches
+            if (patches.isEmpty()) return@mapNotNull null
+            val workshopId = entry.optString("workshopId").toULongOrNull()?.takeIf { it > 0uL }
+                ?: patches.firstNotNullOfOrNull { it.workshopId.toULongOrNull()?.takeIf { id -> id > 0uL } }
+            CommunityPatchMod(
+                modId = ModManager.normalizeModId(key),
+                name = entry.optString("name").trim().take(120).ifBlank { key },
+                workshopId = workshopId,
+                patches = patches,
+            )
+        }.distinctBy { it.modId }.sortedBy { it.name.lowercase(Locale.ROOT) }.toList()
+    }
 
     fun readCached(context: Context, parentModId: String): AgentPatchCatalogueSnapshot? {
         val cacheFile = RuntimePaths.agentPatchCatalogueCacheFile(context)
@@ -145,46 +189,71 @@ object AgentPatchCatalogueService {
         }
     }
 
-    suspend fun refresh(context: Context, parentModId: String): AgentPatchCatalogueSnapshot {
+    suspend fun refresh(context: Context, parentModId: String, force: Boolean = false): AgentPatchCatalogueSnapshot {
+        val data = loadCatalogue(context, force)
         return withContext(Dispatchers.IO) {
-            indexRefreshMutex.withLock {
-                val cacheFile = RuntimePaths.agentPatchCatalogueCacheFile(context)
-                val responseBytes = fetchBytes(context, CATALOGUE_URL, MAX_INDEX_BYTES)
-                val responseHash = sha256(responseBytes)
-                val responseIndex = parseIndex(responseBytes)
-                val localBytes = cacheFile.takeIf { it.isFile && it.length() in 1..MAX_INDEX_BYTES }
-                    ?.let { runCatching { it.readBytes() }.getOrNull() }
-                val localHash = localBytes?.let(::sha256)
-                if (localBytes != null && localHash == responseHash) {
-                    val key = cacheKey(cacheFile, parentModId, responseHash)
-                    parsedCache[key]?.let { return@withLock it.copy(fromCache = true) }
-                    return@withLock parseForParent(parseIndex(localBytes), parentModId, fromCache = true)
-                        .also { parsedCache[key] = it.copy(fromCache = true) }
-                }
-
-                val parsed = parseForParent(responseIndex, parentModId, fromCache = false)
-                writeAtomically(cacheFile, responseBytes)
-                parsedCache.keys.removeIf { it.startsWith("${cacheFile.absolutePath}:") }
-                parsedCache[cacheKey(cacheFile, parentModId, responseHash)] = parsed
-                parsed
-            }
+            parseForParent(data.bytes, parentModId, fromCache = !data.changed)
         }
     }
 
-    suspend fun refreshIndex(context: Context): Boolean = withContext(Dispatchers.IO) {
-        indexRefreshMutex.withLock { refreshIndexFile(context) }
+    suspend fun refreshIndex(context: Context): Boolean = loadCatalogue(context).changed
+
+    private suspend fun loadCatalogue(context: Context, force: Boolean = false): AgentPatchCatalogueData {
+        val app = context.applicationContext
+        return catalogueRequests.load(force) { narrateCatalogueFetch(app) }
     }
 
-    private fun refreshIndexFile(context: Context): Boolean {
+    /**
+     * Runs one catalogue fetch under a narration session so the AI patch catalogue screen can show
+     * the same stage bar as the market. Route discovery, node probing and failover are reported by
+     * [CatalogueLoadProgressReporter]'s own transport listener; only the request framing, the
+     * parse step and the terminal states belong here.
+     */
+    private fun narrateCatalogueFetch(context: Context): AgentPatchCatalogueData {
+        val sessionId = CatalogueLoadProgressReporter.beginSession()
+        try {
+            val data = fetchCatalogue(context) {
+                CatalogueLoadProgressReporter.report(sessionId, CatalogueLoadPhase.Parsing)
+            }
+            CatalogueLoadProgressReporter.report(sessionId, CatalogueLoadPhase.Completed)
+            return data
+        } catch (error: Exception) {
+            CatalogueLoadProgressReporter.report(
+                sessionId = sessionId,
+                phase = CatalogueLoadPhase.Failed,
+                detail = error.message ?: error.javaClass.simpleName,
+            )
+            throw error
+        } finally {
+            CatalogueLoadProgressReporter.endSession(sessionId)
+        }
+    }
+
+    private fun fetchCatalogue(
+        context: Context,
+        onResponseReceived: () -> Unit = {},
+    ): AgentPatchCatalogueData {
         val cacheFile = RuntimePaths.agentPatchCatalogueCacheFile(context)
-        val responseBytes = fetchBytes(context, CATALOGUE_URL, MAX_INDEX_BYTES)
-        parseIndex(responseBytes)
+        return fetchCatalogue(sharedClient(context), cacheFile, onResponseReceived = onResponseReceived)
+    }
+
+    internal fun fetchCatalogue(
+        client: okhttp3.OkHttpClient,
+        cacheFile: File,
+        url: String = CATALOGUE_URL,
+        onResponseReceived: () -> Unit = {},
+    ): AgentPatchCatalogueData {
+        val responseBytes = fetchBytes(client, url, MAX_INDEX_BYTES)
+        onResponseReceived()
+        val mods = parseMods(responseBytes)
         val localBytes = cacheFile.takeIf { it.isFile && it.length() in 1..MAX_INDEX_BYTES }
             ?.let { runCatching { it.readBytes() }.getOrNull() }
-        if (localBytes != null && sha256(localBytes) == sha256(responseBytes)) return false
-        writeAtomically(cacheFile, responseBytes)
-        parsedCache.keys.removeIf { it.startsWith("${cacheFile.absolutePath}:") }
-        return true
+        val changed = localBytes == null || sha256(localBytes) != sha256(responseBytes)
+        if (changed) {
+            writeAtomically(cacheFile, responseBytes)
+            parsedCache.keys.removeIf { it.startsWith("${cacheFile.absolutePath}:") }
+        }
+        return AgentPatchCatalogueData(mods, responseBytes, changed)
     }
 
     suspend fun install(
@@ -496,12 +565,20 @@ object AgentPatchCatalogueService {
         return temp
     }
 
-    private fun fetchBytes(context: Context, url: String, maximum: Long): ByteArray {
+    private fun fetchBytes(client: okhttp3.OkHttpClient, url: String, maximum: Long): ByteArray {
         val request = Request.Builder().url(url).get()
             .header("User-Agent", USER_AGENT)
             .header("Accept", "application/json")
+            .tag(AcceleratedResponseValidator::class.java, AcceleratedResponseValidator { response ->
+                if (!response.isSuccessful) throw IOException("Catalogue request failed (HTTP ${response.code}).")
+                val length = response.header("Content-Length")?.toLongOrNull()
+                if (length != null && length > maximum) throw IOException("Catalogue response is too large.")
+                // Validate a bounded peek before the route is marked successful. A proxy can
+                // return HTTP 200 with an HTML error page, malformed JSON or a truncated body.
+                parseMods(response.peekBody(maximum + 1).bytes())
+            })
             .build()
-        return sharedClient(context).newCall(request).execute().use { response ->
+        return client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) throw IOException("Catalogue request failed (HTTP ${response.code}).")
             val length = response.header("Content-Length")?.toLongOrNull()
             if (length != null && length > maximum) throw IOException("Catalogue response is too large.")

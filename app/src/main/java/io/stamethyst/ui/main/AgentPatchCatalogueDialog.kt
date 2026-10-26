@@ -89,6 +89,7 @@ import kotlin.math.cos
 import kotlin.math.roundToInt
 import kotlin.math.sin
 import kotlin.random.Random
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
@@ -161,7 +162,10 @@ internal fun AgentPatchCatalogueDialog(
                 snapshot = it
                 if (!it.fromCache) onCatalogueRefreshed()
             }
-            .onFailure { error = it.message ?: "Catalogue request failed." }
+            .onFailure {
+                if (it is CancellationException) throw it
+                error = it.message ?: "Catalogue request failed."
+            }
     }
 
     LaunchedEffect(pendingUploadPatch?.patchId) {
@@ -205,6 +209,7 @@ internal fun AgentPatchCatalogueDialog(
                     notice = context.getString(R.string.main_mod_agent_patch_install_success, patch.name)
                     onInstalled()
                 }.onFailure {
+                    if (it is CancellationException) throw it
                     installState = installState
                         ?.takeIf { it.patch.patchModId == patch.patchModId }
                         ?.copy(error = it.message.orEmpty())
@@ -274,6 +279,7 @@ internal fun AgentPatchCatalogueDialog(
                     uploadProgress = AgentPatchUploadProgress(AgentPatchUploadStage.DONE, 1f)
                     workingPatchModId = null
                 }.onFailure {
+                    if (it is CancellationException) throw it
                     uploadError = context.getString(R.string.main_mod_agent_patch_upload_failed, it.message.orEmpty())
                     uploadPhase = AgentPatchUploadPhase.ERROR
                     workingPatchModId = null
@@ -371,12 +377,15 @@ internal fun AgentPatchCatalogueDialog(
                                 TextButton(onClick = {
                                     scope.launch {
                                         error = null
-                                        runCatching { AgentPatchCatalogueService.refresh(context.applicationContext, parentModId) }
+                                        runCatching { AgentPatchCatalogueService.refresh(context.applicationContext, parentModId, force = true) }
                                             .onSuccess {
                                                 snapshot = it
                                                 if (!it.fromCache) onCatalogueRefreshed()
                                             }
-                                            .onFailure { error = it.message ?: "Catalogue request failed." }
+                                            .onFailure {
+                                                if (it is CancellationException) throw it
+                                                error = it.message ?: "Catalogue request failed."
+                                            }
                                     }
                                 }) { Text(stringResource(R.string.main_mod_agent_patch_retry)) }
                             }
@@ -631,6 +640,7 @@ internal fun AgentPatchCatalogueDialog(
                                 )
                                 onInstalled()
                             }.onFailure {
+                                if (it is CancellationException) throw it
                                 notice = context.getString(R.string.main_mod_agent_patch_delete_failed, it.message.orEmpty())
                             }
                             workingPatchModId = null

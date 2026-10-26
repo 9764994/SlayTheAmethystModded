@@ -341,8 +341,6 @@ private fun ModCardBadges(
                 contentDescription = stringResource(R.string.main_mod_agent_patch_github_tab),
                 enabled = true,
                 onClick = onOpenAgentPatchCatalogue,
-                containerColor = MaterialTheme.colorScheme.tertiaryContainer,
-                contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
             )
         }
         if (showSuggestion) {

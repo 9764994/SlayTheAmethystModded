@@ -590,6 +590,7 @@ fun LauncherContent(
                             onOpenWorkshop = { selectDockRoute(Route.Workshop) },
                             onOpenFeedbackUpdates = { openFeedbackUpdates() },
                             onOpenFeedbackSubscriptions = { navigator.push(Route.FeedbackSubscriptions) },
+                            onOpenCommunityPatches = { navigator.push(Route.CommunityPatches) },
                             onOpenSteamLogin = { navigator.push(Route.SteamCloudLogin) },
                             onOpenDownloadCenter = { navigator.push(Route.WorkshopDownloadCenter) },
                             onOpenSubscriptions = { navigator.push(Route.WorkshopSubscriptions) },
@@ -788,9 +789,26 @@ fun LauncherContent(
                                      onOpenAiEditor = ::openAiModEditor,
                                     feedbackUnreadCount = feedbackInboxState.unreadIssueCount,
                                     onOpenFeedbackUpdates = { openFeedbackUpdates() },
+                                    onOpenCommunityPatches = { navigator.push(Route.CommunityPatches) },
                                     onBatchSelectionModeChange = { modsBatchSelectionMode = it }
                                 )
                             }
+                        }
+
+                        entry<Route.CommunityPatches> {
+                            io.stamethyst.ui.main.CommunityPatchesScreen(
+                                onBack = { navigator.goBack() },
+                                onOpenMod = { navigator.push(Route.CommunityModPatches(it)) },
+                                onOpenLlmSettings = { navigator.push(Route.SettingsLlm) },
+                                onOpenLlmTutorial = { navigator.push(Route.SettingsLlmTutorial) },
+                            )
+                        }
+
+                        entry<Route.CommunityModPatches> { route ->
+                            io.stamethyst.ui.main.CommunityPatchesScreen(
+                                modId = route.modId,
+                                onBack = { navigator.goBack() },
+                            )
                         }
 
                         entry<Route.Settings> {
@@ -1410,6 +1428,7 @@ private fun LauncherDockPager(
     onOpenWorkshop: () -> Unit,
     onOpenFeedbackUpdates: () -> Unit,
     onOpenFeedbackSubscriptions: () -> Unit,
+    onOpenCommunityPatches: () -> Unit,
     onOpenSteamLogin: () -> Unit,
     onOpenDownloadCenter: () -> Unit,
     onOpenSubscriptions: () -> Unit,
@@ -1507,6 +1526,7 @@ private fun LauncherDockPager(
                         onOpenWorkshop = onOpenWorkshop,
                         feedbackUnreadCount = feedbackUnreadCount,
                         onOpenFeedbackUpdates = onOpenFeedbackUpdates,
+                        onOpenCommunityPatches = onOpenCommunityPatches,
                         workshopUpdateCheckState = workshopUpdateCheckState,
                         onBatchSelectionModeChange = onBatchSelectionModeChange,
                         showSteamCloudBottomSheetHost = currentDockRoute == Route.Mods,
@@ -1742,6 +1762,8 @@ private fun Route?.launcherDockRoute(): Route? {
          Route.SettingsFeedback,
          Route.SettingsAbout -> Route.Settings
         Route.CrashRecovery,
+        Route.CommunityPatches,
+        is Route.CommunityModPatches,
         is Route.WorkshopDetail,
         Route.WorkshopDownloadCenter,
          Route.SteamCloudLogin,
