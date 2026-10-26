@@ -369,7 +369,10 @@ The AI editor compiles patch source on the device; no host toolchain is involved
 - Diagnostics from ECJ are returned to the agent so it can fix source before packaging.
 - `inspect_agent_patch_target` reads the installed game/mod class files with ASM and returns the exact
   method or constructor overloads, JVM descriptors, parameter types, return type, and fields. It does
-  not load game classes into Android or infer signatures from decompiler text.
+  not load game classes into Android or infer signatures from decompiler text. By default it also
+  returns a bounded javap-style bytecode listing and a structured `local_variables` list for each
+  overload, including `LocalVariableTable` names when the target was compiled with debug information;
+  `include_bytecode=false` omits both.
 - `generate_agent_patch_skeleton` consumes that inspection result and writes a Java 8 patch skeleton
   with the selected `paramtypez` and a safe `Object[] __args` hook shape. The agent edits the body
   instead of hand-writing the patch annotation and overload signature.

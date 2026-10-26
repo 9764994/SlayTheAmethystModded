@@ -2,6 +2,8 @@ package io.stamethyst.backend.mods
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.objectweb.asm.ClassWriter
@@ -28,6 +30,30 @@ class AgentPatchTargetInspectorTest {
         assertEquals(3, result.overloads.size)
         assertTrue(result.overloads.any { it.parameterTypes == listOf("java.net.URL[]") })
         assertTrue(result.classOrigin.endsWith("ModTheSpire.jar"))
+        assertNull(result.overloads.first().bytecode)
+    }
+
+    @Test
+    fun inspectTarget_includesBytecodeAndLocalVariableNames() {
+        val result = AgentPatchTargetInspector.inspectTarget(
+            targetClassName = "com.evacipated.cardcrawl.modthespire.Patcher",
+            memberName = "findPatches",
+            classpath = classpath,
+            includeBytecode = true,
+        )
+
+        val signature = result.overloads.first { it.parameterTypes == listOf("java.net.URL[]") }
+        val bytecode = signature.bytecode
+        assertNotNull(bytecode)
+        assertTrue(bytecode!!.contains("findPatches"))
+        assertTrue("expected instruction listing", bytecode.contains("INVOKE") || bytecode.contains("ALOAD"))
+        assertTrue("expected LocalVariableTable output", bytecode.contains("LOCALVARIABLE"))
+        assertTrue("expected target parameter name", bytecode.contains("urls"))
+        assertTrue(
+            "expected structured local variable",
+            signature.localVariables.any { it.name == "urls" && it.type == "java.net.URL[]" },
+        )
+        assertFalse(signature.bytecodeTruncated)
     }
 
     @Test

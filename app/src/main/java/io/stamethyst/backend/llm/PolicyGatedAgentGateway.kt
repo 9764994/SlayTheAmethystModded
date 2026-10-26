@@ -1479,12 +1479,25 @@ class AgentPatchTargetInspectTool(
         .description(
             "Inspect the exact constructors, methods, and fields of a target class from the installed " +
                 "game/mod bytecode. Always call this before writing a patch; use the returned overload_index " +
-                "and descriptor instead of guessing signatures.",
+                "and descriptor instead of guessing signatures. By default it also returns a structured " +
+                "local_variables list and a javap-style bytecode listing for each overload, including " +
+                "LocalVariableTable names when the class was compiled with debug information; pass " +
+                "include_bytecode=false to omit them. Pass overload_index to limit the result to one " +
+                "overload when the listing is large.",
         )
         .parameters(
             JsonObjectSchema.builder()
                 .addStringProperty("target_class", "Binary class name, for example com.example.Target.")
                 .addStringProperty("member", "Method name, constructor, <ctor>, or <class>.")
+                .addBooleanProperty(
+                    "include_bytecode",
+                    "Include a javap-style listing for each returned overload. Defaults to true; the listing " +
+                        "contains LocalVariableTable names when present.",
+                )
+                .addStringProperty(
+                    "overload_index",
+                    "Optional overload index from a previous inspection; limits the result to that overload.",
+                )
                 .required("target_class", "member")
                 .additionalProperties(false)
                 .build(),
@@ -1500,11 +1513,21 @@ class AgentPatchTargetInspectTool(
         val targetClass = json["target_class"]?.jsonPrimitive?.content.orEmpty()
         val member = json["member"]?.jsonPrimitive?.content.orEmpty()
         if (targetClass.isBlank() || member.isBlank()) return failure("invalid_arguments")
+        val includeBytecode = json["include_bytecode"]?.jsonPrimitive?.booleanOrNull ?: true
+        val overloadIndex = json["overload_index"]?.jsonPrimitive?.content?.toIntOrNull()
         val classpath = runCatching { AgentPatchSourceCompiler.resolveCompileClasspath(context, parentJar) }
             .getOrElse { return failure(it.message ?: "classpath_failed") }
         val inspection = runCatching {
-            AgentPatchTargetInspector.inspectTarget(targetClass, member, classpath)
+            AgentPatchTargetInspector.inspectTarget(
+                targetClassName = targetClass,
+                memberName = member,
+                classpath = classpath,
+                includeBytecode = includeBytecode,
+            )
         }.getOrElse { return failure(it.message ?: "target_inspection_failed") }
+        if (overloadIndex != null && inspection.overloads.getOrNull(overloadIndex) == null) {
+            return failure("overload_index_out_of_range")
+        }
         return buildJsonObject {
             put("status", JsonPrimitive("inspected"))
             put("target_class", JsonPrimitive(inspection.targetClassName))
@@ -1512,6 +1535,7 @@ class AgentPatchTargetInspectTool(
             put("class_origin", JsonPrimitive(inspection.classOrigin))
             put("overloads", kotlinx.serialization.json.buildJsonArray {
                 inspection.overloads.forEachIndexed { index, signature ->
+                    if (overloadIndex != null && index != overloadIndex) return@forEachIndexed
                     add(buildJsonObject {
                         put("overload_index", JsonPrimitive(index))
                         put("name", JsonPrimitive(signature.name))
@@ -1522,6 +1546,20 @@ class AgentPatchTargetInspectTool(
                         })
                         put("return_type", JsonPrimitive(signature.returnType))
                         put("static", JsonPrimitive(signature.isStatic))
+                        if (includeBytecode) {
+                            put("has_code", JsonPrimitive(signature.hasCode))
+                            put("local_variables", buildJsonArray {
+                                signature.localVariables.forEach { local ->
+                                    add(buildJsonObject {
+                                        put("name", JsonPrimitive(local.name))
+                                        put("type", JsonPrimitive(local.type))
+                                        put("slot", JsonPrimitive(local.slot))
+                                    })
+                                }
+                            })
+                            put("bytecode", JsonPrimitive(signature.bytecode.orEmpty()))
+                            put("bytecode_truncated", JsonPrimitive(signature.bytecodeTruncated))
+                        }
                     })
                 }
             })

@@ -4,7 +4,12 @@ import org.objectweb.asm.ClassReader
 import org.objectweb.asm.Opcodes
 import org.objectweb.asm.Type
 import org.objectweb.asm.tree.ClassNode
+import org.objectweb.asm.tree.MethodNode
+import org.objectweb.asm.util.Textifier
+import org.objectweb.asm.util.TraceMethodVisitor
 import java.io.File
+import java.io.PrintWriter
+import java.io.StringWriter
 import java.util.Locale
 
 data class AgentPatchMethodSignature(
@@ -13,10 +18,25 @@ data class AgentPatchMethodSignature(
     val parameterTypes: List<String>,
     val returnType: String,
     val isStatic: Boolean,
+    /** True when the method carries bytecode instructions (not abstract or native). */
+    val hasCode: Boolean = true,
+    /** Entry names from the LocalVariableTable, when the class has debug information. */
+    val localVariables: List<AgentPatchLocalVariable> = emptyList(),
+    /** javap-style bytecode listing, populated only when inspection asks for it. */
+    val bytecode: String? = null,
+    /** True when [bytecode] hit the per-method output cap. */
+    val bytecodeTruncated: Boolean = false,
 ) {
     val displayName: String
         get() = "$name(${parameterTypes.joinToString(", ")}) : $returnType"
 }
+
+/** One LocalVariableTable entry exposed separately so truncation cannot hide parameter names. */
+data class AgentPatchLocalVariable(
+    val name: String,
+    val type: String,
+    val slot: Int,
+)
 
 data class AgentPatchFieldSignature(
     val name: String,
@@ -44,10 +64,14 @@ data class AgentPatchSkeleton(
 object AgentPatchTargetInspector {
     private const val MAX_FIELDS = 100
 
+    /** Per-method bytecode cap; the full result is also bounded by the gateway tool-result limit. */
+    private const val MAX_BYTECODE_CHARS = 8_000
+
     fun inspectTarget(
         targetClassName: String,
         memberName: String,
         classpath: List<File>,
+        includeBytecode: Boolean = false,
     ): AgentPatchTargetInspection {
         val normalizedClassName = normalizeClassName(targetClassName)
         require(normalizedClassName.isNotEmpty()) { "target_class is required" }
@@ -67,7 +91,7 @@ object AgentPatchTargetInspector {
                     else -> method.name == normalizedMemberName
                 }
             }
-            .map(::toSignature)
+            .map { method -> toSignature(method, includeBytecode) }
             .toList()
         if (normalizedMemberName != CLASS_INITIALIZER && methods.isEmpty()) {
             throw IllegalArgumentException(
@@ -175,8 +199,22 @@ object AgentPatchTargetInspector {
             .replace('$', '.')
     }
 
-    private fun toSignature(method: org.objectweb.asm.tree.MethodNode): AgentPatchMethodSignature {
+    private fun toSignature(method: MethodNode, includeBytecode: Boolean): AgentPatchMethodSignature {
         val argumentTypes = Type.getArgumentTypes(method.desc).map { it.className.replace('$', '.') }
+        val bytecode = if (includeBytecode) disassembleMethod(method) else null
+        val localVariables = if (includeBytecode) {
+            method.localVariables.orEmpty()
+                .map { local ->
+                    AgentPatchLocalVariable(
+                        name = local.name,
+                        type = Type.getType(local.desc).className.replace('$', '.'),
+                        slot = local.index,
+                    )
+                }
+                .sortedBy { it.slot }
+        } else {
+            emptyList()
+        }
         return AgentPatchMethodSignature(
             name = when (method.name) {
                 "<init>" -> CONSTRUCTOR
@@ -187,7 +225,33 @@ object AgentPatchTargetInspector {
             parameterTypes = argumentTypes,
             returnType = Type.getReturnType(method.desc).className.replace('$', '.'),
             isStatic = method.access and Opcodes.ACC_STATIC != 0,
+            hasCode = method.instructions.size() > 0,
+            localVariables = localVariables,
+            bytecode = bytecode?.first,
+            bytecodeTruncated = bytecode?.second ?: false,
         )
+    }
+
+    /**
+     * Renders one method with ASM's Textifier, including the LocalVariableTable entries when the
+     * class was compiled with debug information. Bounded so a huge method cannot crowd out the
+     * rest of the inspection result.
+     */
+    private fun disassembleMethod(method: MethodNode): Pair<String, Boolean> {
+        val textifier = Textifier()
+        runCatching { method.accept(TraceMethodVisitor(textifier)) }
+            .getOrElse { error ->
+                return "bytecode_unavailable: ${error.message ?: error.javaClass.simpleName}" to false
+            }
+        val writer = StringWriter()
+        val printer = PrintWriter(writer)
+        textifier.print(printer)
+        printer.flush()
+        val text = writer.toString().trim()
+        val header = "// method ${method.name}${method.desc}"
+        val listing = if (text.isEmpty()) header else "$header\n$text"
+        if (listing.length <= MAX_BYTECODE_CHARS) return listing to false
+        return listing.take(MAX_BYTECODE_CHARS) + "\n... (truncated)" to true
     }
 
     private fun buildSkeletonSource(
