@@ -5368,21 +5368,25 @@ private fun LauncherMainScreenContent(
                                     )
                                 },
                                 expandedContent = {
+                                    // This slot is rendered in the banner host's composition.
+                                    // Observe the latest state there as well, so completing a scan
+                                    // unlocks profiles without requiring a mod toggle to refresh it.
+                                    val headerUiState = currentUiState.value
                                     ModsHeaderExpandedContent(
-                                        folderControlsEnabled = uiState.controlsEnabled && !batchSelectionMode,
-                                        dragLocked = uiState.dragLocked,
+                                        folderControlsEnabled = headerUiState.controlsEnabled && !batchSelectionMode,
+                                        dragLocked = headerUiState.dragLocked,
                                         hostAvailable = actions.isHostAvailable,
-                                        enabledCount = uiState.optionalMods.count { it.enabled },
-                                        totalCount = uiState.optionalMods.size,
-                                        folderCount = uiState.modFolders.size,
-                                        importEnabled = !batchSelectionMode && !uiState.busy && uiState.storageIssue == null,
-                                        profiles = uiState.modLaunchProfiles,
-                                        activeProfileId = uiState.activeModLaunchProfileId,
-                                        profileEnabled = !uiState.initializing && !batchSelectionMode && actions.isHostAvailable && uiState.controlsEnabled && uiState.storageIssue == null,
+                                        enabledCount = headerUiState.optionalMods.count { it.enabled },
+                                        totalCount = headerUiState.optionalMods.size,
+                                        folderCount = headerUiState.modFolders.size,
+                                        importEnabled = !batchSelectionMode && !headerUiState.busy && headerUiState.storageIssue == null,
+                                        profiles = headerUiState.modLaunchProfiles,
+                                        activeProfileId = headerUiState.activeModLaunchProfileId,
+                                        profileEnabled = !headerUiState.initializing && !batchSelectionMode && actions.isHostAvailable && headerUiState.controlsEnabled && headerUiState.storageIssue == null,
                                         profileMenuEnabled = !batchSelectionMode && actions.isHostAvailable &&
-                                            uiState.storageIssue == null &&
-                                            ((!uiState.initializing && uiState.controlsEnabled) ||
-                                                (uiState.initializing && uiState.modLaunchProfiles.isNotEmpty())),
+                                            headerUiState.storageIssue == null &&
+                                            ((!headerUiState.initializing && headerUiState.controlsEnabled) ||
+                                                (headerUiState.initializing && headerUiState.modLaunchProfiles.isNotEmpty())),
                                         onImportMods = actions.onImportMods,
                                         onSelectProfile = actions.onSelectModLaunchProfile,
                                         onAddProfile = actions.onAddModLaunchProfile,
