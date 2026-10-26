@@ -33,7 +33,43 @@ class AgentPatchSourceCompilerTest {
         assertTrue(flag(args, "-bootclasspath", rtJar.absolutePath))
         assertTrue(flag(args, "-classpath", "/game.jar:/mts.jar"))
         assertTrue(flag(args, "-d", output.absolutePath))
+        assertTrue("-g is required for the LocalVariableTable ModTheSpire reads", args.contains("-g"))
         assertEquals(sources.single().absolutePath, args.last())
+    }
+
+    @Test
+    fun replaceCompiledClasses_dropsClassesTheNewBuildDidNotProduce() {
+        val root = Files.createTempDirectory("agent-patch-stale").toFile()
+        val patchRoot = File(root, "patch").apply { mkdirs() }
+        val staging = File(root, "staging").apply { mkdirs() }
+        File(patchRoot, "ModTheSpire.json").writeText("{}")
+        File(patchRoot, "agent/Old.class").apply { parentFile?.mkdirs(); writeText("old") }
+        File(patchRoot, "agent/Old\$Inner.class").writeText("old inner")
+        File(patchRoot, "agent/Keep.class").writeText("old keep")
+        File(staging, "agent/Keep.class").apply { parentFile?.mkdirs(); writeText("new keep") }
+        File(staging, "other/New.class").apply { parentFile?.mkdirs(); writeText("new") }
+
+        val installed = AgentPatchSourceCompiler.replaceCompiledClasses(patchRoot, staging)
+
+        assertEquals(2, installed)
+        assertTrue("renamed/deleted source must not leave a stale class", !File(patchRoot, "agent/Old.class").exists())
+        assertTrue(!File(patchRoot, "agent/Old\$Inner.class").exists())
+        assertEquals("new keep", File(patchRoot, "agent/Keep.class").readText())
+        assertEquals("new", File(patchRoot, "other/New.class").readText())
+        assertTrue("non-class files are preserved", File(patchRoot, "ModTheSpire.json").isFile)
+    }
+
+    @Test
+    fun replaceCompiledClasses_keepsThePreviousBuildWhenNothingWasProduced() {
+        val root = Files.createTempDirectory("agent-patch-empty-build").toFile()
+        val patchRoot = File(root, "patch").apply { mkdirs() }
+        val staging = File(root, "staging").apply { mkdirs() }
+        val previous = File(patchRoot, "agent/Keep.class").apply { parentFile?.mkdirs(); writeText("old") }
+
+        val installed = AgentPatchSourceCompiler.replaceCompiledClasses(patchRoot, staging)
+
+        assertEquals(0, installed)
+        assertEquals("old", previous.readText())
     }
 
     @Test

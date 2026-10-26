@@ -1381,6 +1381,9 @@ class AgentPatchModCompileTool(
         .description(
             "Compile Java sources under a patch workspace's src/ into Java 8 .class files at that patch root. " +
                 "Run this after writing source and before package_agent_patch_mod or update_agent_patch_mod. " +
+                "Each run replaces the previous class tree, so classes from renamed or deleted sources cannot " +
+                "survive into the package. Debug info (-g) is always emitted because ModTheSpire reads patch " +
+                "parameter names from the LocalVariableTable. " +
                 "Defaults to the current session's patch workspace; pass patch_id to compile an existing revision. " +
                 "The classpath already includes the game jar, ModTheSpire, the required mods, and the parent mod, " +
                 "so imports such as com.megacrit.cardcrawl.*, basemod.* and " +

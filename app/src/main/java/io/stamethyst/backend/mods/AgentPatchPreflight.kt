@@ -30,6 +30,12 @@ object AgentPatchPreflight {
     private const val SPIRE_INSTRUMENT_PATCH = "Lcom/evacipated/cardcrawl/modthespire/lib/SpireInstrumentPatch;"
     private const val SPIRE_RAW_PATCH = "Lcom/evacipated/cardcrawl/modthespire/lib/SpireRawPatch;"
     private const val SPIRE_RETURN = "com.evacipated.cardcrawl.modthespire.lib.SpireReturn"
+    private val TYPE_DECLARATION = Regex(
+        """\b(?:class|interface|enum|record)\s+([A-Za-z_$][A-Za-z0-9_$]*)""",
+    )
+    private val PACKAGE_DECLARATION = Regex(
+        """(?m)^\s*package\s+([A-Za-z_$][A-Za-z0-9_$.]*)\s*;""",
+    )
 
     fun validate(
         patchRoot: File,
@@ -44,6 +50,7 @@ object AgentPatchPreflight {
         var annotationCount = 0
         var initializerCount = 0
         val lookup = TargetLookup(classpath)
+        val declaredSourceTypes = declaredSourceTypes(patchRoot)
 
         classFiles.forEach { classFile ->
             val node = runCatching { AgentPatchTargetInspector.readClassNode(classFile.readBytes()) }
@@ -52,8 +59,22 @@ object AgentPatchPreflight {
                     return@forEach
                 }
             val specs = patchAnnotations(node)
+            val initializer = specs.isEmpty() && isSpireInitializer(node)
+            val className = classFile.relativeTo(patchRoot).invariantSeparatorsPath
+                .removeSuffix(".class")
+                .substringBefore('$')
+                .replace('/', '.')
+            // A class the current sources cannot produce is a leftover from an earlier build. A
+            // stale patch or initializer class would be applied at runtime, so block packaging;
+            // a stale helper only bloats the JAR, so warn.
+            if (declaredSourceTypes.isNotEmpty() && className !in declaredSourceTypes) {
+                val message = "${classFile.relativeTo(patchRoot).invariantSeparatorsPath}: no .java source " +
+                    "in this patch workspace declares this class; run compile_agent_patch_source to drop " +
+                    "the stale class"
+                if (specs.isNotEmpty() || initializer) issues += message else warnings += message
+            }
             annotationCount += specs.size
-            if (specs.isEmpty() && isSpireInitializer(node)) {
+            if (initializer) {
                 // A non-patch mod (content registration or resource pack) may register everything
                 // through a single @SpireInitializer entry point instead of @SpirePatch hooks.
                 initializerCount++
@@ -94,6 +115,65 @@ object AgentPatchPreflight {
     private fun isSpireInitializer(node: ClassNode): Boolean =
         (node.visibleAnnotations.orEmpty() + node.invisibleAnnotations.orEmpty())
             .any { it.desc == SPIRE_INITIALIZER }
+
+    /**
+     * Fully qualified names the Java sources in this patch workspace can produce.
+     *
+     * A `.class` file whose name no source declares is a leftover from an earlier build: the source
+     * was renamed or deleted, but the class tree was never cleaned. The package is read from the
+     * source's own `package` declaration, which is what decides the compiled directory. Comments and
+     * literals are stripped first so a `class` word inside them cannot hide a stale class.
+     */
+    private fun declaredSourceTypes(patchRoot: File): Set<String> {
+        val declared = LinkedHashSet<String>()
+        AgentPatchSourceCompiler.collectSources(patchRoot).forEach { source ->
+            val text = runCatching { source.readText() }.getOrNull() ?: return@forEach
+            val code = stripJavaCommentsAndLiterals(text)
+            val packageName = PACKAGE_DECLARATION.find(code)?.groupValues?.get(1).orEmpty()
+            fun qualify(simpleName: String) =
+                if (packageName.isEmpty()) simpleName else "$packageName.$simpleName"
+            declared += qualify(source.nameWithoutExtension)
+            TYPE_DECLARATION.findAll(code).forEach { declared += qualify(it.groupValues[1]) }
+        }
+        return declared
+    }
+
+    private fun stripJavaCommentsAndLiterals(source: String): String {
+        val builder = StringBuilder(source.length)
+        var index = 0
+        while (index < source.length) {
+            val current = source[index]
+            val next = source.getOrNull(index + 1)
+            when {
+                current == '/' && next == '/' -> {
+                    index = source.indexOf('\n', index).let { if (it < 0) source.length else it }
+                }
+                current == '/' && next == '*' -> {
+                    val end = source.indexOf("*/", index + 2)
+                    index = if (end < 0) source.length else end + 2
+                }
+                current == '"' -> index = skipQuoted(source, index, '"')
+                current == '\'' -> index = skipQuoted(source, index, '\'')
+                else -> {
+                    builder.append(current)
+                    index++
+                }
+            }
+        }
+        return builder.toString()
+    }
+
+    private fun skipQuoted(source: String, start: Int, quote: Char): Int {
+        var index = start + 1
+        while (index < source.length) {
+            when (source[index]) {
+                '\\' -> index += 2
+                quote -> return index + 1
+                else -> index++
+            }
+        }
+        return source.length
+    }
 
     /**
      * ModTheSpire reflects on each `@SpireInitializer` class and calls `initialize()` with no

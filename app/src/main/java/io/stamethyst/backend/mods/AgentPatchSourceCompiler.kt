@@ -34,6 +34,7 @@ object AgentPatchSourceCompiler {
     const val PATCH_SOURCE_DIR = "src"
 
     private const val MAX_DIAGNOSTICS_CHARS = 16_000
+    private const val STAGING_RETENTION_MS = 60L * 60L * 1000L
 
     fun compile(
         context: Context,
@@ -59,47 +60,164 @@ object AgentPatchSourceCompiler {
         }
 
         val classpath = resolveCompileClasspathEntries(context, parentJar)
+        // Compile into a staging directory so a failed build cannot leave half-written classes,
+        // and a successful build can replace the previous class tree as a unit. It lives outside
+        // the patch root so a packaged JAR can never contain build output.
+        val stagingParent = resolveAgentPatchCacheDir(context, COMPILE_STAGING_CACHE_DIR)
+            ?: return AgentPatchCompileResult(
+                success = false,
+                compiledClassCount = 0,
+                diagnostics = "No writable cache directory for compile staging; free some internal storage and retry.",
+            )
+        pruneStaleStaging(stagingParent)
+        val stagingDir = File(stagingParent, "compile-${workspace.patchId}-${System.nanoTime()}")
+        if (!stagingDir.mkdirs()) {
+            return AgentPatchCompileResult(
+                success = false,
+                compiledClassCount = 0,
+                diagnostics = "Could not create compile staging at ${stagingDir.absolutePath}.",
+            )
+        }
         val args = buildCommandLine(
             sources = sources,
-            outputDir = workspace.patchRoot,
+            outputDir = stagingDir,
             bootClasspath = rtJar,
             classpath = classpath.entries.joinToString(File.pathSeparator) { it.absolutePath },
         )
 
         val stdout = StringWriter()
         val stderr = StringWriter()
-        val succeeded = runCatching {
-            BatchCompiler.compile(
-                args,
-                PrintWriter(stdout),
-                PrintWriter(stderr),
-                null,
-            )
-        }.getOrElse { error ->
+        try {
+            val succeeded = runCatching {
+                BatchCompiler.compile(
+                    args,
+                    PrintWriter(stdout),
+                    PrintWriter(stderr),
+                    null,
+                )
+            }.getOrElse { error ->
+                return AgentPatchCompileResult(
+                    success = false,
+                    compiledClassCount = 0,
+                    diagnostics = "ECJ failed to run: ${error.message ?: error.javaClass.simpleName}",
+                )
+            }
+
+            val stagedClasses = collectClassFiles(stagingDir)
+            val installed = if (succeeded && stagedClasses.isNotEmpty()) {
+                runCatching { replaceCompiledClasses(workspace.patchRoot, stagingDir) }
+                    .getOrElse { error ->
+                        return AgentPatchCompileResult(
+                            success = false,
+                            compiledClassCount = 0,
+                            diagnostics = buildString {
+                                append(stdout.toString())
+                                append(stderr.toString())
+                                append("\nCould not install the compiled classes: ")
+                                append(error.message ?: error.javaClass.simpleName)
+                            }.trim().take(MAX_DIAGNOSTICS_CHARS),
+                        )
+                    }
+            } else {
+                0
+            }
+            val replaced = installed > 0
+            val diagnostics = buildString {
+                append(stdout.toString())
+                append(stderr.toString())
+                if (classpath.unindexable.isNotEmpty()) {
+                    append("\nWarning: these classpath jars could not be indexed and were skipped: ")
+                    append(classpath.unindexable.joinToString(", ") { it.name })
+                }
+                if (!replaced && succeeded) {
+                    append("\nNo .class files were produced; the previous class tree was left unchanged.")
+                } else if (!succeeded && stagedClasses.isNotEmpty()) {
+                    append("\nCompilation failed; the previous class tree was left unchanged.")
+                }
+            }
+                .trim()
+                .take(MAX_DIAGNOSTICS_CHARS)
             return AgentPatchCompileResult(
-                success = false,
-                compiledClassCount = 0,
-                diagnostics = "ECJ failed to run: ${error.message ?: error.javaClass.simpleName}",
+                success = replaced,
+                compiledClassCount = if (replaced) installed else 0,
+                diagnostics = diagnostics,
             )
+        } finally {
+            stagingDir.deleteRecursively()
+        }
+    }
+
+    /**
+     * Replaces the patch root's class files with the freshly compiled staging tree.
+     *
+     * New classes are copied first, then every class the new build did not produce is deleted, so a
+     * renamed or deleted source cannot leave an old top-level or inner class behind for
+     * `validate_agent_patch_mod` and packaging to pick up. Non-class files (the manifest, descriptor,
+     * resources, sources) are preserved.
+     *
+     * @return number of class files installed into [patchRoot].
+     */
+    internal fun replaceCompiledClasses(patchRoot: File, stagingDir: File): Int {
+        val sourceTree = File(patchRoot, PATCH_SOURCE_DIR).canonicalFile
+        val existingClasses = collectClassFiles(patchRoot).filter { classFile ->
+            !classFile.canonicalFile.toPath().startsWith(sourceTree.toPath())
+        }
+        val stagedClasses = collectClassFiles(stagingDir)
+        if (stagedClasses.isEmpty()) return 0
+
+        // Copy first so a failed build never leaves the workspace with no classes at all: the old
+        // tree is only pruned after the new classes are in place.
+        val installedRelativePaths = HashSet<String>()
+        stagedClasses.forEach { staged ->
+            val relative = staged.relativeTo(stagingDir)
+            val target = File(patchRoot, relative.path)
+            target.parentFile?.mkdirs()
+            staged.copyTo(target, overwrite = true)
+            installedRelativePaths += relative.invariantSeparatorsPath
         }
 
-        val diagnostics = buildString {
-            append(stdout.toString())
-            append(stderr.toString())
-            if (classpath.unindexable.isNotEmpty()) {
-                append("\nWarning: these classpath jars could not be indexed and were skipped: ")
-                append(classpath.unindexable.joinToString(", ") { it.name })
+        // Then drop everything the new build did not produce: renamed or deleted sources leave
+        // their old top-level and inner classes behind otherwise.
+        val removed = existingClasses.filter { classFile ->
+            classFile.relativeTo(patchRoot).invariantSeparatorsPath !in installedRelativePaths
+        }
+        removed.forEach { it.delete() }
+        pruneEmptyDirectories(patchRoot, sourceTree, removed)
+        return installedRelativePaths.size
+    }
+
+    internal fun collectClassFiles(root: File): List<File> =
+        if (!root.isDirectory) {
+            emptyList()
+        } else {
+            root.walkTopDown()
+                .filter { it.isFile && it.extension.equals("class", ignoreCase = true) }
+                .toList()
+        }
+
+    /** Removes build staging directories a killed process left behind. */
+    private fun pruneStaleStaging(stagingParent: File) {
+        val cutoff = System.currentTimeMillis() - STAGING_RETENTION_MS
+        stagingParent.listFiles().orEmpty().forEach { entry ->
+            if (entry.isDirectory && entry.lastModified() < cutoff) {
+                runCatching { entry.deleteRecursively() }
             }
         }
-            .trim()
-            .take(MAX_DIAGNOSTICS_CHARS)
-        val compiledClassCount = workspace.patchRoot.walkTopDown()
-            .count { it.isFile && it.extension.equals("class", ignoreCase = true) }
-        return AgentPatchCompileResult(
-            success = succeeded && compiledClassCount > 0,
-            compiledClassCount = compiledClassCount,
-            diagnostics = diagnostics,
-        )
+    }
+
+    /** Removes package directories left empty by the previous class tree. */
+    private fun pruneEmptyDirectories(root: File, keep: File, removedClasses: List<File>) {
+        val rootDir = root.canonicalFile
+        val keepDir = keep.canonicalFile
+        removedClasses.forEach { removed ->
+            var dir = removed.parentFile?.canonicalFile
+            while (dir != null && dir != rootDir && !dir.toPath().startsWith(keepDir.toPath())) {
+                if (dir.listFiles()?.isEmpty() != true) break
+                val parent = dir.parentFile
+                dir.delete()
+                dir = parent
+            }
+        }
     }
 
     internal fun collectSources(patchRoot: File): List<File> =
@@ -118,6 +236,10 @@ object AgentPatchSourceCompiler {
         add("1.8")
         add("-target")
         add("1.8")
+        // ModTheSpire reads patch method parameter names from the LocalVariableTable; ECJ emits
+        // only LineNumberTable by default, which makes ParamInfo2.findName return null and
+        // ModTheSpire fail with `Unknown error acquiring parameter name for "null"`.
+        add("-g")
         add("-proc:none")
         add("-nowarn")
         add("-encoding")
@@ -229,4 +351,5 @@ object AgentPatchSourceCompiler {
     }
 
     internal const val COMPILE_CLASSPATH_CACHE_DIR = "agent-patch-compile-classpath"
+    internal const val COMPILE_STAGING_CACHE_DIR = "agent-patch-compile-staging"
 }

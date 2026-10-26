@@ -353,8 +353,16 @@ The AI editor compiles patch source on the device; no host toolchain is involved
 - Sources are written under `patch_source/<patch_id>/src/<package>/...` and compiled to `.class`
   files at that patch root, so the packaged JAR is a normal ModTheSpire mod. Its `src/` directory is
   excluded from the package.
-- Compilation is pinned to `-source 1.8 -target 1.8` because the game runs on the embedded OpenJDK 8
-  JVM and ModTheSpire expects Java 8 bytecode.
+- Every compile goes to a staging directory first and only replaces the patch root's class tree when
+  ECJ succeeds. New classes are copied, then every class the new build did not produce is deleted, so
+  a renamed or deleted source cannot leave a stale top-level or inner class for validation and
+  packaging to pick up; a failed build leaves the previous tree untouched.
+- Compilation is pinned to `-source 1.8 -target 1.8 -g` because the game runs on the embedded
+  OpenJDK 8 JVM and ModTheSpire expects Java 8 bytecode. `-g` is not optional: ModTheSpire's
+  `ParamInfo2.findName` resolves `__instance`, `__result`, `__args` and `localvars` names from the
+  patch method's `LocalVariableTable`, and ECJ emits only `LineNumberTable` without it, which fails at
+  load time with `PatchingException: Unknown error acquiring parameter name for "null"`.
+
 - The bootclasspath is the installed runtime's `rt.jar`, and the classpath is the game jar, ModTheSpire,
   the required mods, and the parent mod being patched. This is required because ART's `java.*` surface
   differs from the JRE the resulting mod runs on; ECJ only reads those class files for symbol resolution.
@@ -372,7 +380,9 @@ The AI editor compiles patch source on the device; no host toolchain is involved
   so the agent must use `Object[] __args` when bytecode cannot prove a parameter name. Packaging runs
   this preflight again and refuses to emit a JAR when it fails, so a tool-call omission cannot bypass
   validation. Pass `patch_id` to validate an existing revision instead of the current session's
-  workspace.
+  workspace. A compiled class that no source in the workspace declares is reported too: a stale patch
+  or initializer class blocks packaging, and a stale helper only warns. `compile_agent_patch_source`
+  removes such classes on the next build, so the fix is to recompile rather than delete files by hand.
 - Non-hook mods are valid too. A patch mod with no `@SpirePatch` annotation is accepted when it is a
   resource-only package, when it uses `@SpireInitializer` for content registration, or when it only
   ships helper classes. `@SpireInitializer` classes are checked for a no-arg static `void

@@ -75,7 +75,9 @@ class AgentPatchSourceCompilerInstrumentedTest {
         val result = AgentPatchSourceCompiler.compile(context, workspace, null)
 
         assertTrue("compile failed: ${result.diagnostics}", result.success)
-        assertCompiledJava8(File(workspace.patchRoot, "com/example/Tweak.class"))
+        val classFile = File(workspace.patchRoot, "com/example/Tweak.class")
+        assertCompiledJava8(classFile)
+        assertPatchParameterNames(classFile)
     }
 
     /**
@@ -138,5 +140,39 @@ class AgentPatchSourceCompilerInstrumentedTest {
         val bytes = classFile.readBytes()
         val major = ((bytes[6].toInt() and 0xFF) shl 8) or (bytes[7].toInt() and 0xFF)
         assertEquals(52, major)
+    }
+
+    /**
+     * ModTheSpire resolves `__result`/`__instance` from the patch method's LocalVariableTable, so a
+     * build without debug info produces a patch that fails at load time.
+     */
+    private fun assertPatchParameterNames(classFile: File) {
+        val names = ArrayList<String>()
+        org.objectweb.asm.ClassReader(classFile.readBytes()).accept(
+            object : org.objectweb.asm.ClassVisitor(org.objectweb.asm.Opcodes.ASM9) {
+                override fun visitMethod(
+                    access: Int,
+                    name: String,
+                    descriptor: String,
+                    signature: String?,
+                    exceptions: Array<out String>?,
+                ): org.objectweb.asm.MethodVisitor =
+                    object : org.objectweb.asm.MethodVisitor(org.objectweb.asm.Opcodes.ASM9) {
+                        override fun visitLocalVariable(
+                            name: String,
+                            descriptor: String,
+                            signature: String?,
+                            start: org.objectweb.asm.Label,
+                            end: org.objectweb.asm.Label,
+                            index: Int,
+                        ) {
+                            names += name
+                        }
+                    }
+            },
+            org.objectweb.asm.ClassReader.SKIP_FRAMES,
+        )
+        assertTrue("no LocalVariableTable names in ${classFile.absolutePath}", names.isNotEmpty())
+        assertTrue("expected __result in $names", names.contains("__result"))
     }
 }

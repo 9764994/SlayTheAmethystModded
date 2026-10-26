@@ -99,6 +99,45 @@ class AgentPatchPreflightTest {
         assertTrue(result.issues.any { it.contains("concrete class") })
     }
 
+    @Test
+    fun validate_warnsAboutClassWithNoMatchingSource() {
+        val root = Files.createTempDirectory("preflight-stale-class").toFile()
+        File(root, "src/agent/Current.java").apply {
+            parentFile?.mkdirs()
+            writeText("package agent; public class Current {}")
+        }
+        writeClass(root, "agent/Current", null)
+        writeClass(root, "agent/RenamedAway", null)
+
+        val result = AgentPatchPreflight.validate(root, classpath)
+
+        assertTrue(result.valid)
+        assertTrue(
+            "expected a stale-class warning, got ${result.warnings}",
+            result.warnings.any { it.contains("RenamedAway") && it.contains("stale") },
+        )
+        assertTrue(result.warnings.none { it.contains("Current.class") })
+    }
+
+    @Test
+    fun validate_rejectsStalePatchClassWithNoMatchingSource() {
+        val root = Files.createTempDirectory("preflight-stale-patch").toFile()
+        File(root, "src/agent/Current.java").apply {
+            parentFile?.mkdirs()
+            writeText("package agent; public class Current {}")
+        }
+        writeClass(root, "agent/Current", null)
+        writePatchClass(root, "agent/OldPatch")
+
+        val result = AgentPatchPreflight.validate(root, classpath)
+
+        assertFalse("a stale patch class would still be applied at runtime", result.valid)
+        assertTrue(
+            "expected a stale-patch issue, got ${result.issues}",
+            result.issues.any { it.contains("OldPatch") && it.contains("stale class") },
+        )
+    }
+
     private fun writeClass(
         root: File,
         internalName: String,
@@ -119,6 +158,34 @@ class AgentPatchPreflightTest {
             initialize.visitMaxs(0, 0)
             initialize.visitEnd()
         }
+        writer.visitEnd()
+        File(root, "$internalName.class").apply {
+            parentFile?.mkdirs()
+            writeBytes(writer.toByteArray())
+        }
+    }
+
+    private fun writePatchClass(root: File, internalName: String) {
+        val writer = ClassWriter(0)
+        writer.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC, internalName, null, "java/lang/Object", null)
+        val annotation = writer.visitAnnotation(
+            "Lcom/evacipated/cardcrawl/modthespire/lib/SpirePatch2;",
+            true,
+        )
+        annotation.visit("cls", "com/example/Target")
+        annotation.visit("method", "run")
+        annotation.visitEnd()
+        val hook = writer.visitMethod(
+            Opcodes.ACC_PUBLIC or Opcodes.ACC_STATIC,
+            "Prefix",
+            "()V",
+            null,
+            null,
+        )
+        hook.visitAnnotation("Lcom/evacipated/cardcrawl/modthespire/lib/SpirePrefixPatch;", true).visitEnd()
+        hook.visitInsn(Opcodes.RETURN)
+        hook.visitMaxs(0, 0)
+        hook.visitEnd()
         writer.visitEnd()
         File(root, "$internalName.class").apply {
             parentFile?.mkdirs()
