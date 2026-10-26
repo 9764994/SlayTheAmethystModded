@@ -2547,6 +2547,12 @@
     <string name="settings_performance_logs_exported">已匯出效能日誌，共 %1$d 個檔案。</string>
     <string name="settings_performance_logs_failed_prefix">效能日誌操作失敗</string>
     <string name="settings_share_performance_logs_chooser_title">分享效能日誌</string>
+    <string name="settings_agent_workspace_export_title">匯出 Agent 工作空間</string>
+    <string name="settings_agent_workspace_export_desc">將 agent_workspace 下的全部檔案（含 AI 對話資料庫）打包為你選擇的 zip 檔案。</string>
+    <string name="settings_busy_exporting_agent_workspace_progress">正在匯出 Agent 工作空間… %1$d%%</string>
+    <string name="settings_agent_workspace_exported">已匯出 Agent 工作空間，共 %1$d 個檔案。</string>
+    <string name="settings_agent_workspace_exported_empty">Agent 工作空間為空，已匯出說明檔案。</string>
+    <string name="settings_agent_workspace_export_failed_prefix">匯出 Agent 工作空間失敗</string>
     <string name="settings_gdx_pad_cursor_debug_enabled">GDX 手柄游標日誌</string>
     <string name="settings_gdx_pad_cursor_debug_disabled">GDX 手柄游標日誌：關閉</string>
     <string name="settings_gdx_pad_cursor_debug_desc">控制 `[gdx-pad-debug]` 的 setCursorPosition 輸出。預設關閉，以減少日誌刷屏。</string>

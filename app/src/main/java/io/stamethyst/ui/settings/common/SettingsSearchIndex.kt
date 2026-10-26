@@ -523,6 +523,12 @@ internal val SettingsSearchEntries: List<SettingsSearchEntry> = listOf(
         route = Route.DeveloperSettings,
     ),
     entry(
+        titleResId = R.string.settings_agent_workspace_export_title,
+        subtitleResId = R.string.settings_agent_workspace_export_desc,
+        categoryTitleResId = R.string.settings_developer_title,
+        route = Route.DeveloperSettings,
+    ),
+    entry(
         titleResId = R.string.settings_reset_defaults_title,
         categoryTitleResId = R.string.settings_developer_title,
         route = Route.DeveloperSettings,

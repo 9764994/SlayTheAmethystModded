@@ -82,6 +82,9 @@ fun SettingsEffectsHandler(
     val exportPerformanceLogsLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri ->
         viewModel.onPerformanceLogsExportPicked(activity, uri)
     }
+    val exportAgentWorkspaceLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri ->
+        viewModel.onAgentWorkspaceExportPicked(activity, uri)
+    }
     var pendingBootOverlayImageSlot by remember { mutableStateOf<BootOverlayImageSlot?>(null) }
     @Suppress("DEPRECATION")
     val bootOverlayImageCropLauncher = rememberLauncherForActivityResult(com.canhub.cropper.CropImageContract()) { result ->
@@ -158,6 +161,10 @@ fun SettingsEffectsHandler(
 
                 is SettingsScreenViewModel.Effect.OpenExportPerformanceLogsPicker -> {
                     exportPerformanceLogsLauncher.launch(effect.fileName)
+                }
+
+                is SettingsScreenViewModel.Effect.OpenExportAgentWorkspacePicker -> {
+                    exportAgentWorkspaceLauncher.launch(effect.fileName)
                 }
 
                 is SettingsScreenViewModel.Effect.OpenBootOverlayImagePicker -> {

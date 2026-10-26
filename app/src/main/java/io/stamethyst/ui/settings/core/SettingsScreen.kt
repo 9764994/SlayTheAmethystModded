@@ -501,6 +501,7 @@ fun LauncherDeveloperSettingsScreen(
         onClearJunkFiles = {
             viewModel.onClearJunkFiles(activity)
         },
+        onExportAgentWorkspace = viewModel::onExportAgentWorkspaceToFile,
         onResetLauncherSettingsToDefaults = {
             viewModel.onResetLauncherSettingsToDefaults(activity)
         },

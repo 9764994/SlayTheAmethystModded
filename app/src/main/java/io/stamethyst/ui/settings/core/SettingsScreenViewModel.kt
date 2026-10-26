@@ -248,6 +248,7 @@ class SettingsScreenViewModel : ViewModel() {
         ) : Effect
         data class OpenExportLogsPicker(val fileName: String) : Effect
         data class OpenExportPerformanceLogsPicker(val fileName: String) : Effect
+        data class OpenExportAgentWorkspacePicker(val fileName: String) : Effect
         data class OpenBootOverlayImagePicker(val slot: BootOverlayImageSlot) : Effect
         data class ShareJvmLogsBundle(val payload: JvmLogsSharePayload) : Effect
         data class SharePerformanceLogsBundle(val payload: JvmLogsSharePayload) : Effect
@@ -3054,6 +3055,17 @@ class SettingsScreenViewModel : ViewModel() {
         )
     }
 
+    fun onExportAgentWorkspaceToFile() {
+        if (uiState.busy) {
+            return
+        }
+        _effects.tryEmit(
+            Effect.OpenExportAgentWorkspacePicker(
+                SettingsFileService.buildAgentWorkspaceExportFileName()
+            )
+        )
+    }
+
     fun onSharePerformanceLogs(host: Activity) {
         if (uiState.busy) {
             return
@@ -3134,6 +3146,61 @@ class SettingsScreenViewModel : ViewModel() {
                             StsExternalStorageAccess.buildFailureMessage(
                                 host,
                                 host.getString(R.string.settings_performance_logs_failed_prefix),
+                                error
+                            )
+                        )
+                    )
+                }
+            }
+        }
+    }
+
+    fun onAgentWorkspaceExportPicked(host: Activity, uri: Uri?) {
+        if (uri == null) {
+            return
+        }
+        setBusy(
+            busy = true,
+            message = UiText.StringResource(
+                R.string.settings_busy_exporting_agent_workspace_progress,
+                0
+            ),
+            operation = UiBusyOperation.EXPORT_ARCHIVE,
+            progressPercent = 0
+        )
+        executor.execute {
+            try {
+                val exportedCount = SettingsFileService.exportAgentWorkspaceBundle(
+                    host,
+                    uri,
+                    exportProgressReporter(host, R.string.settings_busy_exporting_agent_workspace_progress)
+                )
+                host.runOnUiThread {
+                    setBusy(false, null)
+                    if (exportedCount > 0) {
+                        showToast(
+                            host,
+                            UiText.StringResource(
+                                R.string.settings_agent_workspace_exported,
+                                exportedCount
+                            )
+                        )
+                    } else {
+                        showToast(
+                            host,
+                            UiText.StringResource(R.string.settings_agent_workspace_exported_empty)
+                        )
+                    }
+                }
+            } catch (error: Throwable) {
+                host.runOnUiThread {
+                    setBusy(false, null)
+                    showToast(
+                        host,
+                        UiText.DynamicString(
+                            StsExternalStorageAccess.buildFailureMessage(
+                                host,
+                                host.getString(R.string.settings_agent_workspace_export_failed_prefix),
                                 error
                             )
                         )

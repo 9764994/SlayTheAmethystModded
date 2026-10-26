@@ -2575,6 +2575,12 @@
     <string name="settings_performance_logs_exported">已导出性能日志，共 %1$d 个文件。</string>
     <string name="settings_performance_logs_failed_prefix">性能日志操作失败</string>
     <string name="settings_share_performance_logs_chooser_title">分享性能日志</string>
+    <string name="settings_agent_workspace_export_title">导出 Agent 工作空间</string>
+    <string name="settings_agent_workspace_export_desc">将 agent_workspace 下的全部文件（含 AI 对话数据库）打包为你选择的 zip 文件。</string>
+    <string name="settings_busy_exporting_agent_workspace_progress">正在导出 Agent 工作空间… %1$d%%</string>
+    <string name="settings_agent_workspace_exported">已导出 Agent 工作空间，共 %1$d 个文件。</string>
+    <string name="settings_agent_workspace_exported_empty">Agent 工作空间为空，已导出说明文件。</string>
+    <string name="settings_agent_workspace_export_failed_prefix">导出 Agent 工作空间失败</string>
     <string name="settings_gdx_pad_cursor_debug_enabled">GDX 手柄光标日志</string>
     <string name="settings_gdx_pad_cursor_debug_disabled">GDX 手柄光标日志：关闭</string>
     <string name="settings_gdx_pad_cursor_debug_desc">控制 `[gdx-pad-debug]` 的 setCursorPosition 输出。默认关闭，以减少日志刷屏。</string>

@@ -2276,6 +2276,12 @@ Patch rule: keep Ori full-resolution glow/bloom rendering, but replace the blur 
     <string name="settings_performance_logs_exported">Exported %1$d performance log files.</string>
     <string name="settings_performance_logs_failed_prefix">Performance log operation failed</string>
     <string name="settings_share_performance_logs_chooser_title">Share performance logs</string>
+    <string name="settings_agent_workspace_export_title">Export agent workspace</string>
+    <string name="settings_agent_workspace_export_desc">Package every file under agent_workspace, including the AI conversation databases, into a zip file you pick.</string>
+    <string name="settings_busy_exporting_agent_workspace_progress">Exporting agent workspace… %1$d%%</string>
+    <string name="settings_agent_workspace_exported">Exported %1$d agent workspace files.</string>
+    <string name="settings_agent_workspace_exported_empty">Agent workspace is empty; exported a note file instead.</string>
+    <string name="settings_agent_workspace_export_failed_prefix">Agent workspace export failed</string>
     <string name="settings_gdx_pad_cursor_debug_enabled">GDX gamepad cursor log</string>
     <string name="settings_gdx_pad_cursor_debug_disabled">GDX gamepad cursor log: Disabled</string>
     <string name="settings_gdx_pad_cursor_debug_desc">Controls `[gdx-pad-debug]` setCursorPosition output. Disabled by default to reduce log spam.</string>

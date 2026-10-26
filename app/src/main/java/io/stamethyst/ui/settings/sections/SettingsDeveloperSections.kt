@@ -101,6 +101,7 @@ internal data class StatusSettingsActions(
     val onGdxPadCursorDebugChanged: (Boolean) -> Unit,
     val onGlBridgeSwapHeartbeatDebugChanged: (Boolean) -> Unit,
     val onClearJunkFiles: () -> Unit,
+    val onExportAgentWorkspace: () -> Unit,
 )
 
 
@@ -147,6 +148,7 @@ internal fun LauncherDeveloperSettingsScreenContent(
     onGdxPadCursorDebugChanged: (Boolean) -> Unit = {},
     onGlBridgeSwapHeartbeatDebugChanged: (Boolean) -> Unit = {},
     onClearJunkFiles: () -> Unit = {},
+    onExportAgentWorkspace: () -> Unit = {},
     onResetLauncherSettingsToDefaults: () -> Unit = {},
 ) {
     val context = LocalContext.current
@@ -365,6 +367,7 @@ internal fun LauncherDeveloperSettingsScreenContent(
                         onGdxPadCursorDebugChanged = onGdxPadCursorDebugChanged,
                         onGlBridgeSwapHeartbeatDebugChanged = onGlBridgeSwapHeartbeatDebugChanged,
                         onClearJunkFiles = onClearJunkFiles,
+                        onExportAgentWorkspace = onExportAgentWorkspace,
                     ),
                 )
             }
@@ -1163,6 +1166,12 @@ internal fun SettingsStatusSection(
         title = stringResource(R.string.settings_unplayable_mods_entry_title),
         enabled = true,
         onClick = { showUnplayableModsDialog = true }
+    )
+    SettingsActionListItem(
+        title = stringResource(R.string.settings_agent_workspace_export_title),
+        supportingText = stringResource(R.string.settings_agent_workspace_export_desc),
+        enabled = !uiState.busy,
+        onClick = actions.onExportAgentWorkspace,
     )
     SettingsActionListItem(
         title = stringResource(R.string.settings_developer_clear_junk_files_title),

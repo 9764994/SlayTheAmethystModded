@@ -102,6 +102,10 @@ internal object SettingsFileService {
         return DiagnosticsArchiveBuilder.buildPerformanceExportFileName()
     }
 
+    fun buildAgentWorkspaceExportFileName(): String {
+        return AgentWorkspaceExportService.buildExportFileName()
+    }
+
     fun buildModsExportFileName(): String {
         val formatter = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US)
         return "sts-mods-export-${formatter.format(Date())}.zip"
@@ -121,6 +125,11 @@ internal object SettingsFileService {
     @Throws(IOException::class)
     fun exportPerformanceLogBundle(host: Activity, uri: Uri, onProgress: ((Int) -> Unit)? = null): Int {
         return DiagnosticsProcessClient.exportPerformanceLogBundle(host, uri, onProgress)
+    }
+
+    @Throws(IOException::class)
+    fun exportAgentWorkspaceBundle(host: Activity, uri: Uri, onProgress: ((Int) -> Unit)? = null): Int {
+        return AgentWorkspaceExportService.exportWorkspace(host, uri, onProgress)
     }
 
     @Throws(IOException::class)
