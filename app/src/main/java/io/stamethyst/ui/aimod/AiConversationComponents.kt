@@ -8,6 +8,12 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import io.stamethyst.ui.SimpleMarkdownContent
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
@@ -26,7 +32,6 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -240,11 +245,13 @@ private fun withoutPatchId(value: String): String =
 internal fun AiToolCallRow(tool: AiToolCall, streaming: Boolean) {
     var expanded by rememberSaveable(tool.id) { mutableStateOf(false) }
     val colors = MaterialTheme.colorScheme
-    val path = remember(tool.arguments) {
-        val parsed = runCatching {
-            Json.parseToJsonElement(tool.arguments).jsonObject["path"]?.jsonPrimitive?.content
-        }.getOrNull()
-        withoutPatchId(parsed ?: tool.arguments)
+    val path by produceState("", tool.arguments) {
+        value = withContext(Dispatchers.Default) {
+            val parsed = runCatching {
+                Json.parseToJsonElement(tool.arguments).jsonObject["path"]?.jsonPrimitive?.content
+            }.getOrNull()
+            withoutPatchId((parsed ?: tool.arguments).take(512))
+        }
     }
     val status = stringResource(
         when {
@@ -279,16 +286,35 @@ internal fun AiToolCallRow(tool: AiToolCall, streaming: Boolean) {
         if (expanded) {
             Column(Modifier.padding(start = 24.dp, bottom = 6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(status, color = if (tool.failed) colors.error else colors.onSurfaceVariant, style = MaterialTheme.typography.labelSmall)
-                SelectionContainer {
-                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text(withoutPatchId(tool.arguments), style = codeStyle, color = colors.onSurfaceVariant)
-                        tool.result?.let { result ->
-                            Text(result, style = codeStyle, color = colors.onSurface)
-                        }
+                val chunks by produceState<List<String>>(emptyList(), tool.arguments, tool.result) {
+                    value = withContext(Dispatchers.Default) {
+                        splitAiMarkdown(withoutPatchId(tool.arguments), preserveFences = false) +
+                            tool.result?.let { splitAiMarkdown(it, preserveFences = false) }.orEmpty()
+                    }
+                }
+                LazyColumn(Modifier.fillMaxWidth().heightIn(max = 400.dp)) {
+                    items(chunks.size) { index ->
+                        SelectionContainer { Text(chunks[index], style = codeStyle, color = colors.onSurface) }
                     }
                 }
                 if (tool.truncated) Text(stringResource(R.string.ai_mod_editor_tool_truncated), style = MaterialTheme.typography.labelSmall, color = colors.onSurfaceVariant)
             }
         }
+    }
+}
+
+/** Expanded diagnostic content has its own bounded lazy viewport, never one huge Text node. */
+@Composable
+internal fun AiExpandedMarkdown(text: String, color: androidx.compose.ui.graphics.Color) {
+    if (text.length <= 2048) {
+        SimpleMarkdownContent(text, modifier = Modifier.padding(start = 4.dp, bottom = 16.dp),
+            textColor = color, textSelectable = true)
+        return
+    }
+    val chunks by produceState<List<String>>(emptyList(), text) {
+        value = withContext(Dispatchers.Default) { splitAiMarkdown(text) }
+    }
+    LazyColumn(Modifier.fillMaxWidth().heightIn(max = 400.dp).padding(start = 4.dp, bottom = 16.dp)) {
+        items(chunks.size) { index -> SimpleMarkdownContent(chunks[index], textColor = color, textSelectable = true) }
     }
 }

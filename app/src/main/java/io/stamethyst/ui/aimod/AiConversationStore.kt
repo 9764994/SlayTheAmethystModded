@@ -2,10 +2,12 @@ package io.stamethyst.ui.aimod
 
 import android.content.ContentValues
 import android.database.Cursor
+import android.database.CursorWrapper
 import android.database.sqlite.SQLiteDatabase
 import io.stamethyst.backend.llm.AgentContextState
 import io.stamethyst.backend.workshop.WorkshopJsonFileStore
 import java.io.File
+import java.io.ByteArrayOutputStream
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
@@ -43,14 +45,21 @@ internal class AiConversationStore(root: File) {
     }
 
     /** Loads only metadata and the first user message for the history picker. */
-    fun loadSummaries(): List<AiEditorSession> {
+    fun loadSummaries(onReadFailure: (File, Exception) -> Unit = { file, error ->
+        android.util.Log.w(LOG_TAG, "Failed to read conversation ${file.name}", error)
+    }): List<AiEditorSession> {
         migrateLegacyConversations()
         return databaseFiles()
             .mapNotNull { file ->
-                withDatabaseFile(file) { db ->
-                    readSessionSummary(db)?.let { summary ->
-                        summary to readUpdatedAt(db)
+                try {
+                    withDatabaseFile(file) { db ->
+                        readSessionSummary(db)?.let { summary ->
+                            summary to readUpdatedAt(db)
+                        }
                     }
+                } catch (error: Exception) {
+                    onReadFailure(file, error)
+                    null
                 }
             }
             .filter { it.first.hasUserPrompt() }
@@ -60,8 +69,26 @@ internal class AiConversationStore(root: File) {
 
     fun load(sessionId: String): AiEditorSession? {
         migrateLegacyConversations()
-        return withDatabase(sessionId, create = false) { db -> readSession(db, sessionId) }
+        return withDatabase(sessionId, create = false) { db ->
+            db.beginTransactionNonExclusive()
+            try {
+                readSession(db, sessionId).also { db.setTransactionSuccessful() }
+            } finally {
+                db.endTransaction()
+            }
+        }
     }
+
+    /** Read a consistent snapshot, reusing unchanged message/context objects across polls. */
+    fun loadChanges(previous: AiEditorSession): AiEditorSession? =
+        withDatabase(previous.id, create = false) { db ->
+            db.beginTransactionNonExclusive()
+            try {
+                readSession(db, previous.id, previous).also { db.setTransactionSuccessful() }
+            } finally {
+                db.endTransaction()
+            }
+        }
 
     fun revision(sessionId: String): Long? {
         migrateLegacyConversations()
@@ -138,7 +165,7 @@ internal class AiConversationStore(root: File) {
                 val updated = db.update(TABLE_CONVERSATION, values, "id = ?", arrayOf(sessionId))
                 if (updated > 0) {
                     db.execSQL(
-                        "UPDATE $TABLE_CONVERSATION SET $COLUMN_REVISION = $COLUMN_REVISION + 1 WHERE $COLUMN_ID = ?",
+                        "UPDATE $TABLE_CONVERSATION SET context_revision = $COLUMN_REVISION + 1, $COLUMN_REVISION = $COLUMN_REVISION + 1 WHERE $COLUMN_ID = ?",
                         arrayOf(sessionId),
                     )
                 }
@@ -231,15 +258,16 @@ internal class AiConversationStore(root: File) {
                         legacy.readText(StandardCharsets.UTF_8),
                     )
                 }.getOrNull() ?: return@withFileLock
+                var allMigrated = true
                 sessions.forEach { session ->
                     // A session file may exist but be empty: an earlier failed write can leave a
                     // conversation row with no messages. Only trust a stored copy that has content,
                     // otherwise the legacy JSON import would be skipped and history lost.
-                    val alreadyMigrated = loadWithoutMigration(session.id)?.messages?.isNotEmpty() == true
-                    if (session.hasUserPrompt() && !alreadyMigrated) {
-                        // One unreadable session must not abort the whole migration; the legacy file
-                        // is only renamed once every session has been attempted.
+                    if (session.hasUserPrompt()) {
+                        // One unreadable session must not abort the whole migration; retain the
+                        // legacy file until every nonempty conversation has been imported.
                         runCatching {
+                            if (loadWithoutMigration(session.id)?.messages?.isNotEmpty() == true) return@runCatching
                             withLockedDatabase(session.id, create = true) { db ->
                                 db.beginTransactionNonExclusive()
                                 try {
@@ -250,11 +278,12 @@ internal class AiConversationStore(root: File) {
                                 }
                             }
                         }.onFailure {
+                            allMigrated = false
                             android.util.Log.w(LOG_TAG, "Failed to migrate session ${session.id}", it)
                         }
                     }
                 }
-                moveLegacyFile(legacy)
+                if (allMigrated) moveLegacyFile(legacy)
             }
         }
     }
@@ -292,9 +321,7 @@ internal class AiConversationStore(root: File) {
         file.parentFile?.mkdirs()
         val flags = SQLiteDatabase.OPEN_READWRITE or
             if (create) SQLiteDatabase.CREATE_IF_NECESSARY else 0
-        val database = runCatching {
-            SQLiteDatabase.openDatabase(file.path, null, flags)
-        }.getOrNull() ?: return null
+        val database = SQLiteDatabase.openDatabase(file.path, null, flags)
         return try {
             database.enableWriteAheadLogging()
             database.setForeignKeyConstraintsEnabled(true)
@@ -344,6 +371,8 @@ internal class AiConversationStore(root: File) {
                 addColumnIfMissing(db, TABLE_MESSAGES, COLUMN_NOTICE, "INTEGER NOT NULL DEFAULT 0")
                 addColumnIfMissing(db, TABLE_MESSAGES, COLUMN_PARTS_JSON, "TEXT NOT NULL DEFAULT ''")
             }
+            addColumnIfMissing(db, TABLE_MESSAGES, "changed_revision", "INTEGER NOT NULL DEFAULT 0")
+            addColumnIfMissing(db, TABLE_CONVERSATION, "context_revision", "INTEGER NOT NULL DEFAULT 0")
             db.setTransactionSuccessful()
         } finally {
             db.endTransaction()
@@ -444,10 +473,69 @@ internal class AiConversationStore(root: File) {
         if (!exists) db.execSQL("ALTER TABLE $table ADD COLUMN $column $definition")
     }
 
-    private fun readSession(db: SQLiteDatabase, expectedId: String?): AiEditorSession? {
-        val metadata = db.query(
+    /**
+     * CursorWindow limits the size of an entire row, not the database value. Project large
+     * strings as NULL and fetch their UTF-8 bytes in bounded slices on demand. This also reads
+     * already-written oversized rows without a migration or truncating conversation content.
+     */
+    private fun SQLiteDatabase.queryWindowSafe(
+        table: String,
+        columns: Array<String>?,
+        selection: String?,
+        selectionArgs: Array<String>?,
+        groupBy: String?,
+        having: String?,
+        orderBy: String?,
+        limit: String? = null,
+    ): Cursor {
+        val names = columns ?: rawQuery("PRAGMA table_info($table)", null).use { cursor ->
+            buildList { while (cursor.moveToNext()) add(cursor.getString(1)) }.toTypedArray()
+        }
+        val projection = names.map { column ->
+            "CASE WHEN typeof($column) = 'text' AND length(CAST($column AS BLOB)) > 16384 " +
+                "THEN NULL ELSE $column END AS $column"
+        } + "rowid AS _storage_rowid"
+        val cursor = query(table, projection.toTypedArray(), selection, selectionArgs, groupBy, having, orderBy, limit)
+        return object : CursorWrapper(cursor) {
+            private fun rowArgs() = arrayOf(cursor.getLong(names.size).toString())
+
+            override fun isNull(columnIndex: Int): Boolean {
+                if (!cursor.isNull(columnIndex) || columnIndex >= names.size) return cursor.isNull(columnIndex)
+                return rawQuery("SELECT ${names[columnIndex]} IS NULL FROM $table WHERE rowid = ?", rowArgs()).use {
+                    !it.moveToFirst() || it.getInt(0) != 0
+                }
+            }
+
+            override fun getString(columnIndex: Int): String? {
+                if (!cursor.isNull(columnIndex) || columnIndex >= names.size) return cursor.getString(columnIndex)
+                val column = names[columnIndex]
+                val size = rawQuery("SELECT length(CAST($column AS BLOB)) FROM $table WHERE rowid = ?", rowArgs()).use {
+                    if (!it.moveToFirst() || it.isNull(0)) return null
+                    it.getInt(0)
+                }
+                val bytes = ByteArrayOutputStream()
+                var offset = 0
+                while (offset < size) {
+                    val chunk = rawQuery(
+                        "SELECT substr(CAST($column AS BLOB), ?, 16384) FROM $table WHERE rowid = ?",
+                        arrayOf((offset + 1).toString(), rowArgs()[0]),
+                    ).use {
+                        check(it.moveToFirst()) { "Conversation row disappeared while reading" }
+                        it.getBlob(0)
+                    }
+                    check(chunk.isNotEmpty()) { "Incomplete conversation value" }
+                    bytes.write(chunk)
+                    offset += chunk.size
+                }
+                return bytes.toString(StandardCharsets.UTF_8.name())
+            }
+        }
+    }
+
+    private fun readSession(db: SQLiteDatabase, expectedId: String?, previous: AiEditorSession? = null): AiEditorSession? {
+        val metadata = db.queryWindowSafe(
             TABLE_CONVERSATION,
-            arrayOf(COLUMN_ID, COLUMN_TITLE, COLUMN_REVISION, COLUMN_CONTEXT),
+            arrayOf(COLUMN_ID, COLUMN_TITLE, COLUMN_REVISION, "context_revision"),
             expectedId?.let { "$COLUMN_ID = ?" },
             expectedId?.let { arrayOf(it) },
             null,
@@ -460,19 +548,31 @@ internal class AiConversationStore(root: File) {
                 id = cursor.getString(0),
                 title = cursor.getString(1),
                 revision = cursor.getLong(2),
-                context = cursor.getStringOrNull(3)?.let { value ->
-                    runCatching { json.decodeFromString<AgentContextState>(value) }.getOrNull()
-                },
+                context = if (previous != null && cursor.getLong(3) <= previous.revision) previous.context else
+                    db.queryWindowSafe(TABLE_CONVERSATION, arrayOf(COLUMN_CONTEXT), expectedId?.let { "$COLUMN_ID = ?" },
+                        expectedId?.let { arrayOf(it) }, null, null, null, "1").use { contextCursor ->
+                        if (!contextCursor.moveToFirst()) null else contextCursor.getStringOrNull(0)?.let { value ->
+                            runCatching { json.decodeFromString<AgentContextState>(value) }.getOrNull()
+                        }
+                    },
             )
         }
-        val attachments = readAttachments(db)
-        val tools = readTools(db)
-        val messages = db.query(TABLE_MESSAGES, null, null, null, null, null, "$COLUMN_MESSAGE_ID ASC")
-            .use { cursor ->
-                buildList {
-                    while (cursor.moveToNext()) add(cursor.readMessage(attachments, tools))
-                }
+        val messages = if (previous == null) {
+            val attachments = readAttachments(db)
+            val tools = readTools(db)
+            db.queryWindowSafe(TABLE_MESSAGES, null, null, null, null, null, "$COLUMN_MESSAGE_ID ASC").use { cursor ->
+                buildList { while (cursor.moveToNext()) add(cursor.readMessage(attachments, tools)) }
             }
+        } else {
+            val cached = previous.messages.associateBy { it.id }
+            val revisions = db.query(TABLE_MESSAGES, arrayOf(COLUMN_MESSAGE_ID, "changed_revision"),
+                null, null, null, null, "$COLUMN_MESSAGE_ID ASC").use { cursor ->
+                buildList { while (cursor.moveToNext()) add(cursor.getLong(0) to cursor.getLong(1)) }
+            }
+            revisions.mapNotNull { (id, revision) ->
+                cached[id]?.takeIf { revision <= previous.revision } ?: readMessage(db, id)
+            }
+        }
         return AiEditorSession(
             id = metadata.id,
             messages = messages,
@@ -483,7 +583,7 @@ internal class AiConversationStore(root: File) {
     }
 
     private fun readSessionSummary(db: SQLiteDatabase): AiEditorSession? {
-        val metadata = db.query(
+        val metadata = db.queryWindowSafe(
             TABLE_CONVERSATION,
             arrayOf(COLUMN_ID, COLUMN_TITLE, COLUMN_REVISION),
             null,
@@ -496,10 +596,10 @@ internal class AiConversationStore(root: File) {
             if (!cursor.moveToFirst()) return null
             Triple(cursor.getString(0), cursor.getString(1), cursor.getLong(2))
         }
-        val firstMessage = db.query(
+        val firstMessage = db.queryWindowSafe(
             TABLE_MESSAGES,
             null,
-            null,
+            "$COLUMN_FROM_USER = 1",
             null,
             null,
             null,
@@ -525,7 +625,7 @@ internal class AiConversationStore(root: File) {
     private fun readMessage(db: SQLiteDatabase, messageId: Long): AiEditorMessage? {
         val attachments = readAttachments(db, messageId)
         val tools = readTools(db, messageId)
-        return db.query(
+        return db.queryWindowSafe(
             TABLE_MESSAGES,
             null,
             "$COLUMN_MESSAGE_ID = ?",
@@ -545,10 +645,14 @@ internal class AiConversationStore(root: File) {
             put(COLUMN_ID, next.id)
             put(COLUMN_TITLE, next.title)
             put(COLUMN_REVISION, next.revision)
+            put("context_revision", if (previous == null || previous.context != next.context) next.revision else
+                db.rawQuery("SELECT context_revision FROM conversation LIMIT 1", null).use { if (it.moveToFirst()) it.getLong(0) else 0L })
             put(COLUMN_UPDATED_AT, System.currentTimeMillis())
             next.context?.let { put(COLUMN_CONTEXT, json.encodeToString(it)) } ?: putNull(COLUMN_CONTEXT)
         }
-        db.insertWithOnConflict(TABLE_CONVERSATION, null, metadata, SQLiteDatabase.CONFLICT_REPLACE)
+        check(db.insertWithOnConflict(TABLE_CONVERSATION, null, metadata, SQLiteDatabase.CONFLICT_REPLACE) != -1L) {
+            "Failed to save conversation metadata"
+        }
 
         val previousMessages = previous?.messages?.associateBy { it.id }.orEmpty()
         val nextIds = next.messages.mapTo(HashSet()) { it.id }
@@ -558,7 +662,7 @@ internal class AiConversationStore(root: File) {
             db.delete(TABLE_MESSAGES, "$COLUMN_MESSAGE_ID = ?", arrayOf(messageId.toString()))
         }
         next.messages.forEach { message ->
-            if (previousMessages[message.id] != message) writeMessage(db, message)
+            if (previousMessages[message.id] != message) writeMessage(db, message, next.revision)
         }
     }
 
@@ -580,8 +684,11 @@ internal class AiConversationStore(root: File) {
         )
     }
 
-    private fun writeMessage(db: SQLiteDatabase, message: AiEditorMessage) {
+    private fun writeMessage(db: SQLiteDatabase, message: AiEditorMessage, revision: Long? = null) {
         val values = ContentValues().apply {
+            put("changed_revision", revision ?: db.rawQuery("SELECT revision + 1 FROM conversation LIMIT 1", null).use {
+                if (it.moveToFirst()) it.getLong(0) else 1L
+            })
             put(COLUMN_MESSAGE_ID, message.id)
             put(COLUMN_FROM_USER, if (message.fromUser) 1 else 0)
             put(COLUMN_TEXT, message.text)
@@ -591,12 +698,14 @@ internal class AiConversationStore(root: File) {
             put(COLUMN_ERROR_MESSAGE, message.errorMessage)
             put(COLUMN_RETRY_MESSAGE, message.retryMessage)
             put(COLUMN_NOTICE, if (message.notice) 1 else 0)
-            put(COLUMN_PARTS_JSON, json.encodeToString(message.parts))
+            put(COLUMN_PARTS_JSON, json.encodeToString(coalesceAiParts(message.parts)))
             put(COLUMN_MODEL_NAME, message.modelName)
             message.elapsedMs?.let { put(COLUMN_ELAPSED_MS, it) } ?: putNull(COLUMN_ELAPSED_MS)
             message.contextTokens?.let { put(COLUMN_CONTEXT_TOKENS, it) } ?: putNull(COLUMN_CONTEXT_TOKENS)
         }
-        db.insertWithOnConflict(TABLE_MESSAGES, null, values, SQLiteDatabase.CONFLICT_REPLACE)
+        check(db.insertWithOnConflict(TABLE_MESSAGES, null, values, SQLiteDatabase.CONFLICT_REPLACE) != -1L) {
+            "Failed to save conversation message"
+        }
         db.delete(TABLE_ATTACHMENTS, "$COLUMN_FOREIGN_MESSAGE_ID = ?", arrayOf(message.id.toString()))
         message.attachments.forEachIndexed { position, attachment ->
             db.insertOrThrow(TABLE_ATTACHMENTS, null, ContentValues().apply {
@@ -624,7 +733,7 @@ internal class AiConversationStore(root: File) {
 
     private fun readAttachments(db: SQLiteDatabase, messageId: Long? = null): Map<Long, List<AiAttachment>> {
         val result = LinkedHashMap<Long, MutableList<AiAttachment>>()
-        db.query(
+        db.queryWindowSafe(
             TABLE_ATTACHMENTS,
             arrayOf(COLUMN_FOREIGN_MESSAGE_ID, COLUMN_NAME, COLUMN_CONTENT),
             messageId?.let { "$COLUMN_FOREIGN_MESSAGE_ID = ?" },
@@ -641,7 +750,7 @@ internal class AiConversationStore(root: File) {
 
     private fun readTools(db: SQLiteDatabase, messageId: Long? = null): Map<Long, List<AiToolCall>> {
         val result = LinkedHashMap<Long, MutableList<AiToolCall>>()
-        db.query(
+        db.queryWindowSafe(
             TABLE_TOOLS,
             arrayOf(
                 COLUMN_FOREIGN_MESSAGE_ID,
@@ -701,7 +810,7 @@ internal class AiConversationStore(root: File) {
         )
     }
 
-    private fun readJobs(db: SQLiteDatabase): List<AiAgentJobRecord> = db.query(
+    private fun readJobs(db: SQLiteDatabase): List<AiAgentJobRecord> = db.queryWindowSafe(
         TABLE_JOBS,
         null,
         null,
@@ -728,7 +837,7 @@ internal class AiConversationStore(root: File) {
     }
 
     private fun writeJob(db: SQLiteDatabase, record: AiAgentJobRecord) {
-        db.insertWithOnConflict(TABLE_JOBS, null, ContentValues().apply {
+        check(db.insertWithOnConflict(TABLE_JOBS, null, ContentValues().apply {
             put(COLUMN_JOB_ID, record.jobId)
             put(COLUMN_JOB_CONVERSATION_ID, record.conversationId)
             put(COLUMN_JOB_MOD_ID, record.modId)
@@ -738,7 +847,7 @@ internal class AiConversationStore(root: File) {
             put(COLUMN_JOB_STATUS, record.status)
             put(COLUMN_JOB_ERROR, record.errorMessage)
             put(COLUMN_JOB_UPDATED_AT, record.updatedAtMillis)
-        }, SQLiteDatabase.CONFLICT_REPLACE)
+        }, SQLiteDatabase.CONFLICT_REPLACE) != -1L) { "Failed to save AI job" }
     }
 
     private fun databaseFile(sessionId: String): File {
@@ -777,7 +886,7 @@ internal class AiConversationStore(root: File) {
     private companion object {
         const val LOG_TAG = "AiModStore"
         /** Bump when [createSchema] changes so existing files are migrated on next open. */
-        const val SCHEMA_VERSION = 2
+        const val SCHEMA_VERSION = 3
         const val DATABASE_EXTENSION = "db"
         const val LEGACY_CONVERSATIONS_FILE = "conversations.json"
         const val LEGACY_JOBS_FILE = "agent_jobs.json"

@@ -1439,11 +1439,14 @@ Patch rule: keep Ori full-resolution glow/bloom rendering, but replace the blur 
     <string name="ai_mod_editor_new_chat">New chat</string>
     <string name="ai_mod_editor_keep_screen_on">Keep screen on</string>
     <string name="ai_mod_editor_keep_screen_on_enabled">Keep screen on enabled</string>
+    <string name="ai_mod_editor_keep_screen_on_notice_on">Screen will stay on</string>
+    <string name="ai_mod_editor_keep_screen_on_notice_off">Screen will follow the system sleep timeout again</string>
     <string name="ai_mod_editor_new_chat_message">Clear this conversation? Applied JAR changes will not be undone.</string>
     <string name="ai_mod_editor_not_configured">Configure an API key in Settings &gt; LLM support first.</string>
     <string name="ai_mod_editor_user_label">You</string>
     <string name="ai_mod_editor_assistant_label">AI</string>
     <string name="ai_mod_editor_error">The assistant could not answer: %1$s</string>
+    <string name="ai_mod_editor_storage_error">Conversation storage could not be read or saved. Existing files have not been cleared. Return to the main screen and reopen the editor to retry. Details: %1$s</string>
     <string name="ai_mod_editor_error_interrupted">Generation was interrupted before a response was received.</string>
     <string name="ai_mod_editor_error_stopped">Generation was stopped by the user.</string>
     <string name="ai_mod_editor_retrying">Retry %1$d/5 in %2$d seconds</string>

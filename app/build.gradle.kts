@@ -508,6 +508,10 @@ val aiCacheAcceptanceTestClass = "io.stamethyst.backend.llm.AgentCacheNetworkAcc
 val runAiCacheAcceptance = gradle.startParameter.taskNames.any {
     it == "aiCacheAcceptanceTest" || it.endsWith(":aiCacheAcceptanceTest")
 }
+val aiEditorScrollCostTestClass = "io.stamethyst.ui.aimod.AiEditorScrollCostTest"
+val runAiEditorScrollCost = gradle.startParameter.taskNames.any {
+    it == "aiEditorScrollCostTest" || it.endsWith(":aiEditorScrollCostTest")
+}
 
 tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
     if (name == "testDebugUnitTest" && runAiCacheAcceptance) {
@@ -527,6 +531,17 @@ tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
     } else {
         filter { excludeTestsMatching(aiCompactionAcceptanceTestClass) }
     }
+    if (name == "testDebugUnitTest" && runAiEditorScrollCost) {
+        filter { includeTestsMatching(aiEditorScrollCostTestClass) }
+        systemProperty("sts.runAiEditorScrollCost", "true")
+        providers.gradleProperty("sts.aiTranscriptSampleDir").orNull?.let {
+            systemProperty("sts.aiTranscriptSampleDir", it)
+        }
+        outputs.upToDateWhen { false }
+        testLogging.showStandardStreams = true
+    } else {
+        filter { excludeTestsMatching(aiEditorScrollCostTestClass) }
+    }
 }
 
 tasks.register("aiCacheAcceptanceTest") {
@@ -538,6 +553,12 @@ tasks.register("aiCacheAcceptanceTest") {
 tasks.register("aiCompactionAcceptanceTest") {
     group = "verification"
     description = "Manually tests AI context compaction, slow responses and a live OpenAI-compatible API."
+    dependsOn("testDebugUnitTest")
+}
+
+tasks.register("aiEditorScrollCostTest") {
+    group = "verification"
+    description = "Measures the AI editor transcript costs: markdown rows on scroll and the 500 ms poll."
     dependsOn("testDebugUnitTest")
 }
 

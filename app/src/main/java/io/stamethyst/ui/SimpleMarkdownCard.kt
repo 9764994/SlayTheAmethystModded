@@ -71,11 +71,40 @@ private val htmlAttributeRegex =
 private val bareUrlRegex =
     Regex("""https?://[^\s<>()]+(?:\([^\s<>()]*\)[^\s<>()]*)*""", RegexOption.IGNORE_CASE)
 private val markdownTableSeparatorRegex = Regex(":?-{3,}:?")
+private val markdownHeadingRegex = Regex("""^(#{1,6})\s+(.+?)\s*#*$""")
+private val markdownOrderedListRegex = Regex("""^\d+[.)]\s+(.+)$""")
+private val markdownBulletListRegex = Regex("""^[-*+]\s+(.+)$""")
 private val markdownOrderedListLineRegex = Regex("^\\d+[.)]\\s+.*")
 
 /** `---`, `***`, `___` (with optional spaces) on a line of their own. */
 private val markdownHorizontalRuleRegex =
     Regex("""^(?:\*[ \t]*){3,}$|^(?:-[ \t]*){3,}$|^(?:_[ \t]*){3,}$""")
+
+/**
+ * Parse results are reused across compositions. `remember` only survives while an item is
+ * composed, and transcript rows are disposed when they scroll out of the viewport, so without a
+ * cache every scroll back re-parsed the same text. The bounded LRU keeps that work at one parse
+ * per distinct text (the same guarantee compose-markdown documents for its renderer).
+ */
+internal class MarkdownParseCache<K, V>(private val maxEntries: Int) {
+    private val entries = object : LinkedHashMap<K, V>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<K, V>): Boolean =
+            size > maxEntries
+    }
+
+    fun get(key: K): V? = synchronized(entries) { entries[key] }
+
+    fun put(key: K, value: V) {
+        synchronized(entries) { entries[key] = value }
+    }
+
+    fun clear() {
+        synchronized(entries) { entries.clear() }
+    }
+}
+
+/** Cached text is transcript-row sized; larger inputs are parsed without retention. */
+internal const val MARKDOWN_CACHE_MAX_TEXT_LENGTH = 4 * 1024
 
 @Composable
 internal fun SimpleMarkdownCard(
@@ -115,10 +144,9 @@ internal fun SimpleMarkdownContent(
     val normalizedMarkdown = remember(markdown) {
         markdown.replace("\r\n", "\n").replace('\r', '\n').trim()
     }
-    val plainText = remember(normalizedMarkdown) { isPlainMarkdownText(normalizedMarkdown) }
-    val blocks = remember(normalizedMarkdown, plainText) {
-        if (plainText) emptyList() else parseSimpleMarkdown(normalizedMarkdown)
-    }
+    val document = remember(normalizedMarkdown) { MarkdownDocumentParser.parse(normalizedMarkdown) }
+    val plainText = document.plainText
+    val blocks = document.blocks
     val content: @Composable () -> Unit = {
         Column(
             modifier = modifier,
@@ -476,7 +504,7 @@ private fun MarkdownRichText(
         codeStyle,
         strikeStyle
     ) {
-        buildMarkdownAnnotatedString(
+        MarkdownInlineParser.parse(
             text = text,
             linkStyles = linkStyles,
             boldStyle = boldStyle,
@@ -492,7 +520,7 @@ private fun MarkdownRichText(
     )
 }
 
-private sealed interface MarkdownBlock {
+internal sealed interface MarkdownBlock {
     data class Heading(val level: Int, val text: String) : MarkdownBlock
     data class Paragraph(val text: String) : MarkdownBlock
     data class ListBlock(val ordered: Boolean, val items: List<String>) : MarkdownBlock
@@ -512,6 +540,78 @@ private sealed class RemoteImageState {
 private data class MarkdownImageToken(
     val range: IntRange,
     val image: MarkdownBlock.Image
+)
+
+/** One parsed document: whether it is plain text and the blocks to render. */
+internal class MarkdownDocument(val plainText: Boolean, val blocks: List<MarkdownBlock>)
+
+internal object MarkdownDocumentParser {
+    private val cache = MarkdownParseCache<String, MarkdownDocument>(64)
+
+    fun parse(markdown: String): MarkdownDocument {
+        if (markdown.length > MARKDOWN_CACHE_MAX_TEXT_LENGTH) return parseUncached(markdown)
+        cache.get(markdown)?.let { return it }
+        return parseUncached(markdown).also { cache.put(markdown, it) }
+    }
+
+    private fun parseUncached(markdown: String): MarkdownDocument {
+        val plainText = isPlainMarkdownText(markdown)
+        return MarkdownDocument(
+            plainText = plainText,
+            blocks = if (plainText) emptyList() else parseSimpleMarkdown(markdown),
+        )
+    }
+
+    internal fun clearCache() {
+        cache.clear()
+    }
+}
+
+internal object MarkdownInlineParser {
+    private val cache = MarkdownParseCache<MarkdownInlineKey, AnnotatedString>(192)
+
+    fun parse(
+        text: String,
+        linkStyles: TextLinkStyles,
+        boldStyle: SpanStyle,
+        italicStyle: SpanStyle,
+        codeStyle: SpanStyle,
+        strikeStyle: SpanStyle,
+    ): AnnotatedString {
+        if (text.length > MARKDOWN_CACHE_MAX_TEXT_LENGTH) {
+            return buildMarkdownAnnotatedString(
+                text = text,
+                linkStyles = linkStyles,
+                boldStyle = boldStyle,
+                italicStyle = italicStyle,
+                codeStyle = codeStyle,
+                strikeStyle = strikeStyle,
+            )
+        }
+        val key = MarkdownInlineKey(text, linkStyles, boldStyle, italicStyle, codeStyle, strikeStyle)
+        cache.get(key)?.let { return it }
+        return buildMarkdownAnnotatedString(
+            text = text,
+            linkStyles = linkStyles,
+            boldStyle = boldStyle,
+            italicStyle = italicStyle,
+            codeStyle = codeStyle,
+            strikeStyle = strikeStyle,
+        ).also { cache.put(key, it) }
+    }
+
+    internal fun clearCache() {
+        cache.clear()
+    }
+}
+
+private data class MarkdownInlineKey(
+    val text: String,
+    val linkStyles: TextLinkStyles,
+    val boldStyle: SpanStyle,
+    val italicStyle: SpanStyle,
+    val codeStyle: SpanStyle,
+    val strikeStyle: SpanStyle,
 )
 
 private fun parseSimpleMarkdown(markdown: String): List<MarkdownBlock> {
@@ -611,7 +711,7 @@ private fun parseSimpleMarkdown(markdown: String): List<MarkdownBlock> {
             }
         }
 
-        val headingMatch = Regex("""^(#{1,6})\s+(.+?)\s*#*$""").matchEntire(trimmed)
+        val headingMatch = markdownHeadingRegex.matchEntire(trimmed)
         if (headingMatch != null) {
             flushParagraph()
             flushList()
@@ -623,7 +723,7 @@ private fun parseSimpleMarkdown(markdown: String): List<MarkdownBlock> {
             continue
         }
 
-        val orderedMatch = Regex("""^\d+[.)]\s+(.+)$""").matchEntire(trimmed)
+        val orderedMatch = markdownOrderedListRegex.matchEntire(trimmed)
         if (orderedMatch != null) {
             flushParagraph()
             if (listItems.isNotEmpty() && !orderedList) {
@@ -635,7 +735,7 @@ private fun parseSimpleMarkdown(markdown: String): List<MarkdownBlock> {
             continue
         }
 
-        val bulletMatch = Regex("""^[-*+]\s+(.+)$""").matchEntire(trimmed)
+        val bulletMatch = markdownBulletListRegex.matchEntire(trimmed)
         if (bulletMatch != null) {
             flushParagraph()
             if (listItems.isNotEmpty() && orderedList) {
@@ -743,6 +843,11 @@ private fun normalizeTableRow(row: List<String>, columnCount: Int): List<String>
 }
 
 private fun parseImageLineSegments(line: String): List<MarkdownBlock> {
+    // Runs for every line of every chunk; the three image regexes are wasted work unless the line
+    // has a markdown image or an html/img tag.
+    if (line.indexOf('!') < 0 && line.indexOf('<') < 0) {
+        return emptyList()
+    }
     val tokens = findMarkdownImageTokens(line)
     if (tokens.isEmpty()) {
         return emptyList()
@@ -879,57 +984,102 @@ private fun AnnotatedString.Builder.appendMarkdownInline(
     strikeStyle: SpanStyle,
 ) {
     var index = 0
+    var plainStart = 0
+
+    // Single pass with no backtracking: every branch only advances `index`, and the text between
+    // two special characters is appended as one run. Appending per character made a long paragraph
+    // cost thousands of builder calls on the composition thread.
+    fun flushPlain(endExclusive: Int) {
+        if (endExclusive > plainStart) {
+            append(text, plainStart, endExclusive)
+            plainStart = endExclusive
+        }
+    }
+
     while (index < text.length) {
-        when {
-            text[index] == '\\' && index + 1 < text.length -> {
-                append(text[index + 1])
-                index += 2
-            }
-
-            text.startsWith("~~", index) -> {
-                val end = text.indexOf("~~", startIndex = index + 2)
-                if (end > index + 2) {
-                    pushStyle(strikeStyle)
-                    appendMarkdownInline(
-                        text = text.substring(index + 2, end),
-                        linkStyles = linkStyles,
-                        boldStyle = boldStyle,
-                        italicStyle = italicStyle,
-                        codeStyle = codeStyle,
-                        strikeStyle = strikeStyle
-                    )
-                    pop()
-                    index = end + 2
-                } else {
-                    append("~~")
+        when (text[index]) {
+            '\\' -> {
+                if (index + 1 < text.length) {
+                    flushPlain(index)
+                    append(text[index + 1])
                     index += 2
+                    plainStart = index
+                } else {
+                    index += 1
                 }
             }
 
-            text.startsWith("**", index) -> {
-                val end = text.indexOf("**", startIndex = index + 2)
-                if (end > index + 2) {
-                    pushStyle(boldStyle)
-                    appendMarkdownInline(
-                        text = text.substring(index + 2, end),
-                        linkStyles = linkStyles,
-                        boldStyle = boldStyle,
-                        italicStyle = italicStyle,
-                        codeStyle = codeStyle,
-                        strikeStyle = strikeStyle
-                    )
-                    pop()
-                    index = end + 2
+            '~' -> {
+                if (!text.startsWith("~~", index)) {
+                    index += 1
                 } else {
-                    append("**")
-                    index += 2
+                    val end = text.indexOf("~~", startIndex = index + 2)
+                    if (end > index + 2) {
+                        flushPlain(index)
+                        pushStyle(strikeStyle)
+                        appendMarkdownInline(
+                            text = text.substring(index + 2, end),
+                            linkStyles = linkStyles,
+                            boldStyle = boldStyle,
+                            italicStyle = italicStyle,
+                            codeStyle = codeStyle,
+                            strikeStyle = strikeStyle
+                        )
+                        pop()
+                        index = end + 2
+                        plainStart = index
+                    } else {
+                        index += 2
+                    }
                 }
             }
 
-            text[index] == '*' || text[index] == '_' -> {
-                val marker = text[index]
-                val end = text.indexOf(marker, startIndex = index + 1)
+            '*' -> {
+                if (text.startsWith("**", index)) {
+                    val end = text.indexOf("**", startIndex = index + 2)
+                    if (end > index + 2) {
+                        flushPlain(index)
+                        pushStyle(boldStyle)
+                        appendMarkdownInline(
+                            text = text.substring(index + 2, end),
+                            linkStyles = linkStyles,
+                            boldStyle = boldStyle,
+                            italicStyle = italicStyle,
+                            codeStyle = codeStyle,
+                            strikeStyle = strikeStyle
+                        )
+                        pop()
+                        index = end + 2
+                        plainStart = index
+                    } else {
+                        index += 2
+                    }
+                } else {
+                    val end = text.indexOf('*', startIndex = index + 1)
+                    if (end > index + 1) {
+                        flushPlain(index)
+                        pushStyle(italicStyle)
+                        appendMarkdownInline(
+                            text = text.substring(index + 1, end),
+                            linkStyles = linkStyles,
+                            boldStyle = boldStyle,
+                            italicStyle = italicStyle,
+                            codeStyle = codeStyle,
+                            strikeStyle = strikeStyle
+                        )
+                        pop()
+                        index = end + 1
+                        plainStart = index
+                    } else {
+                        index += 1
+                    }
+                }
+            }
+
+            '_' -> {
+                val end = text.indexOf('_', startIndex = index + 1)
                 if (end > index + 1) {
+                    flushPlain(index)
                     pushStyle(italicStyle)
                     appendMarkdownInline(
                         text = text.substring(index + 1, end),
@@ -941,26 +1091,27 @@ private fun AnnotatedString.Builder.appendMarkdownInline(
                     )
                     pop()
                     index = end + 1
+                    plainStart = index
                 } else {
-                    append(marker)
                     index += 1
                 }
             }
 
-            text[index] == '`' -> {
+            '`' -> {
                 val end = text.indexOf('`', startIndex = index + 1)
                 if (end > index + 1) {
+                    flushPlain(index)
                     pushStyle(codeStyle)
-                    append(text.substring(index + 1, end))
+                    append(text, index + 1, end)
                     pop()
                     index = end + 1
+                    plainStart = index
                 } else {
-                    append('`')
                     index += 1
                 }
             }
 
-            text[index] == '[' -> {
+            '[' -> {
                 val closeBracket = text.indexOf(']', startIndex = index + 1)
                 val openParen = closeBracket.takeIf { it >= 0 }?.let { bracket ->
                     if (bracket + 1 < text.length && text[bracket + 1] == '(') {
@@ -973,12 +1124,12 @@ private fun AnnotatedString.Builder.appendMarkdownInline(
                     text.indexOf(')', startIndex = paren + 1)
                 } ?: -1
                 if (closeBracket > index + 1 && closeParen > openParen + 1) {
-                    val label = text.substring(index + 1, closeBracket)
                     val url = normalizeMarkdownLinkUrl(text.substring(openParen + 1, closeParen))
                     if (url.isNotBlank()) {
+                        flushPlain(index)
                         withLink(LinkAnnotation.Url(url = url, styles = linkStyles)) {
                             appendMarkdownInline(
-                                text = label,
+                                text = text.substring(index + 1, closeBracket),
                                 linkStyles = linkStyles,
                                 boldStyle = boldStyle,
                                 italicStyle = italicStyle,
@@ -987,38 +1138,34 @@ private fun AnnotatedString.Builder.appendMarkdownInline(
                             )
                         }
                         index = closeParen + 1
+                        plainStart = index
                     } else {
-                        append('[')
                         index += 1
                     }
                 } else {
-                    val bareUrl = matchBareUrlAt(text, index)
-                    if (bareUrl != null) {
-                        withLink(LinkAnnotation.Url(url = bareUrl, styles = linkStyles)) {
-                            append(bareUrl)
-                        }
-                        index += bareUrl.length
-                    } else {
-                        append('[')
-                        index += 1
+                    index += 1
+                }
+            }
+
+            // A bare URL can only start with "http", so the probe runs at those characters only.
+            'h', 'H' -> {
+                val bareUrl = matchBareUrlAt(text, index)
+                if (bareUrl != null) {
+                    flushPlain(index)
+                    withLink(LinkAnnotation.Url(url = bareUrl, styles = linkStyles)) {
+                        append(bareUrl)
                     }
+                    index += bareUrl.length
+                    plainStart = index
+                } else {
+                    index += 1
                 }
             }
 
-            matchBareUrlAt(text, index) != null -> {
-                val bareUrl = requireNotNull(matchBareUrlAt(text, index))
-                withLink(LinkAnnotation.Url(url = bareUrl, styles = linkStyles)) {
-                    append(bareUrl)
-                }
-                index += bareUrl.length
-            }
-
-            else -> {
-                append(text[index])
-                index += 1
-            }
+            else -> index += 1
         }
     }
+    flushPlain(text.length)
 }
 
 private fun normalizeMarkdownLinkUrl(rawUrl: String): String {
@@ -1030,6 +1177,12 @@ private fun normalizeMarkdownLinkUrl(rawUrl: String): String {
 }
 
 private fun matchBareUrlAt(text: String, startIndex: Int): String? {
+    // This runs once per character of a long paragraph, so reject every position that cannot
+    // start a bare URL before touching the regex. Without this check the regex rescans the rest of
+    // the text at each character and the whole parse becomes quadratic.
+    if (!text.regionMatches(startIndex, "http", 0, 4, ignoreCase = true)) {
+        return null
+    }
     val match = bareUrlRegex.find(text, startIndex)
         ?.takeIf { it.range.first == startIndex }
         ?: return null

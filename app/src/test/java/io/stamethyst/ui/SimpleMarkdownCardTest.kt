@@ -58,6 +58,13 @@ class SimpleMarkdownCardTest {
     }
 
     @Test
+    fun imageLines_areStillDetectedAfterTheMarkerGate() {
+        assertEquals(listOf("image"), parseSimpleMarkdownOutlineForTest("![alt](https://example.com/a.png)"))
+        assertEquals(listOf("image"), parseSimpleMarkdownOutlineForTest("<img src=\"https://example.com/a.png\">"))
+        assertEquals(listOf("paragraph"), parseSimpleMarkdownOutlineForTest("plain text without markers"))
+    }
+
+    @Test
     fun buildSimpleMarkdownAnnotatedString_marksBareUrlsWithoutTrailingPunctuation() {
         val annotated = buildSimpleMarkdownAnnotatedStringForTest(
             "链接：https://example.com/path?a=1."

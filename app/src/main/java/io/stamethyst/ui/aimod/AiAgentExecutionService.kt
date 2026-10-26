@@ -247,7 +247,7 @@ class AiAgentExecutionService : Service() {
                 message.copy(
                     text = message.text + textBuffer,
                     thinking = message.thinking + thinkingBuffer,
-                    parts = message.parts + pendingParts,
+                    parts = coalesceAiParts(message.parts + pendingParts),
                 )
             }
             textBuffer.setLength(0)
