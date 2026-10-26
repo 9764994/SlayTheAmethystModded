@@ -2251,7 +2251,7 @@ class PolicyGatedAgentGateway(
     }
 
     private fun chatRequest(messages: List<ChatMessage>) = ChatRequest.builder()
-        .messages(sanitizeToolMessageSequence(messages))
+        .messages(splitMultiToolCallGroups(sanitizeToolMessageSequence(messages)))
         .toolSpecifications(toolRegistry.toolSpecifications())
         .apply { contextManager?.let { maxOutputTokens(it.budget.outputReserve) } }
         .build()
@@ -2290,6 +2290,66 @@ class PolicyGatedAgentGateway(
             }
         }
         return sanitized
+    }
+
+    /**
+     * Splits an assistant turn with several tool calls into one assistant/tool pair per call.
+     *
+     * OpenAI expects one `tool` message per call, but some OpenAI-to-Anthropic bridges turn every
+     * `tool` message into its own user message. Anthropic then sees the second `tool_result` after
+     * a user message instead of after the assistant `tool_use` and rejects it with
+     * "unexpected tool_use_id". One-call-per-assistant pairs are valid for both protocols.
+     */
+    internal fun splitMultiToolCallGroups(messages: List<ChatMessage>): List<ChatMessage> {
+        val split = ArrayList<ChatMessage>(messages.size)
+        var index = 0
+        while (index < messages.size) {
+            val message = messages[index]
+            if (message !is AiMessage) {
+                split += message
+                index++
+                continue
+            }
+            val calls = message.toolExecutionRequests()
+            if (calls.size <= 1) {
+                split += message
+                index++
+                continue
+            }
+            val callIds = calls.map { it.id()?.takeIf(String::isNotBlank) }
+            if (callIds.any { it == null } || callIds.toSet().size != calls.size) {
+                split += message
+                index++
+                continue
+            }
+
+            val results = ArrayList<ToolExecutionResultMessage>()
+            var next = index + 1
+            while (next < messages.size && messages[next] is ToolExecutionResultMessage) {
+                results += messages[next] as ToolExecutionResultMessage
+                next++
+            }
+            val resultsById = results.mapNotNull { result ->
+                result.id()?.let { it to result }
+            }.toMap()
+            if (results.size != calls.size || callIds.any { it !in resultsById }) {
+                split += message
+                index++
+                continue
+            }
+
+            calls.forEachIndexed { callIndex, call ->
+                split += AiMessage.builder()
+                    .text(if (callIndex == 0) message.text() ?: "" else "")
+                    .thinking(if (callIndex == 0) message.thinking() else null)
+                    .attributes(if (callIndex == 0) message.attributes() else emptyMap())
+                    .toolExecutionRequests(listOf(call))
+                    .build()
+                split += requireNotNull(resultsById[requireNotNull(callIds[callIndex])])
+            }
+            index = next
+        }
+        return split
     }
 
     /** Keeps a non-null assistant content field on tool-call turns for strict compatibility bridges. */

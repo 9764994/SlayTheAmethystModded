@@ -14,6 +14,8 @@ import dev.langchain4j.model.chat.request.json.JsonObjectSchema
 import mockwebserver3.MockResponse
 import mockwebserver3.MockWebServer
 import org.json.JSONObject
+import org.objectweb.asm.ClassWriter
+import org.objectweb.asm.Opcodes
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -75,6 +77,67 @@ class PolicyGatedAgentGatewayTest {
         val toolMessage = secondRequest["messages"]!!.jsonArray.last().jsonObject
         assertEquals("tool", toolMessage["role"]!!.jsonPrimitive.content)
         assertTrue(toolMessage["content"]!!.jsonPrimitive.content.contains("artifact validation passed"))
+    }
+
+    @Test
+    fun respond_splitsMultiToolCallGroupsForAnthropicCompatibleBridges() {
+        server.enqueue(twoToolCallResponse())
+        server.enqueue(finalResponse("Both reads completed."))
+        val workspace = createTempDirectory("agent-multi-tool").toFile().apply {
+            resolve("note.txt").writeText("artifact validation passed")
+        }
+
+        val reply = newGateway(workspace).respond(
+            systemPrompt = "Inspect the note.",
+            userPrompt = "Inspect the note twice.",
+        )
+
+        assertEquals("Both reads completed.", reply.text)
+        server.takeRequest()
+        val request = Json.parseToJsonElement(requireNotNull(server.takeRequest().body).utf8()).jsonObject
+        val messages = request["messages"]!!.jsonArray.map { it.jsonObject }
+        assertEquals(
+            listOf("system", "user", "assistant", "tool", "assistant", "tool"),
+            messages.map { it["role"]!!.jsonPrimitive.content },
+        )
+        assertEquals(
+            listOf(1, 1),
+            messages.filter { it["role"]!!.jsonPrimitive.content == "assistant" }
+                .map { it["tool_calls"]!!.jsonArray.size },
+        )
+    }
+
+    @Test
+    fun splitMultiToolCallGroups_pairsEachCallWithItsOwnResult() {
+        val gateway = newGateway(createTempDirectory("agent-split").toFile())
+        val first = dev.langchain4j.agent.tool.ToolExecutionRequest.builder()
+            .id("call-first")
+            .name("read_workspace_file")
+            .arguments("{}")
+            .build()
+        val second = dev.langchain4j.agent.tool.ToolExecutionRequest.builder()
+            .id("call-second")
+            .name("read_workspace_file")
+            .arguments("{}")
+            .build()
+        val assistant = AiMessage.builder()
+            .text("I will read both notes.")
+            .toolExecutionRequests(listOf(first, second))
+            .build()
+
+        val split = gateway.splitMultiToolCallGroups(listOf(
+            assistant,
+            ToolExecutionResultMessage.from(first, "first result"),
+            ToolExecutionResultMessage.from(second, "second result"),
+        ))
+
+        assertEquals(4, split.size)
+        assertEquals("call-first", (split[0] as AiMessage).toolExecutionRequests().single().id())
+        assertEquals("first result", (split[1] as ToolExecutionResultMessage).text())
+        assertEquals("call-second", (split[2] as AiMessage).toolExecutionRequests().single().id())
+        assertEquals("second result", (split[3] as ToolExecutionResultMessage).text())
+        assertEquals("I will read both notes.", (split[0] as AiMessage).text())
+        assertEquals("", (split[2] as AiMessage).text())
     }
 
     @Test
@@ -679,11 +742,107 @@ class PolicyGatedAgentGatewayTest {
         assertEquals("call-valid", (messages[2] as ToolExecutionResultMessage).id())
     }
 
+    @Test
+    fun patchTargetInspectToolDefaultsToBytecodeAndCanOmitIt() {
+        val root = createTempDirectory("agent-target-inspect").toFile()
+        val context = testContext(root)
+        val stsRoot = File(root, "external/sts").apply { mkdirs() }
+        val gameJar = File(stsRoot, "desktop-1.0.jar")
+        ZipOutputStream(gameJar.outputStream()).use { zip ->
+            zip.putNextEntry(ZipEntry("com/example/VanillaThing.class"))
+            zip.write(simpleClassBytes("com/example/VanillaThing"))
+            zip.closeEntry()
+        }
+        val parentJar = File(root, "parent.jar")
+        val tool = AgentPatchTargetInspectTool(context, parentJar)
+
+        val withBytecode = Json.parseToJsonElement(
+            tool.execute("""{"target_class":"com.example.VanillaThing","member":"run"}"""),
+        ).jsonObject
+        val defaultOverload = withBytecode["overloads"]!!.jsonArray.single().jsonObject
+        val bytecode = defaultOverload["bytecode"]!!.jsonPrimitive.content
+        assertTrue("bytecode listing should name run, was: $bytecode", bytecode.contains("run()V"))
+        assertEquals(true, defaultOverload["has_code"]?.jsonPrimitive?.content?.toBoolean())
+
+        val withoutBytecode = Json.parseToJsonElement(
+            tool.execute(
+                """{"target_class":"com.example.VanillaThing","member":"run","include_bytecode":false}""",
+            ),
+        ).jsonObject
+        val omittedOverload = withoutBytecode["overloads"]!!.jsonArray.single().jsonObject
+        assertTrue("bytecode must be omitted", "bytecode" !in omittedOverload)
+
+        val selected = Json.parseToJsonElement(
+            tool.execute(
+                """{"target_class":"com.example.VanillaThing","member":"run","overload_index":"0"}""",
+            ),
+        ).jsonObject
+        assertEquals(1, selected["overloads"]!!.jsonArray.size)
+        val outOfRange = Json.parseToJsonElement(
+            tool.execute(
+                """{"target_class":"com.example.VanillaThing","member":"run","overload_index":"9"}""",
+            ),
+        ).jsonObject
+        assertEquals("overload_index_out_of_range", outOfRange["error"]?.jsonPrimitive?.content)
+    }
+
+    @Test
+    fun apiClassDecompileToolReadsClassFromGameJar() {
+        val root = createTempDirectory("agent-api-decompile").toFile()
+        val context = testContext(root)
+        val stsRoot = File(root, "external/sts").apply { mkdirs() }
+        val gameJar = File(stsRoot, "desktop-1.0.jar")
+        ZipOutputStream(gameJar.outputStream()).use { zip ->
+            zip.putNextEntry(ZipEntry("com/example/VanillaThing.class"))
+            zip.write(simpleClassBytes("com/example/VanillaThing"))
+            zip.closeEntry()
+        }
+
+        val tool = AgentApiClassDecompileTool(context, File(root, "parent.jar"))
+        val result = Json.parseToJsonElement(
+            tool.execute("""{"class_name":"com.example.VanillaThing"}"""),
+        ).jsonObject
+
+        assertEquals("decompiled", result["status"]?.jsonPrimitive?.content)
+        assertEquals("desktop-1.0.jar", result["origin"]?.jsonPrimitive?.content)
+        assertEquals(false, result["truncated"]?.jsonPrimitive?.content?.toBoolean())
+        assertTrue(result["source"]!!.jsonPrimitive.content.contains("class VanillaThing"))
+
+        val missing = Json.parseToJsonElement(
+            tool.execute("""{"class_name":"com.example.Missing"}"""),
+        ).jsonObject
+        assertEquals("class_not_found", missing["error"]?.jsonPrimitive?.content)
+    }
+
+    private fun simpleClassBytes(binaryName: String): ByteArray {
+        val writer = ClassWriter(0)
+        writer.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC, binaryName.replace('.', '/'), null, "java/lang/Object", null)
+        val constructor = writer.visitMethod(Opcodes.ACC_PUBLIC, "<init>", "()V", null, null)
+        constructor.visitCode()
+        constructor.visitVarInsn(Opcodes.ALOAD, 0)
+        constructor.visitMethodInsn(Opcodes.INVOKESPECIAL, "java/lang/Object", "<init>", "()V", false)
+        constructor.visitInsn(Opcodes.RETURN)
+        constructor.visitMaxs(1, 1)
+        constructor.visitEnd()
+        val run = writer.visitMethod(Opcodes.ACC_PUBLIC, "run", "()V", null, null)
+        run.visitCode()
+        run.visitVarInsn(Opcodes.ALOAD, 0)
+        run.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/Object", "toString", "()Ljava/lang/String;", false)
+        run.visitInsn(Opcodes.POP)
+        run.visitInsn(Opcodes.RETURN)
+        run.visitMaxs(1, 1)
+        run.visitEnd()
+        writer.visitEnd()
+        return writer.toByteArray()
+    }
+
     private fun testContext(root: File): android.content.Context {
         val filesDir = File(root, "files").apply { mkdirs() }
+        val cacheDir = File(root, "cache").apply { mkdirs() }
         val externalFilesDir = File(root, "external").apply { mkdirs() }
         return object : android.content.ContextWrapper(android.app.Application()) {
             override fun getFilesDir(): File = filesDir
+            override fun getCacheDir(): File = cacheDir
             override fun getExternalFilesDir(type: String?): File = externalFilesDir
         }
     }
@@ -746,6 +905,46 @@ class PolicyGatedAgentGatewayTest {
                       "arguments": "{\"path\":\"note.txt\"}"
                     }
                   }]
+                },
+                "finish_reason": "tool_calls"
+              }],
+              "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}
+            }
+            """.trimIndent(),
+        )
+        .build()
+
+    private fun twoToolCallResponse(): MockResponse = MockResponse.Builder()
+        .code(200)
+        .body(
+            """
+            {
+              "id": "chatcmpl-test",
+              "object": "chat.completion",
+              "created": 0,
+              "model": "test-model",
+              "choices": [{
+                "index": 0,
+                "message": {
+                  "role": "assistant",
+                  "tool_calls": [
+                    {
+                      "id": "call-note-1",
+                      "type": "function",
+                      "function": {
+                        "name": "read_workspace_file",
+                        "arguments": "{\"path\":\"note.txt\"}"
+                      }
+                    },
+                    {
+                      "id": "call-note-2",
+                      "type": "function",
+                      "function": {
+                        "name": "read_workspace_file",
+                        "arguments": "{\"path\":\"note.txt\"}"
+                      }
+                    }
+                  ]
                 },
                 "finish_reason": "tool_calls"
               }],

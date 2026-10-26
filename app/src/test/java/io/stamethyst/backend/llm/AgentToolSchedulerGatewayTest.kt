@@ -79,7 +79,19 @@ class AgentToolSchedulerGatewayTest {
             val results = messages.filter { it["role"]!!.jsonPrimitive.content == "tool" }
             assertEquals(listOf("call-0", "call-1"), results.map { it["tool_call_id"]!!.jsonPrimitive.content })
             assertEquals(listOf("result0", "result1"), results.map { it["content"]!!.jsonPrimitive.content })
-            assertTrue(messages.any { it["tool_calls"]?.jsonArray?.size == 2 })
+            // Multi-call turns are split into one assistant/tool pair per call on the wire so
+            // OpenAI-to-Anthropic bridges cannot see a second tool_result after a user message.
+            val toolCallMessages = messages.filter { it["tool_calls"] != null }
+            assertEquals(2, toolCallMessages.size)
+            assertTrue(toolCallMessages.all { it["tool_calls"]!!.jsonArray.size == 1 })
+            assertEquals(
+                listOf("call-0", "call-1"),
+                toolCallMessages.flatMap { message ->
+                    message["tool_calls"]!!.jsonArray.map {
+                        it.jsonObject["id"]!!.jsonPrimitive.content
+                    }
+                },
+            )
             val saved = manager.state.messages
             assertEquals(listOf("call-0", "call-1"), saved.filter { it.role == "tool" }.map { it.callId })
             assertTrue("assistant calls must be persisted before tools run", checkpoints.any {

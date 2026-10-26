@@ -376,6 +376,11 @@ The AI editor compiles patch source on the device; no host toolchain is involved
 - `generate_agent_patch_skeleton` consumes that inspection result and writes a Java 8 patch skeleton
   with the selected `paramtypez` and a safe `Object[] __args` hook shape. The agent edits the body
   instead of hand-writing the patch annotation and overload signature.
+- At the request boundary, an assistant turn with several tool calls is split into one
+  assistant/tool-result pair per call. OpenAI accepts this shape, and it avoids an
+  OpenAI-to-Anthropic bridge rejecting the second `tool_result` when it maps each OpenAI `tool`
+  message to a separate Anthropic user message. The UI and durable context still keep the original
+  multi-call turn, and tools can still execute in parallel.
 - `validate_agent_patch_mod` runs after compilation and before packaging. It reads the compiled patch
   annotations and compares every target class, method, constructor, and explicit parameter signature
   against the same runtime classpath. It also checks static hook methods, Prefix/Postfix return types,

@@ -343,6 +343,7 @@ class AgentToolSchedulerTest {
             AgentPatchWorkspaceCreateTool(context, "parent", root),
             AgentModSourceDecompileTool(context, "parent", root),
             AgentModClassDecompileTool(context, "parent", root),
+            AgentApiClassDecompileTool(context, root),
             AgentPatchSkeletonTool(context, root, { null }),
             AgentPatchModCompileTool(context, root, { null }),
             AgentPatchPreflightTool(context, root, { null }),
