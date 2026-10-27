@@ -98,6 +98,11 @@ import io.stamethyst.backend.render.MobileGluesNoErrorPolicy
 import io.stamethyst.backend.render.MobileGluesPreset
 import io.stamethyst.backend.render.MobileGluesSettings
 import io.stamethyst.backend.render.RendererAvailability
+import io.stamethyst.backend.plugin.RendererPlugin
+import io.stamethyst.backend.plugin.RendererPluginEnvSpec
+import io.stamethyst.backend.plugin.RendererPluginEnvType
+import io.stamethyst.backend.plugin.RendererPluginRegistry
+import io.stamethyst.backend.plugin.RendererPluginStore
 import io.stamethyst.backend.render.RendererBackend
 import io.stamethyst.backend.render.RendererDecision
 import io.stamethyst.backend.render.RendererSelectionMode
@@ -324,8 +329,17 @@ class SettingsScreenViewModel : ViewModel() {
     data class RendererBackendOptionState(
         val backend: RendererBackend,
         val available: Boolean,
-        val reasonText: String? = null
-    )
+        val reasonText: String? = null,
+        /** 非空表示这是外部渲染器插件提供的条目 */
+        val plugin: RendererPlugin? = null
+    ) {
+        /** 下拉框显示名：插件条目用 `插件名 · 渲染器名` */
+        val title: String
+            get() = plugin?.let { plugin ->
+                if (plugin.pluginLabel.isBlank()) plugin.displayName
+                else "${plugin.pluginLabel} · ${plugin.displayName}"
+            } ?: backend.displayName
+    }
 
     data class UiState(
         val saveSlotDialogState: SaveSlotDialogState? = null,
@@ -353,6 +367,8 @@ class SettingsScreenViewModel : ViewModel() {
         val renderSurfaceBackend: RenderSurfaceBackend = LauncherPreferences.DEFAULT_RENDER_SURFACE_BACKEND,
         val rendererSelectionMode: RendererSelectionMode =
             LauncherPreferences.DEFAULT_RENDERER_SELECTION_MODE,
+        val manualRendererPluginId: String? = null,
+        val manualRendererTitle: String? = null,
         val manualRendererBackend: RendererBackend =
             LauncherPreferences.DEFAULT_MANUAL_RENDERER_BACKEND,
         val mobileGluesAnglePolicy: MobileGluesAnglePolicy =
@@ -381,9 +397,9 @@ class SettingsScreenViewModel : ViewModel() {
             LauncherPreferences.DEFAULT_MANUAL_RENDERER_BACKEND,
         val effectiveRenderSurfaceBackend: RenderSurfaceBackend =
             LauncherPreferences.DEFAULT_RENDER_SURFACE_BACKEND,
-        val rendererBackendOptions: List<RendererBackendOptionState> = RendererBackend.entries.map {
-            RendererBackendOptionState(backend = it, available = true)
-        },
+        val rendererBackendOptions: List<RendererBackendOptionState> = RendererBackend.entries
+            .filter { it != RendererBackend.PLUGIN_EXTERNAL }
+            .map { RendererBackendOptionState(backend = it, available = true) },
         val rendererFallbackText: String? = null,
         val surfaceBackendForcedByRenderer: Boolean = false,
         val gpuResourceGuardianMode: GpuResourceGuardianMode =
@@ -1394,6 +1410,9 @@ class SettingsScreenViewModel : ViewModel() {
         statusRefreshTask?.cancel(true)
         statusRefreshTask = statusRefreshExecutor.submit {
             try {
+                // 插件可能刚被安装/卸载：每次刷新设置页状态前失效扫描缓存，
+                // 保证渲染器列表与 launch 时的解析结果都是最新的。
+                RendererPluginRegistry.invalidate()
                 throwIfStatusRefreshStale(refreshGeneration)
                 val hasJar = hasValidImportedStsJar(host)
                 val loadedSnapshot = SettingsRepository.loadSettingsSnapshot(host)
@@ -3377,9 +3396,75 @@ class SettingsScreenViewModel : ViewModel() {
         if (uiState.busy || uiState.manualRendererBackend == backend) {
             return
         }
-        uiState = uiState.copy(manualRendererBackend = backend)
+        uiState = uiState.copy(
+            manualRendererBackend = backend,
+            manualRendererTitle = backend.displayName
+        )
         saveManualRendererBackendSelection(host, backend)
         refreshStatus(host)
+    }
+
+    /** 选择外部渲染器插件：持久化插件 id，并把后端切换为 PLUGIN_EXTERNAL。 */
+    fun onManualRendererPluginSelected(host: Activity, pluginId: String) {
+        if (uiState.busy) {
+            return
+        }
+        val plugin = RendererPluginRegistry.find(host, pluginId) ?: return
+        if (
+            uiState.manualRendererBackend == RendererBackend.PLUGIN_EXTERNAL &&
+            uiState.manualRendererPluginId == plugin.id
+        ) {
+            return
+        }
+        RendererPluginRegistry.select(host, plugin.id)
+        val title = if (plugin.pluginLabel.isBlank()) {
+            plugin.displayName
+        } else {
+            "${plugin.pluginLabel} · ${plugin.displayName}"
+        }
+        uiState = uiState.copy(
+            manualRendererBackend = RendererBackend.PLUGIN_EXTERNAL,
+            manualRendererPluginId = plugin.id,
+            manualRendererTitle = title
+        )
+        saveManualRendererBackendSelection(host, RendererBackend.PLUGIN_EXTERNAL)
+        refreshStatus(host)
+    }
+
+    /** 插件环境变量声明（已叠加用户配置），供配置对话框渲染 */
+    fun readPluginEnvSpecs(host: Activity, pluginId: String): List<RendererPluginEnvSpec> {
+        val plugin = RendererPluginRegistry.find(host, pluginId) ?: return emptyList()
+        return plugin.env.map { spec ->
+            when (spec.type) {
+                RendererPluginEnvType.NORMAL -> spec
+
+                RendererPluginEnvType.SELECTABLE -> spec.copy(
+                    value = RendererPluginStore.envValue(host, plugin.id, spec.key) ?: spec.value,
+                    enabledByDefault = RendererPluginStore.envEnabled(host, plugin.id, spec.key)
+                        ?: spec.enabledByDefault
+                )
+
+                RendererPluginEnvType.CUSTOMIZABLE -> spec.copy(
+                    value = RendererPluginStore.envValue(host, plugin.id, spec.key) ?: spec.value
+                )
+
+                RendererPluginEnvType.TOGGLEABLE -> spec.copy(
+                    enabledByDefault = RendererPluginStore.envEnabled(host, plugin.id, spec.key)
+                        ?: spec.enabledByDefault
+                )
+            }
+        }
+    }
+
+    /** 保存插件环境变量配置；下次启动或下次进入游戏时生效 */
+    fun savePluginEnvConfig(
+        host: Activity,
+        pluginId: String,
+        values: Map<String, String?>,
+        enabledValues: Map<String, Boolean>
+    ) {
+        val plugin = RendererPluginRegistry.find(host, pluginId) ?: return
+        RendererPluginStore.saveEnvConfig(host, plugin.id, values, enabledValues)
     }
 
     fun onGpuResourceGuardianModeChanged(host: Activity, mode: GpuResourceGuardianMode) {
@@ -4675,12 +4760,35 @@ class SettingsScreenViewModel : ViewModel() {
         val compatibility = snapshot.compatibility
         val rendererDecision = rendering.rendererDecision
         val mobileGluesSettings = rendering.mobileGluesSettings
-        val rendererBackendOptions = rendererDecision.availableBackends.map { availability ->
-            RendererBackendOptionState(
-                backend = availability.backend,
-                available = availability.available,
-                reasonText = availability.describeUnavailable(host)
-            )
+        val rendererBackendOptions = buildList {
+            rendererDecision.availableBackends.forEach { availability ->
+                add(
+                    RendererBackendOptionState(
+                        backend = availability.backend,
+                        available = availability.available,
+                        reasonText = availability.describeUnavailable(host)
+                    )
+                )
+            }
+            // 外部渲染器插件与内置渲染器放在同一个下拉框里，靠 plugin 字段区分。
+            RendererPluginRegistry.enabledPlugins(host).forEach { plugin ->
+                val available = RendererPluginRegistry.isAvailable(plugin)
+                add(
+                    RendererBackendOptionState(
+                        backend = RendererBackend.PLUGIN_EXTERNAL,
+                        available = available,
+                        reasonText = if (available) {
+                            null
+                        } else {
+                            host.getString(
+                                R.string.settings_renderer_plugin_missing_library,
+                                plugin.glLibraryName
+                            )
+                        },
+                        plugin = plugin
+                    )
+                )
+            }
         }
         uiState = uiState.copy(
             themeMode = snapshot.themeMode,
@@ -4700,6 +4808,8 @@ class SettingsScreenViewModel : ViewModel() {
             renderSurfaceBackend = rendering.renderSurfaceBackend,
             rendererSelectionMode = rendering.rendererSelectionMode,
             manualRendererBackend = rendering.manualRendererBackend,
+            manualRendererPluginId = rendererDecision.effectivePlugin?.plugin?.id,
+            manualRendererTitle = rendererDecision.effectiveDisplayName,
             mobileGluesAnglePolicy = mobileGluesSettings.anglePolicy,
             mobileGluesNoErrorPolicy = mobileGluesSettings.noErrorPolicy,
             mobileGluesMultidrawMode = mobileGluesSettings.multidrawMode,
@@ -5961,7 +6071,12 @@ class SettingsScreenViewModel : ViewModel() {
         if (reasons.contains(io.stamethyst.backend.render.RendererAvailabilityReason.VULKAN_UNSUPPORTED)) {
             parts += host.getString(R.string.settings_renderer_requires_vulkan_support)
         }
-        if (missingLibraries.isNotEmpty()) {
+        if (reasons.contains(io.stamethyst.backend.render.RendererAvailabilityReason.PLUGIN_UNAVAILABLE)) {
+            parts += host.getString(R.string.settings_renderer_plugin_unavailable)
+        }
+        if (missingLibraries.isNotEmpty() &&
+            !reasons.contains(io.stamethyst.backend.render.RendererAvailabilityReason.PLUGIN_UNAVAILABLE)
+        ) {
             parts += host.getString(
                 R.string.settings_renderer_missing_libraries,
                 missingLibraries.joinToString(", ")
@@ -5977,7 +6092,7 @@ class SettingsScreenViewModel : ViewModel() {
 
     private fun RendererDecision.effectiveRendererSummary(host: Activity): String {
         return buildString {
-            append(effectiveBackend.displayName)
+            append(effectiveDisplayName)
             if (selectionMode == RendererSelectionMode.AUTO) {
                 append(host.getString(R.string.settings_renderer_effective_auto_suffix))
             } else if (usedAutomaticFallback) {

@@ -428,7 +428,13 @@ object StsLaunchSpec {
         args.add("-Dos.name=Linux")
         args.add("-Dos.version=Android-${Build.VERSION.RELEASE}")
         args.add("-Djdk.lang.Process.launchMechanism=FORK")
-        args.add("-Dorg.lwjgl.opengl.libname=${rendererDecision.effectiveBackend.lwjglOpenGlLibName()}")
+        // 外部渲染器插件的库位于插件 APK 的 nativeLibraryDir，不在本进程的
+        // System.loadLibrary 搜索路径里，必须传绝对路径让 LWJGL 直接 dlopen。
+        val glLibraryName = rendererDecision.effectivePlugin
+            ?.glLibraryPath
+            ?.takeIf { it.isNotBlank() }
+            ?: rendererDecision.effectiveBackend.lwjglOpenGlLibName()
+        args.add("-Dorg.lwjgl.opengl.libname=$glLibraryName")
         // Clamp reported GL capability to a conservative baseline on GLES bridges.
         // This avoids exposing desktop GL3.3 paths with missing entry points.
         args.add("-Dorg.lwjgl.opengl.maxVersion=3.0")

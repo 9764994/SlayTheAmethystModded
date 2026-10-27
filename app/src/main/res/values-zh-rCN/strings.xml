@@ -3370,4 +3370,12 @@
     <string name="settings_mts_cache_card_library_desc">优点：更快进入主菜单。缺点：首次打开图鉴更慢。</string>
     <string name="settings_mts_cache_splash_title">缩短启动标志动画</string>
     <string name="settings_mts_cache_splash_desc">优点：缩短启动动画等待。缺点：标志展示时间更短。</string>
+    <string name="settings_renderer_pros_cons_plugin">优点：无需重新打包即可使用第三方渲染器（MobileGlues、Mesa、VirGL 等）；缺点：依赖插件 APK 保持安装且版本兼容</string>
+    <string name="settings_renderer_plugin_missing_library">插件缺少 %1$s</string>
+    <string name="settings_renderer_plugin_unavailable">渲染器插件不可用</string>
+    <string name="settings_renderer_plugin_env_title">插件环境变量</string>
+    <string name="settings_renderer_plugin_env_summary">%1$d 项可配置</string>
+    <string name="settings_renderer_plugin_env_none">该插件没有可配置的环境变量</string>
+    <string name="settings_renderer_plugin_env_save">保存</string>
+    <string name="settings_renderer_plugin_env_cancel">取消</string>
 </resources>

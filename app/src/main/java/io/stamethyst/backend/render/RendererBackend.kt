@@ -51,6 +51,20 @@ enum class RendererBackend(
             "libOSMesa.so"
         ),
         requiresVulkan = true
+    ),
+
+    /**
+     * 外部渲染器插件（兼容 FCL / ZalithLauncher 的 RendererPlugin 协议）。
+     *
+     * 该条目本身不携带库名：真正的 GL/EGL 绝对路径与环境变量在启动时由
+     * [io.stamethyst.backend.plugin.RendererPluginRegistry] 按用户选中的插件解析，
+     * 并挂在 [RendererDecision.effectivePlugin] 上。
+     */
+    PLUGIN_EXTERNAL(
+        rendererIdValue = "plugin_external",
+        displayName = "Renderer plugin",
+        lwjglOpenGlLibNameValue = "",
+        requiredNativeLibraries = emptySet()
     );
 
     fun rendererId(): String = rendererIdValue

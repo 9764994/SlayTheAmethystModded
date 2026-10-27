@@ -1,6 +1,7 @@
 package io.stamethyst.backend.launch
 
 import android.content.Context
+import io.stamethyst.backend.plugin.RendererPluginRegistry
 import io.stamethyst.config.RuntimePaths
 import java.io.File
 import java.util.ArrayDeque
@@ -117,10 +118,17 @@ internal object NativeLibraryPathResolver {
     }
 
     private fun collectNativeSearchRoots(context: Context): List<File> {
-        return listOf(
-            RuntimePaths.gdxPatchNativesDir(context),
-            RuntimePaths.nativeMarketActiveDir(context)
-        )
+        val roots = ArrayList<File>(3)
+        roots.add(RuntimePaths.gdxPatchNativesDir(context))
+        roots.add(RuntimePaths.nativeMarketActiveDir(context))
+        // 外部渲染器插件的库放在插件 APK 的 nativeLibraryDir，加入搜索路径后
+        // dlopen("libxxx.so") 与插件库的依赖（libc++_shared.so 等）才能被解析。
+        RendererPluginRegistry.selectedRuntime(context)
+            ?.plugin
+            ?.nativeLibraryDir
+            ?.takeIf { it.isNotBlank() }
+            ?.let { roots.add(File(it)) }
+        return roots
     }
 
     private fun addDirectoryAndLibraryChildren(

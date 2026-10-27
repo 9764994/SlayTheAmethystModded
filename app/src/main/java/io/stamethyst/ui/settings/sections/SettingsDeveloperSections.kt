@@ -15,7 +15,11 @@ import android.view.HapticFeedbackConstants
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Switch
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -33,10 +37,12 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
@@ -46,6 +52,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.stamethyst.R
 import io.stamethyst.backend.network.AccelerationStrategy
+import io.stamethyst.backend.plugin.RendererPluginEnvSpec
+import io.stamethyst.backend.plugin.RendererPluginEnvType
 import io.stamethyst.backend.render.RendererBackend
 import io.stamethyst.backend.render.RendererSelectionMode
 import io.stamethyst.config.GpuResourceGuardianMode
@@ -81,6 +89,9 @@ internal data class AccelerationSettingsActions(
 internal data class AdvancedRenderSettingsActions(
     val onRendererSelectionModeChanged: (RendererSelectionMode) -> Unit,
     val onManualRendererBackendChanged: (RendererBackend) -> Unit,
+    val onManualRendererPluginSelected: (String) -> Unit,
+    val readRendererPluginEnvSpecs: (String) -> List<RendererPluginEnvSpec>,
+    val onRendererPluginEnvConfigChanged: (String, Map<String, String?>, Map<String, Boolean>) -> Unit,
     val onOpenMobileGluesSettings: () -> Unit,
     val onRenderSurfaceBackendChanged: (RenderSurfaceBackend) -> Unit,
     val onGpuResourceGuardianModeChanged: (GpuResourceGuardianMode) -> Unit,
@@ -123,6 +134,10 @@ internal fun LauncherDeveloperSettingsScreenContent(
     onLocalTestEndpointsChanged: (String, String, String) -> Boolean = { _, _, _ -> false },
     onRendererSelectionModeChanged: (RendererSelectionMode) -> Unit = {},
     onManualRendererBackendChanged: (RendererBackend) -> Unit = {},
+    onManualRendererPluginSelected: (String) -> Unit = {},
+    readRendererPluginEnvSpecs: (String) -> List<RendererPluginEnvSpec> = { emptyList() },
+    onRendererPluginEnvConfigChanged: (String, Map<String, String?>, Map<String, Boolean>) -> Unit =
+        { _, _, _ -> },
     onOpenMobileGluesSettings: () -> Unit = {},
     onRenderSurfaceBackendChanged: (RenderSurfaceBackend) -> Unit = {},
     onGpuResourceGuardianModeChanged: (GpuResourceGuardianMode) -> Unit = {},
@@ -331,6 +346,9 @@ internal fun LauncherDeveloperSettingsScreenContent(
                     actions = AdvancedRenderSettingsActions(
                         onRendererSelectionModeChanged = onRendererSelectionModeChanged,
                         onManualRendererBackendChanged = onManualRendererBackendChanged,
+                        onManualRendererPluginSelected = onManualRendererPluginSelected,
+                        readRendererPluginEnvSpecs = readRendererPluginEnvSpecs,
+                        onRendererPluginEnvConfigChanged = onRendererPluginEnvConfigChanged,
                         onOpenMobileGluesSettings = onOpenMobileGluesSettings,
                         onRenderSurfaceBackendChanged = onRenderSurfaceBackendChanged,
                         onGpuResourceGuardianModeChanged = onGpuResourceGuardianModeChanged,
@@ -867,26 +885,72 @@ internal fun SettingsAdvancedRenderSection(
         )
     }
     if (uiState.rendererSelectionMode == RendererSelectionMode.MANUAL) {
+        val selectedTitle = uiState.manualRendererTitle ?: uiState.manualRendererBackend.displayName
+        // 选中的条目如果是外部插件，额外提供环境变量配置入口。
+        val selectedPlugin = uiState.rendererBackendOptions
+            .firstOrNull { option -> option.plugin?.id == uiState.manualRendererPluginId }
+            ?.plugin
+        var showPluginEnvDialog by rememberSaveable(selectedPlugin?.id) { mutableStateOf(false) }
+
         SettingsDropdownField(
             label = stringResource(R.string.settings_renderer_manual_label),
-            valueText = uiState.manualRendererBackend.displayName,
+            valueText = selectedTitle,
             enabled = !uiState.busy,
             supportingText = stringResource(
                 R.string.settings_renderer_manual_supporting,
-                uiState.manualRendererBackend.displayName,
+                selectedTitle,
                 uiState.manualRendererBackend.briefProsCons(context)
             ),
             options = uiState.rendererBackendOptions,
             optionEnabled = { option -> option.available },
-            optionLabel = { option -> option.backend.displayName },
+            optionLabel = { option -> option.title },
             optionDescription = { option ->
                 buildList {
-                    add(option.backend.briefProsCons(context))
+                    val plugin = option.plugin
+                    add(plugin?.description?.takeIf { it.isNotBlank() }
+                        ?: option.backend.briefProsCons(context))
                     option.reasonText?.let(::add)
                 }.joinToString("  ")
             },
-            onOptionSelected = { option -> actions.onManualRendererBackendChanged(option.backend) }
+            onOptionSelected = { option ->
+                val plugin = option.plugin
+                if (plugin != null) {
+                    actions.onManualRendererPluginSelected(plugin.id)
+                } else {
+                    actions.onManualRendererBackendChanged(option.backend)
+                }
+            }
         )
+
+        if (selectedPlugin != null) {
+            val envSpecs = actions.readRendererPluginEnvSpecs(selectedPlugin.id)
+            val configurableCount = envSpecs.count { it.configurable }
+            SettingsActionListItem(
+                title = stringResource(R.string.settings_renderer_plugin_env_title),
+                supportingText = if (configurableCount == 0) {
+                    stringResource(R.string.settings_renderer_plugin_env_none)
+                } else {
+                    stringResource(R.string.settings_renderer_plugin_env_summary, configurableCount)
+                },
+                enabled = !uiState.busy && configurableCount > 0,
+                onClick = { showPluginEnvDialog = true }
+            )
+            if (showPluginEnvDialog) {
+                RendererPluginEnvDialog(
+                    title = selectedPlugin.displayName,
+                    specs = envSpecs,
+                    onDismiss = { showPluginEnvDialog = false },
+                    onSave = { values, enabledValues ->
+                        actions.onRendererPluginEnvConfigChanged(
+                            selectedPlugin.id,
+                            values,
+                            enabledValues
+                        )
+                        showPluginEnvDialog = false
+                    }
+                )
+            }
+        }
     }
 
     if (uiState.effectiveRendererBackend == RendererBackend.OPENGL_ES_MOBILEGLUES) {
@@ -1283,8 +1347,127 @@ internal fun RenderSurfaceBackend.displayName(context: Context): String {
 }
 
 
+/**
+ * 外部渲染器插件的环境变量配置对话框。
+ *
+ * 三类可配置项对应 v2 协议：SELECTABLE（预设值 + 可选启用开关）、CUSTOMIZABLE（自由输入）、
+ * TOGGLEABLE（开关）。NORMAL 项只读展示，让用户能看到插件固化的变量。
+ */
+@Composable
+private fun RendererPluginEnvDialog(
+    title: String,
+    specs: List<RendererPluginEnvSpec>,
+    onDismiss: () -> Unit,
+    onSave: (Map<String, String?>, Map<String, Boolean>) -> Unit
+) {
+    val values = remember(specs) {
+        mutableStateMapOf<String, String>().apply {
+            specs.forEach { spec ->
+                if (spec.type != RendererPluginEnvType.NORMAL) {
+                    put(spec.key, spec.value)
+                }
+            }
+        }
+    }
+    val enabledStates = remember(specs) {
+        mutableStateMapOf<String, Boolean>().apply {
+            specs.forEach { spec ->
+                if (spec.configurable) {
+                    put(spec.key, spec.enabledByDefault)
+                }
+            }
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(text = title) },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                specs.forEach { spec ->
+                    when (spec.type) {
+                        RendererPluginEnvType.NORMAL -> Text(
+                            text = "${spec.key} = ${spec.value}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+
+                        RendererPluginEnvType.TOGGLEABLE -> Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(text = spec.displayTitle, modifier = Modifier.weight(1f))
+                            Switch(
+                                checked = enabledStates[spec.key] ?: spec.enabledByDefault,
+                                onCheckedChange = { enabledStates[spec.key] = it }
+                            )
+                        }
+
+                        RendererPluginEnvType.SELECTABLE -> {
+                            if (spec.checkable) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(text = spec.displayTitle, modifier = Modifier.weight(1f))
+                                    Switch(
+                                        checked = enabledStates[spec.key] ?: spec.enabledByDefault,
+                                        onCheckedChange = { enabledStates[spec.key] = it }
+                                    )
+                                }
+                            }
+                            SettingsDropdownField(
+                                label = if (spec.checkable) spec.key else spec.displayTitle,
+                                valueText = values[spec.key] ?: spec.value,
+                                enabled = enabledStates[spec.key] ?: spec.enabledByDefault,
+                                options = spec.options,
+                                optionLabel = { it },
+                                onOptionSelected = { values[spec.key] = it }
+                            )
+                        }
+
+                        RendererPluginEnvType.CUSTOMIZABLE -> OutlinedTextField(
+                            value = values[spec.key].orEmpty(),
+                            onValueChange = { values[spec.key] = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text(text = spec.displayTitle) },
+                            singleLine = true
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    val valueMap = HashMap<String, String?>()
+                    val enabledMap = HashMap<String, Boolean>()
+                    specs.forEach { spec ->
+                        if (spec.type == RendererPluginEnvType.NORMAL) return@forEach
+                        valueMap[spec.key] = values[spec.key]
+                        enabledMap[spec.key] = enabledStates[spec.key] ?: spec.enabledByDefault
+                    }
+                    onSave(valueMap, enabledMap)
+                }
+            ) {
+                Text(text = stringResource(R.string.settings_renderer_plugin_env_save))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(text = stringResource(R.string.settings_renderer_plugin_env_cancel))
+            }
+        }
+    )
+}
+
 internal fun RendererBackend.briefProsCons(context: Context): String {
     return when (this) {
+        RendererBackend.PLUGIN_EXTERNAL ->
+            context.getString(R.string.settings_renderer_pros_cons_plugin)
         RendererBackend.OPENGL_ES_MOBILEGLUES ->
             context.getString(R.string.settings_renderer_pros_cons_mobileglues)
         RendererBackend.OPENGL_ES2_NATIVE ->

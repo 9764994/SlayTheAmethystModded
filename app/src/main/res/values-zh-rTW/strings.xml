@@ -3370,4 +3370,12 @@
     <string name="main_mod_workshop_jar_selection_message">%1$s 包含多個 jar 檔案。請選擇要匯入的檔案。</string>
     <string name="main_mod_workshop_jar_selection_empty">請至少選擇一個 jar 檔案。</string>
     <string name="main_mod_workshop_jar_selection_confirm">匯入所選</string>
+    <string name="settings_renderer_pros_cons_plugin">優點：無需重新打包即可使用第三方渲染器（MobileGlues、Mesa、VirGL 等）；缺點：依賴外掛 APK 保持安裝且版本相容</string>
+    <string name="settings_renderer_plugin_missing_library">外掛缺少 %1$s</string>
+    <string name="settings_renderer_plugin_unavailable">渲染器外掛不可用</string>
+    <string name="settings_renderer_plugin_env_title">外掛環境變數</string>
+    <string name="settings_renderer_plugin_env_summary">%1$d 項可設定</string>
+    <string name="settings_renderer_plugin_env_none">此外掛沒有可設定的環境變數</string>
+    <string name="settings_renderer_plugin_env_save">儲存</string>
+    <string name="settings_renderer_plugin_env_cancel">取消</string>
 </resources>

@@ -443,6 +443,15 @@ fun LauncherDeveloperSettingsScreen(
         onManualRendererBackendChanged = { backend ->
             viewModel.onManualRendererBackendChanged(activity, backend)
         },
+        onManualRendererPluginSelected = { pluginId ->
+            viewModel.onManualRendererPluginSelected(activity, pluginId)
+        },
+        readRendererPluginEnvSpecs = { pluginId ->
+            viewModel.readPluginEnvSpecs(activity, pluginId)
+        },
+        onRendererPluginEnvConfigChanged = { pluginId, values, enabledValues ->
+            viewModel.savePluginEnvConfig(activity, pluginId, values, enabledValues)
+        },
         onOpenMobileGluesSettings = { navigator.push(Route.MobileGluesSettings) },
         onRenderSurfaceBackendChanged = { backend ->
             viewModel.onRenderSurfaceBackendChanged(activity, backend)

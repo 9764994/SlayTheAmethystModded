@@ -1,5 +1,6 @@
 package io.stamethyst.backend.render
 
+import io.stamethyst.backend.plugin.RendererPluginRuntime
 import io.stamethyst.config.RenderSurfaceBackend
 
 data class RendererDecision(
@@ -12,7 +13,9 @@ data class RendererDecision(
     val availableBackends: List<RendererAvailability>,
     val manualFallbackAvailability: RendererAvailability? = null,
     val enableEmuiIteratorMitigation: Boolean = false,
-    val enableUbwcHint: Boolean = false
+    val enableUbwcHint: Boolean = false,
+    /** 选中外部渲染器插件时非空：提供 GL 绝对路径与插件声明的环境变量 */
+    val effectivePlugin: RendererPluginRuntime? = null
 ) {
     val surfaceBackendForced: Boolean
         get() = effectiveSurfaceBackend != requestedSurfaceBackend
@@ -20,9 +23,13 @@ data class RendererDecision(
     val usedAutomaticFallback: Boolean
         get() = manualFallbackAvailability != null
 
+    /** 展示名：插件渲染器用 `插件名 · 渲染器名`，内置渲染器用枚举名 */
+    val effectiveDisplayName: String
+        get() = effectivePlugin?.summary ?: effectiveBackend.displayName
+
     fun effectiveRendererSummary(): String {
         return buildString {
-            append(effectiveBackend.displayName)
+            append(effectiveDisplayName)
             if (selectionMode == RendererSelectionMode.AUTO) {
                 append(" (Auto)")
             } else if (usedAutomaticFallback) {
@@ -50,7 +57,7 @@ data class RendererDecision(
 
     fun overlaySummary(): String {
         return buildString {
-            append(effectiveBackend.displayName)
+            append(effectiveDisplayName)
             if (selectionMode == RendererSelectionMode.AUTO) {
                 append(" [Auto]")
             } else if (usedAutomaticFallback) {

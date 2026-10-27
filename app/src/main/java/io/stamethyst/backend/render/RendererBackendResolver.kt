@@ -3,6 +3,8 @@ package io.stamethyst.backend.render
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
+import io.stamethyst.backend.plugin.RendererPluginRegistry
+import io.stamethyst.backend.plugin.RendererPluginRuntime
 import io.stamethyst.config.RenderSurfaceBackend
 import io.stamethyst.config.RuntimePaths
 import java.io.File
@@ -34,11 +36,12 @@ object RendererBackendResolver {
         requestedSurfaceBackend: RenderSurfaceBackend,
         selectionMode: RendererSelectionMode,
         manualBackend: RendererBackend?,
-        runtimeInfo: RuntimeInfo
+        runtimeInfo: RuntimeInfo,
+        manualPlugin: RendererPluginRuntime? = null
     ): RendererDecision {
         val availabilityMap = LinkedHashMap<RendererBackend, RendererAvailability>(RendererBackend.entries.size)
         for (backend in RendererBackend.entries) {
-            availabilityMap[backend] = evaluateAvailability(backend, runtimeInfo)
+            availabilityMap[backend] = evaluateAvailability(backend, runtimeInfo, manualPlugin)
         }
 
         val automaticBackend = automaticOrder.firstOrNull { backend ->
@@ -66,7 +69,9 @@ object RendererBackendResolver {
             effectiveBackend = effectiveBackend,
             requestedSurfaceBackend = requestedSurfaceBackend,
             effectiveSurfaceBackend = effectiveSurfaceBackend,
-            availableBackends = RendererBackend.entries.mapNotNull { availabilityMap[it] },
+            availableBackends = RendererBackend.entries
+                .filter { it != RendererBackend.PLUGIN_EXTERNAL }
+                .mapNotNull { availabilityMap[it] },
             manualFallbackAvailability = if (
                 selectionMode == RendererSelectionMode.MANUAL &&
                 manualBackend != null &&
@@ -78,7 +83,8 @@ object RendererBackendResolver {
             },
             enableEmuiIteratorMitigation = isHuaweiOrHonor(runtimeInfo),
             enableUbwcHint = effectiveBackend == RendererBackend.OPENGL_ES3_DESKTOPGL_ZINK_KOPPER &&
-                shouldUseUbwcHint(runtimeInfo)
+                shouldUseUbwcHint(runtimeInfo),
+            effectivePlugin = if (effectiveBackend == RendererBackend.PLUGIN_EXTERNAL) manualPlugin else null
         )
     }
 
@@ -88,11 +94,19 @@ object RendererBackendResolver {
         selectionMode: RendererSelectionMode,
         manualBackend: RendererBackend?
     ): RendererDecision {
+        // 选中外部渲染器插件时，把持久化的插件 id 解析成运行时配置；插件被卸载后
+        // 这里返回 null，可用性判断会把它标记为不可用并回退到自动选择。
+        val manualPlugin = if (manualBackend == RendererBackend.PLUGIN_EXTERNAL) {
+            RendererPluginRegistry.selectedRuntime(context)
+        } else {
+            null
+        }
         return resolve(
             requestedSurfaceBackend = requestedSurfaceBackend,
             selectionMode = selectionMode,
             manualBackend = manualBackend,
-            runtimeInfo = collectRuntimeInfo(context)
+            runtimeInfo = collectRuntimeInfo(context),
+            manualPlugin = manualPlugin
         )
     }
 
@@ -127,8 +141,20 @@ object RendererBackendResolver {
 
     private fun evaluateAvailability(
         backend: RendererBackend,
-        runtimeInfo: RuntimeInfo
+        runtimeInfo: RuntimeInfo,
+        manualPlugin: RendererPluginRuntime? = null
     ): RendererAvailability {
+        // 插件渲染器的库来自插件 APK，不会出现在 packagedLibraryNames 里，
+        // 可用性完全取决于插件是否仍然安装且库文件存在。
+        if (backend == RendererBackend.PLUGIN_EXTERNAL) {
+            val available = manualPlugin != null
+            return RendererAvailability(
+                backend = backend,
+                available = available,
+                reasons = if (available) emptyList() else listOf(RendererAvailabilityReason.PLUGIN_UNAVAILABLE),
+                missingLibraries = if (available) emptyList() else listOf(manualPlugin?.plugin?.glLibraryName ?: "plugin")
+            )
+        }
         val reasons = ArrayList<RendererAvailabilityReason>(2)
         if (backend.requiresVulkan && !runtimeInfo.hasVulkanSupport) {
             reasons += RendererAvailabilityReason.VULKAN_UNSUPPORTED

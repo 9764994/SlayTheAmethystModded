@@ -2,7 +2,10 @@ package io.stamethyst.backend.render
 
 enum class RendererAvailabilityReason {
     VULKAN_UNSUPPORTED,
-    MISSING_NATIVE_LIBRARIES
+    MISSING_NATIVE_LIBRARIES,
+
+    /** 选中的外部渲染器插件已被卸载或缺少库文件 */
+    PLUGIN_UNAVAILABLE
 }
 
 data class RendererAvailability(
@@ -19,7 +22,12 @@ data class RendererAvailability(
         if (reasons.contains(RendererAvailabilityReason.VULKAN_UNSUPPORTED)) {
             parts += "requires Vulkan support"
         }
-        if (missingLibraries.isNotEmpty()) {
+        if (reasons.contains(RendererAvailabilityReason.PLUGIN_UNAVAILABLE)) {
+            parts += "renderer plugin unavailable"
+        }
+        if (missingLibraries.isNotEmpty() &&
+            !reasons.contains(RendererAvailabilityReason.PLUGIN_UNAVAILABLE)
+        ) {
             parts += "missing ${missingLibraries.joinToString(", ")}"
         }
         return parts.joinToString("; ").ifBlank { "unavailable" }

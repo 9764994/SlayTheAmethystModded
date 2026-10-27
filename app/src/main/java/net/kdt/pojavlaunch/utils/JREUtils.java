@@ -15,6 +15,7 @@ import android.system.ErrnoException;
 import android.system.Os;
 import android.util.Log;
 
+import io.stamethyst.backend.plugin.RendererPluginRuntime;
 import io.stamethyst.backend.render.RendererDecision;
 import io.stamethyst.config.LauncherConfig;
 import io.stamethyst.config.RuntimePaths;
@@ -211,6 +212,29 @@ public final class JREUtils {
                 env.put("MESA_GLSL_VERSION_OVERRIDE", "460");
                 env.put("LIBGL_ES", "3");
                 break;
+            case PLUGIN_EXTERNAL:
+                // 外部渲染器插件的库名与环境变量由插件自身声明，见下方统一注入。
+                break;
+        }
+
+        // 外部渲染器插件（FCL / ZalithLauncher RendererPlugin 协议）：
+        // 先按插件声明补齐 EGL 入口，再用插件自己的环境变量覆盖上面的内置默认值。
+        RendererPluginRuntime pluginRuntime = rendererDecision.getEffectivePlugin();
+        if (pluginRuntime != null) {
+            String pluginEglPath = pluginRuntime.getEglLibraryPath();
+            if (pluginEglPath != null && !pluginEglPath.isEmpty()) {
+                if (!env.containsKey("POJAVEXEC_EGL")) {
+                    env.put("POJAVEXEC_EGL", pluginEglPath);
+                }
+                if (!env.containsKey("LIBGL_EGL")) {
+                    env.put("LIBGL_EGL", pluginEglPath);
+                }
+            }
+            env.putAll(pluginRuntime.getEnvironment());
+            Log.i(
+                    TAG,
+                    "Renderer plugin env applied: " + pluginRuntime.getSummary()
+            );
         }
 
         for (Map.Entry<String, String> entry : env.entrySet()) {

@@ -3370,4 +3370,12 @@ Patch rule: keep Ori full-resolution glow/bloom rendering, but replace the blur 
     <string name="settings_mts_cache_card_library_desc">Pros: reach the main menu faster. Cons: the library opens more slowly the first time.</string>
     <string name="settings_mts_cache_splash_title">Shorten the startup logo animation</string>
     <string name="settings_mts_cache_splash_desc">Pros: shorter wait for the startup animation. Cons: the logo is shown for less time.</string>
+    <string name="settings_renderer_pros_cons_plugin">Pros: reuse third-party renderers (MobileGlues, Mesa, VirGL) without rebuilding the app; Cons: depends on the plugin APK staying installed and compatible</string>
+    <string name="settings_renderer_plugin_missing_library">Plugin is missing %1$s</string>
+    <string name="settings_renderer_plugin_unavailable">Renderer plugin unavailable</string>
+    <string name="settings_renderer_plugin_env_title">Plugin environment variables</string>
+    <string name="settings_renderer_plugin_env_summary">%1$d configurable</string>
+    <string name="settings_renderer_plugin_env_none">This plugin declares no configurable variables</string>
+    <string name="settings_renderer_plugin_env_save">Save</string>
+    <string name="settings_renderer_plugin_env_cancel">Cancel</string>
 </resources>
