@@ -147,6 +147,7 @@ internal class AiModAgentExecutor(
             contextManager = manager,
             checkCancelled = checkCancelled,
             onRetry = onRetry,
+            onNonStreamingText = onText,
             streamingTimeoutMillis = config.requestTimeoutSeconds.toLong()
                 .coerceIn(
                     io.stamethyst.backend.llm.MIN_LLM_REQUEST_TIMEOUT_SECONDS.toLong(),

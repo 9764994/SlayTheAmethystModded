@@ -2113,6 +2113,7 @@ class PolicyGatedAgentGateway(
     private val onRetry: (retryNumber: Int, delaySeconds: Long, error: Throwable) -> Unit = { _, _, _ -> },
     private val maxParallelTools: Int = 4,
     private val streamingTimeoutMillis: Long = DEFAULT_LLM_REQUEST_TIMEOUT_SECONDS * 1_000L,
+    private val onNonStreamingText: (String) -> Unit = {},
 ) {
     private val toolScheduler = AgentToolScheduler(toolRegistry, maxParallelTools, checkCancelled)
 
@@ -2144,6 +2145,7 @@ class PolicyGatedAgentGateway(
             messages += aiMessage
             contextManager?.append(aiMessage)
             val text = aiMessage.text().orEmpty()
+            if (text.isNotBlank()) onNonStreamingText(text)
             logAssistantRound(round, text, aiMessage, "non-streaming", completed)
             if (!aiMessage.hasToolExecutionRequests()) {
                 return AgentReply(text = text, toolRounds = round, contextTokens = completed.tokenUsage()?.totalTokenCount())
