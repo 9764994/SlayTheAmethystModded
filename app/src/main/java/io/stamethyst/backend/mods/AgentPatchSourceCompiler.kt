@@ -2,6 +2,7 @@ package io.stamethyst.backend.mods
 
 import android.content.Context
 import io.stamethyst.config.RuntimePaths
+import org.eclipse.jdt.core.compiler.CompilationProgress
 import org.eclipse.jdt.core.compiler.batch.BatchCompiler
 import java.io.File
 import java.io.PrintWriter
@@ -93,7 +94,7 @@ object AgentPatchSourceCompiler {
                     args,
                     PrintWriter(stdout),
                     PrintWriter(stderr),
-                    null,
+                    cancellationProgress(),
                 )
             }.getOrElse { error ->
                 return AgentPatchCompileResult(
@@ -102,22 +103,29 @@ object AgentPatchSourceCompiler {
                     diagnostics = "ECJ failed to run: ${error.message ?: error.javaClass.simpleName}",
                 )
             }
+            // ECJ stops at its own checkpoints; never treat a cancelled build as a real result.
+            checkCancelled()
 
             val stagedClasses = collectClassFiles(stagingDir)
             val installed = if (succeeded && stagedClasses.isNotEmpty()) {
-                runCatching { replaceCompiledClasses(workspace.patchRoot, stagingDir) }
-                    .getOrElse { error ->
-                        return AgentPatchCompileResult(
-                            success = false,
-                            compiledClassCount = 0,
-                            diagnostics = buildString {
-                                append(stdout.toString())
-                                append(stderr.toString())
-                                append("\nCould not install the compiled classes: ")
-                                append(error.message ?: error.javaClass.simpleName)
-                            }.trim().take(MAX_DIAGNOSTICS_CHARS),
-                        )
-                    }
+                runCatching {
+                    // The build may have taken a while; re-check before mutating the workspace so a
+                    // cancelled run cannot leave classes behind that its session no longer owns.
+                    checkCancelled()
+                    replaceCompiledClasses(workspace.patchRoot, stagingDir)
+                }.getOrElse { error ->
+                    if (error is java.util.concurrent.CancellationException) throw error
+                    return AgentPatchCompileResult(
+                        success = false,
+                        compiledClassCount = 0,
+                        diagnostics = buildString {
+                            append(stdout.toString())
+                            append(stderr.toString())
+                            append("\nCould not install the compiled classes: ")
+                            append(error.message ?: error.javaClass.simpleName)
+                        }.trim().take(MAX_DIAGNOSTICS_CHARS),
+                    )
+                }
             } else {
                 0
             }
@@ -146,6 +154,37 @@ object AgentPatchSourceCompiler {
             stagingDir.deleteRecursively()
         }
     }
+
+    /**
+     * Bridges the run's cancellation into ECJ.
+     *
+     * ECJ polls [CompilationProgress.isCanceled] at its own checkpoints; passing `null` (the old
+     * behaviour) removed the only way to stop a build, so a cancelled run kept compiling while
+     * holding the exclusive tool lock. ECJ ignores thread interruption on its own.
+     */
+    private fun cancellationProgress(): CompilationProgress = object : CompilationProgress() {
+        override fun isCanceled(): Boolean = Thread.currentThread().isInterrupted
+
+        override fun begin(work: Int) = Unit
+
+        override fun done() = Unit
+
+        override fun setTaskName(name: String?) = Unit
+
+        override fun worked(workDone: Int, workRemaining: Int) = Unit
+    }
+
+    /** Fails the compile as cancelled instead of reporting a result nobody is waiting for. */
+    private fun checkCancelled() {
+        if (Thread.currentThread().isInterrupted) {
+            throw java.util.concurrent.CancellationException("Patch compilation cancelled")
+        }
+    }
+
+    /** Test seam: the exact predicate ECJ polls, and the pre-install cancellation gate. */
+    internal fun cancellationProgressForTest(): CompilationProgress = cancellationProgress()
+
+    internal fun checkCancelledForTest() = checkCancelled()
 
     /**
      * Replaces the patch root's class files with the freshly compiled staging tree.

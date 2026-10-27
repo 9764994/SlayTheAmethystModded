@@ -6,6 +6,7 @@ import android.content.ContextWrapper
 import org.apache.commons.compress.archivers.zip.ZipArchiveEntry
 import org.apache.commons.compress.archivers.zip.ZipArchiveOutputStream
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
@@ -162,6 +163,40 @@ class AgentPatchSourceCompilerTest {
         )
 
         assertTrue("expected fallback under filesDir, got $resolved", resolved != null && resolved.absolutePath.startsWith(filesDir.absolutePath))
+    }
+
+    @Test
+    fun cancellationProgress_reportsThreadInterruptionToEcj() {
+        // ECJ polls this at its own checkpoints; it is the only way a build can be stopped.
+        // Before this seam existed the compiler received `null` and could not be cancelled at all.
+        val progress = AgentPatchSourceCompiler.cancellationProgressForTest()
+
+        assertFalse("a healthy run must keep compiling", progress.isCanceled())
+
+        Thread.currentThread().interrupt()
+        try {
+            assertTrue("an interrupted run must cancel the build", progress.isCanceled())
+        } finally {
+            Thread.interrupted()
+        }
+        assertFalse("cancellation must not latch after the interrupt is cleared", progress.isCanceled())
+    }
+
+    @Test
+    fun checkCancelled_throwsOnlyWhileInterrupted() {
+        AgentPatchSourceCompiler.checkCancelledForTest()
+
+        Thread.currentThread().interrupt()
+        try {
+            val failure = runCatching { AgentPatchSourceCompiler.checkCancelledForTest() }
+            assertTrue(
+                "an interrupted compile must fail as cancelled, got $failure",
+                failure.exceptionOrNull() is java.util.concurrent.CancellationException,
+            )
+        } finally {
+            Thread.interrupted()
+        }
+        AgentPatchSourceCompiler.checkCancelledForTest()
     }
 
     private fun zipFile(file: File): File {

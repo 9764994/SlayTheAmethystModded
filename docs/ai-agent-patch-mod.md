@@ -416,6 +416,11 @@ The AI editor compiles patch source on the device; no host toolchain is involved
   the required mods, and the parent mod being patched. This is required because ART's `java.*` surface
   differs from the JRE the resulting mod runs on; ECJ only reads those class files for symbol resolution.
 - Diagnostics from ECJ are returned to the agent so it can fix source before packaging.
+- Compilation is cancellable. ECJ is given a `CompilationProgress` whose `isCanceled()` returns the
+  worker thread's interrupt flag, which ECJ polls at its own checkpoints; the earlier code passed
+  `null`, so a cancelled run kept compiling while holding the exclusive tool lock and its class tree.
+  Cancellation also re-checks immediately before `replaceCompiledClasses`, so a stopped run throws
+  `CancellationException` instead of installing classes its session no longer owns.
 - `inspect_agent_patch_target` reads the installed game/mod class files with ASM and returns the exact
   method or constructor overloads, JVM descriptors, parameter types, return type, and fields. It does
   not load game classes into Android or infer signatures from decompiler text. By default it also
