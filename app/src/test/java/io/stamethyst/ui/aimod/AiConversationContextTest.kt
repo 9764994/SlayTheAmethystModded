@@ -18,7 +18,7 @@ class AiConversationContextTest {
         ))
         val migrated = session.modelContext(4)
         assertEquals(listOf("user", "assistant", "tool", "assistant", "user"), migrated.messages.map { it.role })
-        assertTrue(migrated.messages.first().text.contains("exact attachment"))
+        assertTrue((migrated.messages.first().toChatMessages().single() as dev.langchain4j.data.message.UserMessage)
         assertTrue(migrated.messages[2].text.contains("may be incomplete"))
         assertEquals(migrated, session.copy(context = migrated).modelContext(4))
     }

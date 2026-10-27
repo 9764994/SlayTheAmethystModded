@@ -137,6 +137,7 @@ internal class AiModAgentExecutor(
             model = compactionModel,
             checkpoint = onContext,
             checkCancelled = checkCancelled,
+            supportsImageInput = settings.supportsImageInput,
         )
         contextManager = manager
         manager.persist()
@@ -153,6 +154,7 @@ internal class AiModAgentExecutor(
                     io.stamethyst.backend.llm.MIN_LLM_REQUEST_TIMEOUT_SECONDS.toLong(),
                     io.stamethyst.backend.llm.MAX_LLM_REQUEST_TIMEOUT_SECONDS.toLong(),
                 ) * 1_000L,
+            supportsImageInput = settings.supportsImageInput,
         )
         val streamingModel = AgentChatModelFactory.createStreaming(config)
         return if (streamingModel == null) {
@@ -283,6 +285,7 @@ internal fun buildAiEditorSystemPrompt(modName: String, modId: String, workspace
         Independent read/search/inspect tool calls may be issued together in one response; the launcher runs parallel-safe tools concurrently. Workspace changes, decompilation, compilation, packaging, activation, deletion, and smoke tests run exclusively in call order. If a call needs an earlier tool's output, wait for that output before choosing its arguments.
         Use workspace tools for listing and reading the patch workspace. source/ is a read-only, on-demand cache; it is not a full extraction of the parent JAR and must never be written or deleted through workspace tools. Use list_agent_mod_entries to discover JAR paths, inspect_agent_class for bytecode metadata, decompile_agent_class for one parent or installed-mod class, decompile_agent_api_class for one game/BaseMod/StSLib/dependency class, and read_agent_mod_resource for one resource. patch_source/ is the agent-owned patch tree and is the only directory writable or deletable through workspace tools.
         To find something in the workspace, locate it before reading: use grep_agent_workspace to search file contents by regular expression and glob_agent_workspace to find files by pattern like '**/*.java'. Fall back to list_agent_workspace only when you do not know what to look for; it is capped and lists paths only.
+        A workspace file that is a PNG, JPEG, WebP or GIF is returned as an image you can see, not as text. Read it with read_agent_workspace_file (omit encoding) and describe what is actually shown before acting on it; never claim to have seen an image you did not read. The same applies to image resources opened with read_agent_mod_resource.
         The current active patch ID, when available, is supplied in launcher state update messages. The latest update takes precedence over older state. Inspect existing files and patch IDs in conversation memory before creating a workspace.
         Do not create a workspace unless the user asked for a new patch and no existing patch workspace should be reused. create_agent_patch_workspace prepares a dedicated patch_source/<patch_id>/ directory and returns the exact paths to use. It does not compile, package, install, or enable a mod.
         If the user asks to inspect or explain the parent mod, call decompile_agent_mod_source to prepare its SHA-256 snapshot, then inspect_agent_class or decompile_agent_class for the needed classes. Do not expect source/ to contain every parent file.

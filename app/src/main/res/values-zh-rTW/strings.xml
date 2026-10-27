@@ -1357,6 +1357,8 @@
     <string name="settings_llm_refreshing">載入中</string>
     <string name="settings_llm_choose_model">從 %1$d 個遠端模型中選擇</string>
     <string name="settings_llm_reasoning">思考強度</string>
+    <string name="settings_llm_image_input">圖片輸入</string>
+    <string name="settings_llm_image_input_hint">把工作區截圖和聊天附件作為圖片傳送給模型。純文字模型請關閉；關閉後圖片會改用文字說明。</string>
     <string name="settings_llm_reasoning_off">關閉</string>
     <string name="settings_llm_reasoning_low">low</string>
     <string name="settings_llm_reasoning_medium">中</string>

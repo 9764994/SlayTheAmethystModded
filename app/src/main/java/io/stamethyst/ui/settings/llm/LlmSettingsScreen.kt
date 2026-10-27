@@ -65,6 +65,7 @@ import io.stamethyst.ui.settings.common.SettingsLlmRouteSpec
 import io.stamethyst.ui.settings.common.SettingsSectionCard
 import io.stamethyst.ui.settings.common.SettingsActionListItem
 import io.stamethyst.ui.settings.common.SettingsDropdownField
+import io.stamethyst.ui.settings.common.SwitchSettingRow
 import io.stamethyst.ui.settings.core.SettingsScreenViewModel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
@@ -211,6 +212,7 @@ fun LauncherLlmSettingsScreen(
         mutableStateOf(current.requestTimeoutSeconds)
     }
     var reasoningEffort by rememberSaveable { mutableStateOf(current.reasoningEffort) }
+    var supportsImageInput by rememberSaveable { mutableStateOf(current.supportsImageInput) }
     var models by rememberSaveable {
         mutableStateOf(current.models)
     }
@@ -230,6 +232,7 @@ fun LauncherLlmSettingsScreen(
         requestTimeoutSeconds = requestTimeoutSeconds,
         reasoningEffort = reasoningEffort,
         models = models,
+        supportsImageInput = supportsImageInput,
     )
     LaunchedEffect(draft) { viewModel.save(draft) }
     val latestDraft by rememberUpdatedState(draft)
@@ -348,6 +351,13 @@ fun LauncherLlmSettingsScreen(
                     options = LlmReasoningEffort.selectable,
                     optionLabel = { stringResource(it.labelRes) },
                     onOptionSelected = { reasoningEffort = it },
+                )
+                SwitchSettingRow(
+                    checked = supportsImageInput,
+                    enabled = true,
+                    title = stringResource(R.string.settings_llm_image_input),
+                    description = stringResource(R.string.settings_llm_image_input_hint),
+                    onCheckedChange = { supportsImageInput = it },
                 )
             }
         }

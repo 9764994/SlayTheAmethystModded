@@ -3,7 +3,10 @@ package io.stamethyst.backend.llm
 import dev.langchain4j.agent.tool.ToolExecutionRequest
 import dev.langchain4j.data.message.AiMessage
 import dev.langchain4j.data.message.ChatMessage
+import dev.langchain4j.data.message.Content
+import dev.langchain4j.data.message.ImageContent
 import dev.langchain4j.data.message.SystemMessage
+import dev.langchain4j.data.message.TextContent
 import dev.langchain4j.data.message.ToolExecutionResultMessage
 import dev.langchain4j.data.message.UserMessage
 import dev.langchain4j.model.chat.ChatModel
@@ -18,8 +21,54 @@ import kotlin.math.ceil
 
 const val DEFAULT_AGENT_CONTEXT_LIMIT = 200_000
 
+/**
+ * Leading text of the user message that carries images read by a tool.
+ *
+ * OpenAI-compatible chat APIs accept only text inside a tool result, so media is extracted and
+ * re-sent as a user turn after the tool batch, matching OpenCode V2's message conversion.
+ */
+const val SYNTHETIC_ATTACHMENT_PROMPT = "Attached image(s) from tool result:"
+
+/** Flat prompt cost for one image. Providers price images by resolution; this stays deliberately high. */
+const val AGENT_IMAGE_TOKEN_ESTIMATE = 1_600
+
 @Serializable
 data class AgentContextToolCall(val id: String, val name: String, val arguments: String)
+
+@Serializable
+data class AgentContextAttachment(
+    val name: String,
+    /** UTF-8 content of a text attachment; empty for an image. */
+    val content: String = "",
+    /** MIME type: text/plain for pasted text, image/png or image/jpeg for a picture. */
+    val mime: String = "text/plain",
+    /** Base64 payload of an image attachment; empty for text. Never sent to the model as text. */
+    val data: String = "",
+) {
+    val isImage: Boolean get() = mime.startsWith("image/")
+}
+
+/** Explains an image to a model that cannot view it, instead of failing the whole turn. */
+internal fun imageInputPlaceholder(attachment: AgentContextAttachment): String =
+    "[Attached ${attachment.mime}: ${attachment.name}. This model cannot view images; " +
+        "ask the user to describe it or enable image input in the LLM settings.]"
+
+/** One user turn that shows tool-read images to a vision model. */
+internal fun agentMediaUserMessage(
+    media: List<AgentContextAttachment>,
+    supportsImageInput: Boolean,
+): UserMessage = UserMessage.from(
+    *buildList<Content> {
+        add(TextContent.from(SYNTHETIC_ATTACHMENT_PROMPT))
+        media.forEach { image ->
+            if (supportsImageInput) {
+                add(ImageContent.from(image.data, image.mime))
+            } else {
+                add(TextContent.from(imageInputPlaceholder(image)))
+            }
+        }
+    }.toTypedArray(),
+)
 
 /** Durable protocol messages, separate from the UI's truncated tool previews. */
 @Serializable
@@ -33,19 +82,40 @@ data class AgentContextMessage(
     val thinking: String? = null,
     /** Internal append-only state notice, not a new user goal. */
     val patchState: String? = null,
+    val attachments: List<AgentContextAttachment> = emptyList(),
 ) {
-    fun toChatMessage(): ChatMessage = when (role) {
-        "user" -> UserMessage.from(text)
+    fun toChatMessages(supportsImageInput: Boolean = true): List<ChatMessage> = when (role) {
+        "user" -> listOf(userChatMessage(supportsImageInput))
         // Some OpenAI-compatible gateways translate tool_calls into Anthropic tool_use blocks
         // only when the assistant message has a concrete content field. Keep an empty string
         // instead of null for tool-call turns so the preceding tool_use is not dropped.
-        "assistant" -> AiMessage.builder().text(if (calls.isEmpty()) text.ifBlank { null } else text)
+        "assistant" -> listOf(AiMessage.builder().text(if (calls.isEmpty()) text.ifBlank { null } else text)
             .thinking(thinking)
             .toolExecutionRequests(calls.map {
                 ToolExecutionRequest.builder().id(it.id).name(it.name).arguments(it.arguments).build()
-            }).build()
-        "tool" -> ToolExecutionResultMessage.from(callId, toolName, text)
+            }).build())
+        "tool" -> listOf(ToolExecutionResultMessage.from(callId, toolName, text))
         else -> error("Unsupported context role: $role")
+    }
+
+    private fun userChatMessage(supportsImageInput: Boolean): UserMessage {
+        val prompt = buildString {
+            append(text)
+            attachments.filterNot { it.isImage }.forEach { append("\n\nAttachment: ${it.name}\n${it.content}") }
+        }
+        val images = attachments.filter { it.isImage }
+        if (images.isEmpty()) return UserMessage.from(prompt)
+        val contents = buildList<Content> {
+            if (prompt.isNotBlank()) add(TextContent.from(prompt))
+            images.forEach { image ->
+                if (supportsImageInput) {
+                    add(ImageContent.from(image.data, image.mime))
+                } else {
+                    add(TextContent.from(imageInputPlaceholder(image)))
+                }
+            }
+        }
+        return UserMessage.from(*contents.toTypedArray())
     }
 }
 
@@ -161,7 +231,12 @@ object AgentTokenEstimate {
         return ((ascii + 2) / 3 + (other * 3 + 1) / 2).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
     }
 
-    fun message(value: AgentContextMessage): Int = text(Json.encodeToString(value)) + 16
+    fun message(value: AgentContextMessage): Int {
+        val images = value.attachments.filter { it.isImage }
+        val textOnly = if (images.isEmpty()) value else value.copy(attachments = value.attachments.filterNot { it.isImage })
+        // Base64 never becomes prompt text; charge each image a flat, conservative amount instead.
+        return text(Json.encodeToString(textOnly)) + 16 + images.size * AGENT_IMAGE_TOKEN_ESTIMATE
+    }
 }
 
 class AgentContextCapacityException(message: String) : IllegalStateException(message)
@@ -177,6 +252,7 @@ class AgentContextManager(
     private val model: ChatModel,
     private val checkpoint: (AgentContextState) -> Unit,
     private val checkCancelled: () -> Unit = {},
+    val supportsImageInput: Boolean = true,
 ) {
     var state: AgentContextState = initial.closeInterruptedTools()
         private set
@@ -208,13 +284,14 @@ class AgentContextManager(
         state = next
     }
 
-    fun append(message: ChatMessage) {
+    fun append(message: ChatMessage, media: List<AgentContextAttachment> = emptyList()) {
+        require(media.all { it.isImage }) { "Only image attachments may accompany a tool result." }
         val record = when (message) {
             is AiMessage -> AgentContextMessage(sourceMessageId, "assistant", message.text().orEmpty(),
                 message.toolExecutionRequests().map { AgentContextToolCall(it.id(), it.name(), it.arguments()) },
                 thinking = message.thinking())
             is ToolExecutionResultMessage -> AgentContextMessage(sourceMessageId, "tool", message.text(),
-                callId = message.id(), toolName = message.toolName())
+                callId = message.id(), toolName = message.toolName(), attachments = media)
             else -> error("Only completed assistant/tool messages may be appended")
         }
         state = state.copy(messages = state.messages + record)
@@ -265,7 +342,20 @@ class AgentContextManager(
         return buildList {
             add(SystemMessage.from(systemPrompt))
             if (state.summary.isNotBlank()) add(UserMessage.from(memory(state)))
-            addAll(activeRecords().map { it.toChatMessage() })
+            // Tool media becomes one user turn after the whole tool batch, never between tool
+            // results: OpenAI-compatible APIs require all tool messages to follow their call.
+            val pendingMedia = ArrayList<AgentContextAttachment>()
+            fun flushMedia() {
+                if (pendingMedia.isEmpty()) return
+                add(agentMediaUserMessage(pendingMedia.toList(), supportsImageInput))
+                pendingMedia.clear()
+            }
+            activeRecords().forEach { record ->
+                if (record.role != "tool") flushMedia()
+                addAll(record.toChatMessages(supportsImageInput))
+                if (record.role == "tool") pendingMedia += record.attachments.filter { it.isImage }
+            }
+            flushMedia()
         }
     }
 

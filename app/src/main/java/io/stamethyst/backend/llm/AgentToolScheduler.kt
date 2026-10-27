@@ -38,7 +38,7 @@ class AgentToolScheduler(
 
     fun execute(
         requests: List<ToolExecutionRequest>,
-        onResult: (ToolExecutionRequest, String) -> Unit,
+        onResult: (ToolExecutionRequest, AgentToolOutput) -> Unit,
     ) {
         var executor: ExecutorService? = null
         val stopped = AtomicBoolean(false)
@@ -88,11 +88,11 @@ class AgentToolScheduler(
         requests: List<ToolExecutionRequest>,
         stopped: AtomicBoolean,
         checkBatchActive: () -> Unit,
-        onResult: (ToolExecutionRequest, String) -> Unit,
+        onResult: (ToolExecutionRequest, AgentToolOutput) -> Unit,
     ) {
-        val completion = ExecutorCompletionService<Pair<Int, String>>(executor)
-        val pending = HashSet<Future<Pair<Int, String>>>()
-        val results = arrayOfNulls<String>(requests.size)
+        val completion = ExecutorCompletionService<Pair<Int, AgentToolOutput>>(executor)
+        val pending = HashSet<Future<Pair<Int, AgentToolOutput>>>()
+        val results = arrayOfNulls<AgentToolOutput>(requests.size)
         var submitted = 0
         var delivered = 0
         fun submit() {

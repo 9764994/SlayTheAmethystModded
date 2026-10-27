@@ -80,7 +80,29 @@ class PolicyGatedAgentGatewayTest {
     }
 
     @Test
-    fun respond_splitsMultiToolCallGroupsForAnthropicCompatibleBridges() {
+    fun respond_sendsAnImageReadByAToolAsAUserImagePart() {
+        server.enqueue(toolCallResponse("read_agent_workspace_file"))
+        server.enqueue(finalResponse("I can see a 1x1 image."))
+        val workspace = createTempDirectory("agent-image").toFile().apply {
+            resolve("note.txt").writeBytes(java.util.Base64.getDecoder().decode(ONE_PIXEL_PNG_BASE64))
+        }
+
+        val reply = newGateway(workspace, tools = listOf(AgentWorkspaceFileTool(workspace)))
+            .respond(systemPrompt = "Inspect images.", userPrompt = "Read note.txt")
+
+        assertEquals("I can see a 1x1 image.", reply.text)
+        assertEquals(1, reply.toolRounds)
+        server.takeRequest()
+        val second = JSONObject(requireNotNull(server.takeRequest().body).utf8())
+        val messages = second.getJSONArray("messages")
+        val last = messages.getJSONObject(messages.length() - 1)
+        assertEquals("user", last.getString("role"))
+        val content = last.getJSONArray("content")
+        assertEquals("Attached image(s) from tool result:", content.getJSONObject(0).getString("text"))
+        val image = content.getJSONObject(1)
+        assertEquals("image_url", image.getString("type"))
+        assertTrue(image.getJSONObject("image_url").getString("url").startsWith("data:image/png;base64,"))
+    }
         server.enqueue(twoToolCallResponse())
         server.enqueue(finalResponse("Both reads completed."))
         val workspace = createTempDirectory("agent-multi-tool").toFile().apply {
@@ -989,5 +1011,11 @@ class PolicyGatedAgentGatewayTest {
             .name(requestName)
             .arguments("{}")
             .build(),
-    )
+    ).text
+
+    private companion object {
+        /** Smallest valid PNG; enough to exercise MIME sniffing and the image content part. */
+        const val ONE_PIXEL_PNG_BASE64 =
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+    }
 }

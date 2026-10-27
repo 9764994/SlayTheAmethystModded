@@ -17,6 +17,11 @@ data class LlmSettings(
     val requestTimeoutSeconds: Int = DEFAULT_LLM_REQUEST_TIMEOUT_SECONDS,
     val reasoningEffort: LlmReasoningEffort = LlmReasoningEffort.HIGH,
     val models: List<String> = listOf(modelName),
+    /**
+     * Whether the endpoint accepts image content parts. The agent sends screenshots as images only
+     * when this is on; otherwise it describes them in text so a text-only model still answers.
+     */
+    val supportsImageInput: Boolean = true,
 ) {
     fun isConfigured(): Boolean = apiKey.isNotBlank() && modelName.isNotBlank() && baseUrl.isNotBlank()
 }
@@ -80,6 +85,7 @@ class LlmSettingsRepository(context: Context) {
                     DEFAULT_LLM_REQUEST_TIMEOUT_SECONDS,
                 ).coerceIn(MIN_LLM_REQUEST_TIMEOUT_SECONDS, MAX_LLM_REQUEST_TIMEOUT_SECONDS),
                 reasoningEffort = LlmReasoningEffort.fromStored(it.getString(KEY_REASONING_EFFORT, null)),
+                supportsImageInput = it.getBoolean(KEY_SUPPORTS_IMAGE_INPUT, true),
             )
         }.getOrElse { error ->
             Log.w(TAG, "Unable to read LLM settings.", error)
@@ -102,6 +108,7 @@ class LlmSettingsRepository(context: Context) {
                 ),
             )
             .putString(KEY_REASONING_EFFORT, settings.reasoningEffort.name)
+            .putBoolean(KEY_SUPPORTS_IMAGE_INPUT, settings.supportsImageInput)
             .commit()
     }.getOrElse { error ->
         Log.w(TAG, "Unable to save LLM settings.", error)
@@ -117,6 +124,7 @@ class LlmSettingsRepository(context: Context) {
         private const val KEY_ENDPOINT = "endpoint"
         private const val KEY_REQUEST_TIMEOUT_SECONDS = "request_timeout_seconds"
         private const val KEY_REASONING_EFFORT = "reasoning_effort"
+        private const val KEY_SUPPORTS_IMAGE_INPUT = "supports_image_input"
         private const val TAG = "LlmSettings"
     }
 }

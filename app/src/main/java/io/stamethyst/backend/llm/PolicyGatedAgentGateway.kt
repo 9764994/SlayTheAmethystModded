@@ -38,6 +38,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import java.io.File
 import java.nio.charset.StandardCharsets
+import java.util.Base64
 import java.util.concurrent.TimeUnit
 
 private const val TAG = "AgentGateway"
@@ -52,6 +53,9 @@ private const val MAX_READ_LINE_CHARS = 2000
 
 /** Upper bound for one binary (base64) read; keeps the encoded result under the tool-result cap. */
 private const val DEFAULT_MAX_READ_BYTES = 16L * 1024L
+
+/** Refuse to decode an enormous image before it is downscaled for the model. */
+private const val MAX_IMAGE_INPUT_BYTES = 24L * 1024L * 1024L
 
 /** Text reads above this size are refused rather than streamed into an unbounded line buffer. */
 private const val MAX_TEXT_READ_BYTES = 16L * 1024L * 1024L
@@ -198,6 +202,12 @@ enum class AgentToolSafety {
     REQUIRES_APPROVAL,
 }
 
+/** The text result of a tool plus any images the model should see with it. */
+data class AgentToolOutput(
+    val text: String,
+    val attachments: List<AgentContextAttachment> = emptyList(),
+)
+
 interface AgentTool {
     val specification: ToolSpecification
     val safety: AgentToolSafety
@@ -205,6 +215,12 @@ interface AgentTool {
     val concurrency: AgentToolConcurrency get() = AgentToolConcurrency.EXCLUSIVE
 
     fun execute(arguments: String): String
+
+    /**
+     * Some read tools return an image instead of text (OpenCode V2's read tool does the same).
+     * Tools that never return media keep this default so callers only handle one entry point.
+     */
+    fun executeWithMedia(arguments: String): AgentToolOutput = AgentToolOutput(execute(arguments))
 }
 
 class AgentToolPolicyGate(
@@ -248,7 +264,7 @@ class AgentToolRegistry(
         onToolExecution(event)
     }
 
-    fun execute(request: ToolExecutionRequest, checkCancelled: () -> Unit = {}): String {
+    fun execute(request: ToolExecutionRequest, checkCancelled: () -> Unit = {}): AgentToolOutput {
         checkCancelled()
         val event = AgentToolExecutionEvent(
             id = java.util.UUID.randomUUID().toString(),
@@ -258,11 +274,11 @@ class AgentToolRegistry(
         notifyExecution(event, checkCancelled)
         checkCancelled()
         val tool = toolsByName[request.name()]
-        val result = when {
+        val output = when {
             tool == null -> failure("unknown_tool")
             !policyGate.allows(tool) -> failure("approval_required")
             else -> try {
-                tool.execute(request.arguments())
+                tool.executeWithMedia(request.arguments())
             } catch (error: java.util.concurrent.CancellationException) {
                 throw error
             } catch (error: InterruptedException) {
@@ -276,17 +292,17 @@ class AgentToolRegistry(
             throw java.util.concurrent.CancellationException("Agent tool cancelled")
         }
         checkCancelled()
-        Log.i(TAG, "tool=${request.name()} resultChars=${result.length}")
+        Log.i(TAG, "tool=${request.name()} resultChars=${output.text.length} images=${output.attachments.size}")
         val failed = runCatching {
-            Json.parseToJsonElement(result).jsonObject.containsKey("error")
+            Json.parseToJsonElement(output.text).jsonObject.containsKey("error")
         }.getOrDefault(false)
-        notifyExecution(event.copy(result = result, failed = failed), checkCancelled)
-        return result
+        notifyExecution(event.copy(result = output.text, failed = failed), checkCancelled)
+        return output
     }
 
-    private fun failure(code: String): String = buildJsonObject {
+    private fun failure(code: String): AgentToolOutput = AgentToolOutput(buildJsonObject {
         put("error", JsonPrimitive(code))
-    }.toString()
+    }.toString())
 }
 
 class WorkspaceTextFileTool(
@@ -427,7 +443,9 @@ class AgentWorkspaceFileTool(
                 "and 'limit' the number of lines (default $DEFAULT_MAX_READ_LINES); a line longer than " +
                 "$MAX_READ_LINE_CHARS characters is truncated. Continue from 'next_offset' while 'truncated' " +
                 "is true. For long lines or tool_output files use encoding=utf8_chars with a zero-based character " +
-                "offset and limit; follow next_offset. Use encoding=base64 for binary files, where offsets are bytes.",
+                "offset and limit; follow next_offset. Use encoding=base64 for binary files, where offsets are bytes. " +
+                "PNG, JPEG, WebP and GIF files are returned as images the model can see, with a short JSON summary " +
+                "instead of file text.",
         )
         .parameters(
             JsonObjectSchema.builder()
@@ -450,20 +468,77 @@ class AgentWorkspaceFileTool(
     override val safety: AgentToolSafety = AgentToolSafety.READ_ONLY
     override val concurrency = AgentToolConcurrency.PARALLEL
 
-    override fun execute(arguments: String): String {
+    override fun execute(arguments: String): String = executeWithMedia(arguments).text
+
+    override fun executeWithMedia(arguments: String): AgentToolOutput {
         val json = runCatching { Json.parseToJsonElement(arguments).jsonObject }.getOrNull()
-            ?: return failure("invalid_arguments")
+            ?: return failed("invalid_arguments")
         val relativePath = json["path"]?.jsonPrimitive?.content?.takeIf(String::isNotBlank)
-            ?: return failure("invalid_arguments")
-        val file = resolveWorkspaceFile(workspaceRoot, relativePath) ?: return failure("path_outside_workspace")
-        if (!file.isFile) return failure("file_not_found")
-        return when (json["encoding"]?.jsonPrimitive?.content?.lowercase() ?: "utf8") {
+            ?: return failed("invalid_arguments")
+        val file = resolveWorkspaceFile(workspaceRoot, relativePath) ?: return failed("path_outside_workspace")
+        if (!file.isFile) return failed("file_not_found")
+        val encoding = json["encoding"]?.jsonPrimitive?.content?.lowercase() ?: "utf8"
+        // An explicit base64 request keeps the old copyable-bytes behaviour; the default read path
+        // shows an image to the model instead of dumping an unusable base64 string into context.
+        if (encoding != "base64") {
+            readImage(relativePath, file)?.let { return it }
+        }
+        val text = when (encoding) {
             "utf8" -> readText(relativePath, file, json)
             "utf8_chars" -> readCharacters(relativePath, file, json)
             "base64" -> readBytes(relativePath, file, json)
-            else -> failure("unsupported_encoding")
+            else -> return failed("unsupported_encoding")
         }
+        return AgentToolOutput(text)
     }
+
+    /** Returns a viewable image result, or null when the file is not a supported image. */
+    private fun readImage(relativePath: String, file: File): AgentToolOutput? {
+        // Sniff a small header instead of loading every text read in full just to rule out an image.
+        val header = ByteArray(12)
+        val headerSize = runCatching { file.inputStream().use { it.read(header) } }
+            .getOrElse { return failed("read_failed") }
+        if (headerSize <= 0) return null
+        AgentImages.detectMime(file.name, header.copyOf(headerSize)) ?: return null
+        if (file.length() > MAX_IMAGE_INPUT_BYTES) {
+            return failed(
+                "image_too_large",
+                buildJsonObject { put("total_bytes", JsonPrimitive(file.length())) },
+            )
+        }
+        val bytes = runCatching { file.readBytes() }.getOrElse { return failed("read_failed") }
+        // The name or magic bytes said image, but decoding/normalising still failed; returning an
+        // error is safer than dumping the binary payload into the text context.
+        val payload = AgentImages.prepare(file.name, bytes) ?: return failed("image_unreadable")
+        val text = buildJsonObject {
+            put("path", JsonPrimitive(relativePath))
+            put("type", JsonPrimitive("image"))
+            put("mime", JsonPrimitive(payload.mime))
+            put("total_bytes", JsonPrimitive(payload.bytes))
+            payload.width?.let { put("width", JsonPrimitive(it)) }
+            payload.height?.let { put("height", JsonPrimitive(it)) }
+            if (payload.downscaled) put("downscaled", JsonPrimitive(true))
+            put(
+                "note",
+                JsonPrimitive(
+                    "The image itself is attached to the conversation as viewable content. " +
+                        "Describe or reason about what is shown; do not request base64 again.",
+                ),
+            )
+        }.toString()
+        return AgentToolOutput(
+            text = text,
+            attachments = listOf(
+                AgentContextAttachment(name = file.name, mime = payload.mime, data = payload.base64),
+            ),
+        )
+    }
+
+    private fun failed(code: String, extra: JsonObject = JsonObject(emptyMap())): AgentToolOutput =
+        AgentToolOutput(buildJsonObject {
+            put("error", JsonPrimitive(code))
+            extra.forEach { (key, value) -> put(key, value) }
+        }.toString())
 
     private fun readCharacters(path: String, file: File, json: JsonObject): String {
         if (file.length() > MAX_TEXT_READ_BYTES) return failure("file_too_large")
@@ -559,7 +634,7 @@ class AgentWorkspaceFileTool(
             put("returned_bytes", JsonPrimitive(bytes.size))
             put("truncated", JsonPrimitive(truncated))
             if (truncated) put("next_offset", JsonPrimitive(nextOffset))
-            put("content", JsonPrimitive(android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)))
+            put("content", JsonPrimitive(Base64.getEncoder().encodeToString(bytes)))
         }.toString()
     }
 
@@ -807,7 +882,7 @@ class AgentWorkspaceWriteTool(
         val hasBytes = json["contentBase64"] != null
         if (hasText == hasBytes) return failure("provide_exactly_one_content_field")
         val bytes = runCatching {
-            if (hasBytes) android.util.Base64.decode(json["contentBase64"]!!.jsonPrimitive.content, android.util.Base64.DEFAULT)
+            if (hasBytes) Base64.getMimeDecoder().decode(json["contentBase64"]!!.jsonPrimitive.content)
             else json["content"]!!.jsonPrimitive.content.toByteArray(Charsets.UTF_8)
         }.getOrElse { return failure("invalid_content") }
         if (bytes.size > maxBytes) return failure("file_too_large")
@@ -1148,7 +1223,8 @@ class AgentModResourceReadTool(
         .name("read_agent_mod_resource")
         .description(
             "Read a resource entry from the parent or another installed mod without extracting the JAR. Use " +
-                "utf8 for JSON/XML/text and base64 for binary assets; reads are bounded and pageable.",
+                "utf8 for JSON/XML/text and base64 for binary assets; reads are bounded and pageable. " +
+                "PNG, JPEG, WebP and GIF resources are returned as images the model can see, with a short JSON summary.",
         )
         .parameters(
             JsonObjectSchema.builder()
@@ -1166,7 +1242,9 @@ class AgentModResourceReadTool(
     override val safety: AgentToolSafety = AgentToolSafety.READ_ONLY
     override val concurrency = AgentToolConcurrency.PARALLEL
 
-    override fun execute(arguments: String): String {
+    override fun execute(arguments: String): String = executeWithMedia(arguments).text
+
+    override fun executeWithMedia(arguments: String): AgentToolOutput {
         val json = runCatching { Json.parseToJsonElement(arguments).jsonObject }.getOrNull()
             ?: return failure("invalid_arguments")
         val entry = json["entry"]?.jsonPrimitive?.content?.takeIf(String::isNotBlank)
@@ -1178,11 +1256,14 @@ class AgentModResourceReadTool(
             .coerceIn(1, DEFAULT_LIMIT)
         val target = runCatching { readTargets.resolve(json["mod_id"]?.jsonPrimitive?.content) }
             .getOrElse { return failure(it.message ?: "mod_resolution_failed") }
+        if (encoding == "utf8" && offset == 0L) {
+            readImage(target.jar, target.modId, entry)?.let { return it }
+        }
         val range = runCatching {
             AgentModJarReader.readEntryRange(target.jar, entry, offset, limit)
         }.getOrElse { return failure(it.message ?: "resource_read_failed") }
             ?: return failure("resource_not_found")
-        return buildJsonObject {
+        return AgentToolOutput(buildJsonObject {
             put("entry", JsonPrimitive(entry))
             put("mod_id", JsonPrimitive(target.modId))
             put("encoding", JsonPrimitive(encoding))
@@ -1194,22 +1275,64 @@ class AgentModResourceReadTool(
                 "content",
                 JsonPrimitive(
                     if (encoding == "base64") {
-                        android.util.Base64.encodeToString(range.bytes, android.util.Base64.NO_WRAP)
+                        Base64.getEncoder().encodeToString(range.bytes)
                     } else {
                         range.bytes.toString(StandardCharsets.UTF_8)
                     },
                 ),
             )
             if (range.truncated) put("next_offset", JsonPrimitive(range.offset + range.bytes.size))
-        }.toString()
+        }.toString())
     }
 
-    private fun failure(code: String): String = buildJsonObject {
+    /** Returns a viewable image for a whole-entry read, or null when the entry is not an image. */
+    private fun readImage(jar: File, modId: String, entry: String): AgentToolOutput? {
+        val name = entry.substringAfterLast('/')
+        // Read only a header first: most resources are text and must not be pulled into memory.
+        val header = runCatching { AgentModJarReader.readEntryRange(jar, entry, 0L, 12) }.getOrNull()
+            ?: return null
+        AgentImages.detectMime(name, header.bytes) ?: return null
+        if (header.totalBytes > MAX_IMAGE_INPUT_BYTES) return failure("image_too_large")
+        val range = runCatching {
+            AgentModJarReader.readEntryRange(jar, entry, 0L, MAX_IMAGE_INPUT_BYTES.toInt())
+        }.getOrNull() ?: return failure("resource_read_failed")
+        val payload = AgentImages.prepare(name, range.bytes) ?: return failure("image_unreadable")
+        val text = buildJsonObject {
+            put("entry", JsonPrimitive(entry))
+            put("mod_id", JsonPrimitive(modId))
+            put("type", JsonPrimitive("image"))
+            put("mime", JsonPrimitive(payload.mime))
+            put("total_bytes", JsonPrimitive(payload.bytes))
+            payload.width?.let { put("width", JsonPrimitive(it)) }
+            payload.height?.let { put("height", JsonPrimitive(it)) }
+            if (payload.downscaled) put("downscaled", JsonPrimitive(true))
+            put(
+                "note",
+                JsonPrimitive(
+                    "The image itself is attached to the conversation as viewable content. " +
+                        "Describe or reason about what is shown; do not request base64 again.",
+                ),
+            )
+        }.toString()
+        return AgentToolOutput(
+            text = text,
+            attachments = listOf(
+                AgentContextAttachment(
+                    name = entry.substringAfterLast('/'),
+                    mime = payload.mime,
+                    data = payload.base64,
+                ),
+            ),
+        )
+    }
+
+    private fun failure(code: String): AgentToolOutput = AgentToolOutput(buildJsonObject {
         put("error", JsonPrimitive(code))
-    }.toString()
+    }.toString())
 
     private companion object {
         const val DEFAULT_LIMIT = 16 * 1024
+        const val MAX_IMAGE_INPUT_BYTES = 24 * 1024 * 1024
     }
 }
 
@@ -2113,6 +2236,8 @@ class PolicyGatedAgentGateway(
     private val onRetry: (retryNumber: Int, delaySeconds: Long, error: Throwable) -> Unit = { _, _, _ -> },
     private val maxParallelTools: Int = 4,
     private val streamingTimeoutMillis: Long = DEFAULT_LLM_REQUEST_TIMEOUT_SECONDS * 1_000L,
+    /** When false, images read by tools are described in text instead of sent as image parts. */
+    private val supportsImageInput: Boolean = true,
     private val onNonStreamingText: (String) -> Unit = {},
 ) {
     private val toolScheduler = AgentToolScheduler(toolRegistry, maxParallelTools, checkCancelled)
@@ -2230,10 +2355,19 @@ class PolicyGatedAgentGateway(
     }
 
     private fun executeTools(aiMessage: AiMessage, messages: MutableList<ChatMessage>) {
+        val media = ArrayList<AgentContextAttachment>()
         toolScheduler.execute(aiMessage.toolExecutionRequests()) { request, output ->
-            val result = ToolExecutionResultMessage.from(request, boundedToolResult(output))
+            val result = ToolExecutionResultMessage.from(request, boundedToolResult(output.text))
             messages += result
-            contextManager?.append(result)
+            val images = output.attachments.filter { it.isImage }
+            contextManager?.append(result, images)
+            media += images
+        }
+        // Without a context manager the caller owns the history; mirror the context path so a
+        // tool-read image still reaches the model. The next model turn follows this turn, so the
+        // extra user message never splits a tool result away from its call.
+        if (contextManager == null && media.isNotEmpty()) {
+            messages += agentMediaUserMessage(media, supportsImageInput)
         }
     }
 

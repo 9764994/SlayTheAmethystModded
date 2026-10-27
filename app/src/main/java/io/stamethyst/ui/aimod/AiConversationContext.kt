@@ -4,6 +4,7 @@ import android.content.Context
 import io.stamethyst.backend.llm.AgentContextMessage
 import io.stamethyst.backend.llm.AgentContextState
 import io.stamethyst.backend.llm.AgentContextToolCall
+import io.stamethyst.backend.llm.AgentContextAttachment
 import io.stamethyst.backend.llm.DEFAULT_AGENT_CONTEXT_LIMIT
 
 internal object AiContextLimits {
@@ -24,10 +25,15 @@ internal fun AiEditorSession.modelContext(excludingMessageId: Long): AgentContex
                 // Retry/failure notices are UI history, not instructions for the
                 // next model turn.
             } else if (message.fromUser) {
-                add(AgentContextMessage(message.id, "user", buildString {
-                    append(message.text)
-                    message.attachments.forEach { append("\n\nAttachment: ${it.name}\n${it.content}") }
-                }))
+                add(AgentContextMessage(message.id, "user", message.text,
+                    attachments = message.attachments.map {
+                        AgentContextAttachment(
+                            name = it.name,
+                            content = it.content,
+                            mime = it.mime,
+                            data = it.data,
+                        )
+                    }))
             } else {
                 message.tools.forEach { tool ->
                     add(AgentContextMessage(message.id, "assistant", calls = listOf(

@@ -1373,6 +1373,8 @@ Patch rule: keep Ori full-resolution glow/bloom rendering, but replace the blur 
     <string name="settings_llm_refreshing">Loading</string>
     <string name="settings_llm_choose_model">Choose from %1$d remote models</string>
     <string name="settings_llm_reasoning">Thinking effort</string>
+    <string name="settings_llm_image_input">Image input</string>
+    <string name="settings_llm_image_input_hint">Send workspace screenshots and attached images to the model. Turn this off for text-only models; images are then described in text.</string>
     <string name="settings_llm_reasoning_off">Off</string>
     <string name="settings_llm_reasoning_low">low</string>
     <string name="settings_llm_reasoning_medium">Medium</string>

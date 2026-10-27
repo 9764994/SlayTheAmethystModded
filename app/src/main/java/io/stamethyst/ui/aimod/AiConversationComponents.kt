@@ -107,7 +107,11 @@ internal fun AiChatComposer(
                         attachments.forEach { attachment ->
                             Surface(shape = RoundedCornerShape(8.dp), color = colors.surfaceContainerHigh) {
                                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 10.dp)) {
-                                    Icon(Icons.AttachFile, null, Modifier.size(14.dp), tint = colors.onSurfaceVariant)
+                                    if (attachment.isImage) {
+                                        AiAttachmentThumbnail(attachment, size = 28.dp, modifier = Modifier.padding(start = 6.dp))
+                                    } else {
+                                        Icon(Icons.AttachFile, null, Modifier.size(14.dp), tint = colors.onSurfaceVariant)
+                                    }
                                     Text(
                                         attachment.name,
                                         modifier = Modifier.widthIn(max = 180.dp).padding(start = 6.dp),

@@ -47,7 +47,7 @@ class AgentToolSchedulerTest {
         val results = mutableListOf<String>()
         AgentToolScheduler(registry).execute(calls("first", "second")) { call, result ->
             assertSame(caller, Thread.currentThread())
-            results += "${call.name()}:$result"
+            results += "${call.name()}:${result.text}"
         }
         assertEquals(listOf("second", "first"), completed)
         assertEquals(listOf("first:first-result", "second:second-result"), results)
@@ -125,7 +125,7 @@ class AgentToolSchedulerTest {
         )
         val results = mutableListOf<String>()
         AgentToolScheduler(AgentToolRegistry(tools), maxParallelism = 2)
-            .execute(calls("slow", "fast", "third")) { _, result -> results += result }
+            .execute(calls("slow", "fast", "third")) { _, result -> results += result.text }
         assertEquals(listOf("first", "second", "third"), results)
     }
 
@@ -161,7 +161,7 @@ class AgentToolSchedulerTest {
             inCallback.decrementAndGet()
         })
         val results = mutableListOf<String>()
-        AgentToolScheduler(registry).execute(calls("fails", "works")) { _, result -> results += result }
+        AgentToolScheduler(registry).execute(calls("fails", "works")) { _, result -> results += result.text }
         assertTrue(results[0].contains("tool_execution_failed"))
         assertEquals("ok", results[1])
         assertEquals(4, eventCount.get())
@@ -178,7 +178,7 @@ class AgentToolSchedulerTest {
         val registry = AgentToolRegistry(listOf(denied))
         assertEquals(AgentToolConcurrency.EXCLUSIVE, registry.concurrency(calls("denied").single()))
         val results = mutableListOf<String>()
-        AgentToolScheduler(registry).execute(calls("missing", "denied")) { _, result -> results += result }
+        AgentToolScheduler(registry).execute(calls("missing", "denied")) { _, result -> results += result.text }
         assertTrue(results[0].contains("unknown_tool"))
         assertTrue(results[1].contains("approval_required"))
     }

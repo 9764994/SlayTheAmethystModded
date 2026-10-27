@@ -373,6 +373,9 @@ internal class AiConversationStore(root: File) {
             }
             addColumnIfMissing(db, TABLE_MESSAGES, "changed_revision", "INTEGER NOT NULL DEFAULT 0")
             addColumnIfMissing(db, TABLE_CONVERSATION, "context_revision", "INTEGER NOT NULL DEFAULT 0")
+            // Images ride along with a message as base64 plus a MIME type; older rows stay text.
+            addColumnIfMissing(db, TABLE_ATTACHMENTS, COLUMN_MIME, "TEXT NOT NULL DEFAULT 'text/plain'")
+            addColumnIfMissing(db, TABLE_ATTACHMENTS, COLUMN_ATTACHMENT_DATA, "TEXT NOT NULL DEFAULT ''")
             db.setTransactionSuccessful()
         } finally {
             db.endTransaction()
@@ -418,6 +421,8 @@ internal class AiConversationStore(root: File) {
                 position INTEGER NOT NULL,
                 name TEXT NOT NULL,
                 content TEXT NOT NULL,
+                mime TEXT NOT NULL DEFAULT 'text/plain',
+                data TEXT NOT NULL DEFAULT '',
                 PRIMARY KEY(message_id, position),
                 FOREIGN KEY(message_id) REFERENCES messages(id) ON DELETE CASCADE
             )
@@ -713,6 +718,8 @@ internal class AiConversationStore(root: File) {
                 put(COLUMN_POSITION, position)
                 put(COLUMN_NAME, attachment.name)
                 put(COLUMN_CONTENT, attachment.content)
+                put(COLUMN_MIME, attachment.mime)
+                put(COLUMN_ATTACHMENT_DATA, attachment.data)
             })
         }
         db.delete(TABLE_TOOLS, "$COLUMN_FOREIGN_MESSAGE_ID = ?", arrayOf(message.id.toString()))
@@ -735,7 +742,7 @@ internal class AiConversationStore(root: File) {
         val result = LinkedHashMap<Long, MutableList<AiAttachment>>()
         db.queryWindowSafe(
             TABLE_ATTACHMENTS,
-            arrayOf(COLUMN_FOREIGN_MESSAGE_ID, COLUMN_NAME, COLUMN_CONTENT),
+            arrayOf(COLUMN_FOREIGN_MESSAGE_ID, COLUMN_NAME, COLUMN_CONTENT, COLUMN_MIME, COLUMN_ATTACHMENT_DATA),
             messageId?.let { "$COLUMN_FOREIGN_MESSAGE_ID = ?" },
             messageId?.let { arrayOf(it.toString()) },
             null,
@@ -743,7 +750,7 @@ internal class AiConversationStore(root: File) {
             "$COLUMN_FOREIGN_MESSAGE_ID ASC, $COLUMN_POSITION ASC",
         ).use { cursor ->
             while (cursor.moveToNext()) result.getOrPut(cursor.getLong(0)) { ArrayList() }
-                .add(AiAttachment(cursor.getString(1), cursor.getString(2)))
+                .add(AiAttachment(cursor.getString(1), cursor.getString(2), cursor.getString(3), cursor.getString(4)))
         }
         return result
     }
@@ -886,7 +893,7 @@ internal class AiConversationStore(root: File) {
     private companion object {
         const val LOG_TAG = "AiModStore"
         /** Bump when [createSchema] changes so existing files are migrated on next open. */
-        const val SCHEMA_VERSION = 3
+        const val SCHEMA_VERSION = 4
         const val DATABASE_EXTENSION = "db"
         const val LEGACY_CONVERSATIONS_FILE = "conversations.json"
         const val LEGACY_JOBS_FILE = "agent_jobs.json"
@@ -918,6 +925,8 @@ internal class AiConversationStore(root: File) {
         const val COLUMN_POSITION = "position"
         const val COLUMN_NAME = "name"
         const val COLUMN_CONTENT = "content"
+        const val COLUMN_MIME = "mime"
+        const val COLUMN_ATTACHMENT_DATA = "data"
         const val COLUMN_TOOL_ID = "id"
         const val COLUMN_TOOL_NAME = "name"
         const val COLUMN_ARGUMENTS = "arguments"

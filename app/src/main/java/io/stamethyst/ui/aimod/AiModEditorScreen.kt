@@ -134,7 +134,17 @@ private val AI_TRANSCRIPT_ROW_SPACING = 8.dp
 private val AI_TRANSCRIPT_MESSAGE_SPACING = 24.dp
 
 @Serializable
-internal data class AiAttachment(val name: String, val content: String)
+internal data class AiAttachment(
+    val name: String,
+    /** UTF-8 text for a pasted file; empty for an image. */
+    val content: String = "",
+    /** MIME type, e.g. text/plain or image/png. */
+    val mime: String = "text/plain",
+    /** Base64 payload of an image attachment; empty for text. */
+    val data: String = "",
+) {
+    val isImage: Boolean get() = mime.startsWith("image/")
+}
 
 @Serializable
 internal data class AiToolCall(
@@ -722,9 +732,13 @@ fun LauncherAiModEditorScreen(
     var showHistory by remember { mutableStateOf(false) }
     val settings = viewModel.llmSettings
     val configured = settings.isConfigured()
+    val attachmentScope = rememberCoroutineScope()
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri ?: return@rememberLauncherForActivityResult
-        readAttachment(context, uri)?.let { draftAttachments += it }
+        // Reading and downscaling a screenshot can take a second; keep the composer responsive.
+        attachmentScope.launch {
+            readAttachment(context, uri)?.let { draftAttachments += it }
+        }
     }
 
     // The transcript opens on the newest message and materializes only the most recent few.
@@ -1062,7 +1076,7 @@ fun LauncherAiModEditorScreen(
             onDraftChange = { draft = it },
             attachments = draftAttachments,
             onRemoveAttachment = { draftAttachments.remove(it) },
-            onAttach = { picker.launch(arrayOf("text/*", "application/json", "application/octet-stream")) },
+            onAttach = { picker.launch(arrayOf("text/*", "application/json", "application/octet-stream", "image/*")) },
             configured = configured && viewModel.storageReady,
             busy = viewModel.busy,
             modelName = settings.modelName,
@@ -1172,7 +1186,11 @@ internal fun AiMessageCard(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
-                            Icon(Icons.AttachFile, null, Modifier.size(16.dp), tint = colors.onSurfaceVariant)
+                            if (attachment.isImage) {
+                                AiAttachmentThumbnail(attachment, size = 96.dp)
+                            } else {
+                                Icon(Icons.AttachFile, null, Modifier.size(16.dp), tint = colors.onSurfaceVariant)
+                            }
                             Text(
                                 attachment.name,
                                 style = MaterialTheme.typography.labelMedium,
@@ -1483,14 +1501,33 @@ internal fun AiMessageAction(
     }
 }
 
-private fun readAttachment(context: Context, uri: android.net.Uri): AiAttachment? = runCatching {
-    val name = context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
-        if (cursor.moveToFirst()) cursor.getString(0) else null
-    } ?: uri.lastPathSegment ?: "attachment"
-    val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: return null
-    require(bytes.size <= 512 * 1024) { "Attachment is larger than 512 KiB." }
-    AiAttachment(name, bytes.toString(Charsets.UTF_8))
-}.getOrNull()
+private suspend fun readAttachment(context: Context, uri: android.net.Uri): AiAttachment? =
+    withContext(Dispatchers.IO) {
+        runCatching {
+            val name = context.contentResolver
+                .query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
+                ?.use { cursor -> if (cursor.moveToFirst()) cursor.getString(0) else null }
+                ?: uri.lastPathSegment
+                ?: "attachment"
+            val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                ?: return@runCatching null
+            val imageMime = io.stamethyst.backend.llm.AgentImages.detectMime(name, bytes)
+            if (imageMime != null) {
+                require(bytes.size <= 24 * 1024 * 1024) { "Image is larger than 24 MiB." }
+                // Screenshots are downscaled here once, so every later request reuses the same compact payload.
+                val payload = io.stamethyst.backend.llm.AgentImages.prepare(name, bytes)
+                    ?: return@runCatching null
+                AiAttachment(name = name, content = "", mime = payload.mime, data = payload.base64)
+            } else {
+                require(bytes.size <= 512 * 1024) { "Attachment is larger than 512 KiB." }
+                AiAttachment(
+                    name = name,
+                    content = bytes.toString(Charsets.UTF_8),
+                    mime = context.contentResolver.getType(uri) ?: "text/plain",
+                )
+            }
+        }.getOrNull()
+    }
 
 private fun copyToClipboard(context: Context, text: String) {
     context.getSystemService(ClipboardManager::class.java)?.setPrimaryClip(ClipData.newPlainText("AI message", text))

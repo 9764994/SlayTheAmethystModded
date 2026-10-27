@@ -1371,6 +1371,8 @@
     <string name="settings_llm_refreshing">加载中</string>
     <string name="settings_llm_choose_model">从 %1$d 个远端模型中选择</string>
     <string name="settings_llm_reasoning">思考强度</string>
+    <string name="settings_llm_image_input">图片输入</string>
+    <string name="settings_llm_image_input_hint">把工作区截图和聊天附件作为图片发送给模型。纯文本模型请关闭；关闭后图片会改用文字说明。</string>
     <string name="settings_llm_reasoning_off">关闭</string>
     <string name="settings_llm_reasoning_low">low</string>
     <string name="settings_llm_reasoning_medium">中</string>
