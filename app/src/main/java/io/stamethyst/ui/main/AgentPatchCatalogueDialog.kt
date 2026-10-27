@@ -108,6 +108,7 @@ internal fun AgentPatchCatalogueDialog(
     initialLocalActionPatchId: String? = null,
     initialLocalUploadPatchId: String? = null,
     localOnly: Boolean = false,
+    contributionsOnly: Boolean = false,
     actionsOnly: Boolean = false,
     onDismiss: () -> Unit,
     onInstalled: () -> Unit,
@@ -307,7 +308,29 @@ internal fun AgentPatchCatalogueDialog(
         compatible + otherVersions
     }
 
-    if (!actionsOnly) Dialog(onDismissRequest = onDismiss) {
+    if (!actionsOnly && contributionsOnly && !localOnly) {
+        AgentPatchContributionDialog(
+            mod = mod,
+            patches = localPatches,
+            remotePatches = snapshot?.patches,
+            error = error,
+            onDismiss = onDismiss,
+            onUpload = { pendingUploadPatch = it; notice = null },
+            onRetry = {
+                scope.launch {
+                    error = null
+                    runCatching { AgentPatchCatalogueService.refresh(context.applicationContext, parentModId, force = true) }
+                        .onSuccess { snapshot = it; onCatalogueRefreshed() }
+                        .onFailure {
+                            if (it is CancellationException) throw it
+                            error = it.message ?: "Catalogue request failed."
+                        }
+                }
+            },
+        )
+    }
+
+    if (!actionsOnly && (!contributionsOnly || localOnly)) Dialog(onDismissRequest = onDismiss) {
         Card(
             modifier = Modifier
                 .fillMaxWidth()

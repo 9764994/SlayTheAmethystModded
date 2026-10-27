@@ -166,6 +166,7 @@ internal fun ModCard(
     var showImportPatchDialog by remember(mod.storagePath) { mutableStateOf(false) }
     var showAgentPatchCatalogue by remember(mod.storagePath) { mutableStateOf(false) }
     var agentPatchDialogLocalOnly by remember(mod.storagePath) { mutableStateOf(false) }
+    var showAgentPatchContributions by remember(mod.storagePath) { mutableStateOf(false) }
     var agentPatchActionsOnly by remember(mod.storagePath) { mutableStateOf(false) }
     var agentPatchDetails by remember(mod.storagePath) { mutableStateOf<io.stamethyst.model.AgentPatchModUi?>(null) }
     var initialLocalActionPatchId by remember(mod.storagePath) { mutableStateOf<String?>(null) }
@@ -367,11 +368,20 @@ internal fun ModCard(
             agentPatchMods = mod.agentPatchMods,
             onSetAgentPatchEnabled = { patch, enabled -> callbacks.onSetAgentPatchEnabled(mod, patch, enabled) },
             onOpenAgentPatchCatalogue = {
+                showAgentPatchContributions = false
                 agentPatchDialogLocalOnly = false
                 agentPatchActionsOnly = false
                 initialLocalActionPatchId = null
                 initialLocalUploadPatchId = null
                 agentPatchDetails = null
+                showAgentPatchCatalogue = true
+            },
+            onOpenAgentPatchContributions = {
+                showAgentPatchContributions = true
+                agentPatchDialogLocalOnly = false
+                agentPatchActionsOnly = false
+                initialLocalActionPatchId = null
+                initialLocalUploadPatchId = null
                 showAgentPatchCatalogue = true
             },
             workshopBadgeEnabled = !batchSelectionMode,
@@ -768,6 +778,7 @@ internal fun ModCard(
             initialLocalActionPatchId = initialLocalActionPatchId,
             initialLocalUploadPatchId = initialLocalUploadPatchId,
             localOnly = agentPatchDialogLocalOnly,
+            contributionsOnly = showAgentPatchContributions,
             actionsOnly = agentPatchActionsOnly,
             onDismiss = { showAgentPatchCatalogue = false },
             onInstalled = callbacks.onRefreshAgentPatchMods,

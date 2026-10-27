@@ -400,6 +400,7 @@ object AgentPatchCatalogueService {
                 indexUrl = body.optString("indexUrl"),
                 indexing = body.optString("indexing"),
             )
+            AgentPatchContributionStore.recordUpload(context, parentModId, patch.patchModId, patch.version)
             onProgress(AgentPatchUploadProgress(AgentPatchUploadStage.DONE, 1f))
             result
         } finally {

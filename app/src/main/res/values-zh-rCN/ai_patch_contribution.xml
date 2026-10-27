@@ -1,0 +1,16 @@
+<resources>
+    <string name="ai_patch_contribution_pending">查看全部 AI 补丁，上传自己制作的补丁来激活徽章</string>
+    <string name="ai_patch_contribution_active">感谢徽章已激活，查看全部 AI 补丁</string>
+    <string name="ai_patch_contribution_title">AI 补丁</string>
+    <string name="ai_patch_contribution_invite">上传您制作的 AI 补丁来激活这个徽章！</string>
+    <string name="ai_patch_contribution_thanks">感谢您分享自己制作的 AI 补丁！您仍可继续上传其他补丁，或升级已分享的版本。</string>
+    <string name="ai_patch_contribution_local">本地 v%1$s</string>
+    <string name="ai_patch_contribution_shared">已分享 v%1$s</string>
+    <string name="ai_patch_contribution_unshared">尚未分享</string>
+    <string name="ai_patch_contribution_upload">上传</string>
+    <string name="ai_patch_contribution_upgrade">升级</string>
+    <string name="ai_patch_contribution_synced">已是最新</string>
+    <string name="ai_patch_contribution_remote_newer">已分享的版本更新</string>
+    <string name="ai_patch_contribution_checking">正在检查已分享版本…</string>
+    <string name="ai_patch_contribution_retry">重试</string>
+</resources>

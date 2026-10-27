@@ -83,6 +83,7 @@ internal fun ModCardBodyContent(
     onAgentPatchExport: (io.stamethyst.model.AgentPatchModUi) -> Unit = {},
     onAgentPatchShare: (io.stamethyst.model.AgentPatchModUi) -> Unit = {},
     onAgentPatchUpload: (io.stamethyst.model.AgentPatchModUi) -> Unit = {},
+    onOpenAgentPatchContributions: () -> Unit = {},
     onAgentPatchRename: (io.stamethyst.model.AgentPatchModUi, String) -> Unit = { _, _ -> },
     headerLeading: @Composable RowScope.() -> Unit = {},
     headerTrailing: @Composable RowScope.() -> Unit
@@ -125,6 +126,7 @@ internal fun ModCardBodyContent(
                 workshopBadgeEnabled = workshopBadgeEnabled,
                 onWorkshopBadgeClick = { onOpenWorkshopDetails(mod) },
                 onOpenAgentPatchCatalogue = onOpenAgentPatchCatalogue,
+                onOpenAgentPatchContributions = onOpenAgentPatchContributions,
             )
         }
         headerTrailing()
@@ -311,6 +313,7 @@ private fun ModCardBadges(
     workshopBadgeEnabled: Boolean,
     onWorkshopBadgeClick: () -> Unit,
     onOpenAgentPatchCatalogue: () -> Unit,
+    onOpenAgentPatchContributions: () -> Unit,
 ) {
     val showSuggestion = !modSuggestionText.isNullOrBlank()
     val showImportPatch = !mod.importPatchDetails.isNullOrBlank() || mod.importPatches.isNotEmpty()
@@ -334,6 +337,13 @@ private fun ModCardBadges(
         horizontalArrangement = Arrangement.spacedBy(6.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
+        if (mod.agentPatchMods.isNotEmpty()) {
+            ModContributionBadge(
+                mod = mod,
+                enabled = importPatchBadgeEnabled,
+                onClick = onOpenAgentPatchContributions,
+            )
+        }
         if (mod.hasAgentPatchCatalogueEntries) {
             ModCardLabelBadge(
                 iconResId = R.drawable.ic_code,
@@ -685,7 +695,7 @@ private fun ModCardLabelBadge(
 }
 
 @Composable
-private fun ModCardBadgeSurface(
+internal fun ModCardBadgeSurface(
     enabled: Boolean = true,
     onClick: (() -> Unit)? = null,
     containerColor: Color = MaterialTheme.colorScheme.secondaryContainer,

@@ -1,0 +1,16 @@
+<resources>
+    <string name="ai_patch_contribution_pending">View AI patches. Upload your own patch to activate this badge.</string>
+    <string name="ai_patch_contribution_active">Contribution badge activated. View all AI patches.</string>
+    <string name="ai_patch_contribution_title">AI patches</string>
+    <string name="ai_patch_contribution_invite">Upload an AI patch you made to activate this badge!</string>
+    <string name="ai_patch_contribution_thanks">Thank you for sharing your AI patches! Upload another patch or upgrade a shared version below.</string>
+    <string name="ai_patch_contribution_local">Local v%1$s</string>
+    <string name="ai_patch_contribution_shared">Shared v%1$s</string>
+    <string name="ai_patch_contribution_unshared">Not shared yet</string>
+    <string name="ai_patch_contribution_upload">Upload</string>
+    <string name="ai_patch_contribution_upgrade">Upgrade</string>
+    <string name="ai_patch_contribution_synced">Up to date</string>
+    <string name="ai_patch_contribution_remote_newer">Newer shared version available</string>
+    <string name="ai_patch_contribution_checking">Checking shared versions…</string>
+    <string name="ai_patch_contribution_retry">Retry</string>
+</resources>
