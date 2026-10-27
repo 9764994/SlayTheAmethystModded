@@ -1372,9 +1372,9 @@
     <string name="settings_llm_choose_model">从 %1$d 个远端模型中选择</string>
     <string name="settings_llm_reasoning">思考强度</string>
     <string name="settings_llm_reasoning_off">关闭</string>
-    <string name="settings_llm_reasoning_low">低</string>
+    <string name="settings_llm_reasoning_low">low</string>
     <string name="settings_llm_reasoning_medium">中</string>
-    <string name="settings_llm_reasoning_high">高</string>
+    <string name="settings_llm_reasoning_high">high</string>
     <string name="ai_mod_editor_title">模组编辑器</string>
     <string name="ai_mod_editor_history">历史会话</string>
     <string name="ai_mod_editor_history_empty">暂时没有历史会话</string>

@@ -230,7 +230,7 @@ internal class AiModEditorViewModel(
         private set
     var appliedBackupPath by mutableStateOf<String?>(null)
         private set
-    var reasoningEffort by mutableStateOf(LlmReasoningEffort.OFF)
+    var reasoningEffort by mutableStateOf(LlmReasoningEffort.HIGH)
         private set
 
     private var nextMessageId = 1L

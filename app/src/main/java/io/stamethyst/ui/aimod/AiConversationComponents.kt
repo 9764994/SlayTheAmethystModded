@@ -83,7 +83,6 @@ internal fun AiChatComposer(
     onComposerHeightChanged: (Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var effortMenu by remember { mutableStateOf(false) }
     var modelMenu by remember { mutableStateOf(false) }
     val colors = MaterialTheme.colorScheme
     val placeholder = stringResource(R.string.ai_mod_editor_placeholder)
@@ -147,18 +146,7 @@ internal fun AiChatComposer(
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     AiMessageAction(Icons.AttachFile, stringResource(R.string.ai_mod_editor_attach), onAttach, configured && !busy)
                     Box(Modifier.weight(1f)) {
-                        TextButton(onClick = { effortMenu = true }, enabled = !busy) {
-                            Icon(Icons.Pending, null, Modifier.size(16.dp), tint = colors.onSurfaceVariant)
-                            Text(aiEffortLabel(effort), modifier = Modifier.padding(start = 6.dp), color = colors.onSurfaceVariant)
-                        }
-                        DropdownMenu(expanded = effortMenu, onDismissRequest = { effortMenu = false }) {
-                            LlmReasoningEffort.entries.forEach { option ->
-                                DropdownMenuItem(
-                                    text = { Text(aiEffortLabel(option)) },
-                                    onClick = { effortMenu = false; onEffortChange(option) },
-                                )
-                            }
-                        }
+                        AiReasoningEffortPicker(effort, onEffortChange, enabled = !busy, hazeState = hazeState)
                     }
                     AiMessageAction(
                         icon = ImageVector.vectorResource(if (busy) R.drawable.ic_stop else R.drawable.ic_arrow_upward),
@@ -218,16 +206,6 @@ internal fun AiChatComposer(
         }
     }
 }
-
-@Composable
-private fun aiEffortLabel(effort: LlmReasoningEffort): String = stringResource(
-    when (effort) {
-        LlmReasoningEffort.OFF -> R.string.settings_llm_reasoning_off
-        LlmReasoningEffort.LOW -> R.string.settings_llm_reasoning_low
-        LlmReasoningEffort.MEDIUM -> R.string.settings_llm_reasoning_medium
-        LlmReasoningEffort.HIGH -> R.string.settings_llm_reasoning_high
-    },
-)
 
 private val AGENT_PATCH_ID_PATTERN = Regex("patch-\\d+-[0-9a-f]{8}/?")
 

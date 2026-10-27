@@ -1374,9 +1374,9 @@ Patch rule: keep Ori full-resolution glow/bloom rendering, but replace the blur 
     <string name="settings_llm_choose_model">Choose from %1$d remote models</string>
     <string name="settings_llm_reasoning">Thinking effort</string>
     <string name="settings_llm_reasoning_off">Off</string>
-    <string name="settings_llm_reasoning_low">Low</string>
+    <string name="settings_llm_reasoning_low">low</string>
     <string name="settings_llm_reasoning_medium">Medium</string>
-    <string name="settings_llm_reasoning_high">High</string>
+    <string name="settings_llm_reasoning_high">high</string>
     <string name="ai_mod_editor_title">Mod editor</string>
     <string name="ai_mod_editor_history">History</string>
     <string name="ai_mod_editor_history_empty">No conversation history yet</string>

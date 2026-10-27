@@ -345,7 +345,7 @@ fun LauncherLlmSettingsScreen(
                     label = stringResource(R.string.settings_llm_reasoning),
                     valueText = stringResource(reasoningEffort.labelRes),
                     enabled = true,
-                    options = LlmReasoningEffort.entries,
+                    options = LlmReasoningEffort.selectable,
                     optionLabel = { stringResource(it.labelRes) },
                     onOptionSelected = { reasoningEffort = it },
                 )
@@ -510,6 +510,6 @@ private val LlmReasoningEffort.labelRes: Int
     get() = when (this) {
         LlmReasoningEffort.OFF -> R.string.settings_llm_reasoning_off
         LlmReasoningEffort.LOW -> R.string.settings_llm_reasoning_low
-        LlmReasoningEffort.MEDIUM -> R.string.settings_llm_reasoning_medium
         LlmReasoningEffort.HIGH -> R.string.settings_llm_reasoning_high
+        LlmReasoningEffort.MAX -> R.string.settings_llm_reasoning_max
     }

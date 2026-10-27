@@ -14,7 +14,7 @@ data class LlmSettings(
     val modelName: String = "deepseek-v4-flash",
     val endpoint: LlmEndpoint = LlmEndpoint.CHAT_COMPLETIONS,
     val requestTimeoutSeconds: Int = DEFAULT_LLM_REQUEST_TIMEOUT_SECONDS,
-    val reasoningEffort: LlmReasoningEffort = LlmReasoningEffort.OFF,
+    val reasoningEffort: LlmReasoningEffort = LlmReasoningEffort.HIGH,
     val models: List<String> = listOf(modelName),
 ) {
     fun isConfigured(): Boolean = apiKey.isNotBlank() && modelName.isNotBlank() && baseUrl.isNotBlank()
@@ -23,8 +23,18 @@ data class LlmSettings(
 enum class LlmReasoningEffort {
     OFF,
     LOW,
-    MEDIUM,
     HIGH,
+    MAX;
+
+    companion object {
+        val selectable = listOf(LOW, HIGH, MAX)
+
+        fun fromStored(value: String?): LlmReasoningEffort = when (value) {
+            "LOW" -> LOW
+            "MAX" -> MAX
+            else -> HIGH // Legacy OFF/MEDIUM and missing settings use the default tier.
+        }
+    }
 }
 
 class LlmSettingsRepository(context: Context) {
@@ -68,9 +78,7 @@ class LlmSettingsRepository(context: Context) {
                     KEY_REQUEST_TIMEOUT_SECONDS,
                     DEFAULT_LLM_REQUEST_TIMEOUT_SECONDS,
                 ).coerceIn(MIN_LLM_REQUEST_TIMEOUT_SECONDS, MAX_LLM_REQUEST_TIMEOUT_SECONDS),
-                reasoningEffort = it.getString(KEY_REASONING_EFFORT, LlmReasoningEffort.OFF.name)
-                    ?.let { value -> runCatching { LlmReasoningEffort.valueOf(value) }.getOrDefault(LlmReasoningEffort.OFF) }
-                    ?: LlmReasoningEffort.OFF,
+                reasoningEffort = LlmReasoningEffort.fromStored(it.getString(KEY_REASONING_EFFORT, null)),
             )
         }.getOrElse { error ->
             Log.w(TAG, "Unable to read LLM settings.", error)
