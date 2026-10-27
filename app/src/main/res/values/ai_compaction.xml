@@ -1,0 +1,11 @@
+<resources>
+    <string name="ai_compaction_queued">Compaction queued</string>
+    <string name="ai_compaction_started">Compaction started</string>
+    <string name="ai_compaction_running">Compacting conversation…</string>
+    <string name="ai_compaction_completed">Context compacted</string>
+    <string name="ai_compaction_failed">Compaction failed</string>
+    <string name="ai_compaction_interrupted">Compaction interrupted</string>
+    <string name="ai_compaction_usage">%1$s input · %2$s output</string>
+    <string name="ai_compaction_action">Compact conversation</string>
+    <string name="ai_compaction_hint">Creates a structured checkpoint and keeps recent conversation beside it. Earlier messages remain stored.</string>
+</resources>

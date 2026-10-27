@@ -242,6 +242,7 @@ class AiAgentExecutionService : Service() {
         val pendingParts = ArrayList<AiMessagePart>()
         var activeAssistantMessageId = job.assistantMessageId
         var lastFlush = 0L
+        var lastCompactionFlush = 0L
         fun flush(force: Boolean = false) = synchronized(streamLock) {
             val now = android.os.SystemClock.elapsedRealtime()
             if (!force && now - lastFlush < 250L) return@synchronized
@@ -313,6 +314,22 @@ class AiAgentExecutionService : Service() {
             onContext = { state ->
                 checkActive()
                 conversationStore.updateContext(job.conversationId, state)
+            },
+            onCompaction = { progress ->
+                synchronized(streamLock) {
+                    val now = android.os.SystemClock.elapsedRealtime()
+                    if (progress.status != "running" || progress.summary.isEmpty() || now - lastCompactionFlush >= 250) {
+                        flush(true)
+                        updateAssistant(job, conversationStore, activeAssistantMessageId) { message ->
+                            val part = AiMessagePart(AiMessagePartKind.COMPACTION,
+                                kotlinx.serialization.json.Json.encodeToString(progress), toolId = progress.id)
+                            val index = message.parts.indexOfFirst { it.kind == AiMessagePartKind.COMPACTION && it.toolId == progress.id }
+                            message.copy(parts = if (index < 0) message.parts.filterNot { it.kind == AiMessagePartKind.COMPACTION_REQUEST } + part
+                                else message.parts.toMutableList().apply { set(index, part) })
+                        }
+                        lastCompactionFlush = now
+                    }
+                }
             },
             checkCancelled = ::checkActive,
             receiveInbox = { idle ->

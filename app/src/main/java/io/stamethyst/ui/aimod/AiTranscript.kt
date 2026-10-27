@@ -2,7 +2,7 @@ package io.stamethyst.ui.aimod
 
 /** Merge stream deltas in linear time, including histories written by older versions. */
 internal fun coalesceAiParts(parts: List<AiMessagePart>): List<AiMessagePart> {
-    if ((1 until parts.size).none { parts[it].kind != AiMessagePartKind.TOOL && parts[it].kind == parts[it - 1].kind }) return parts
+    if ((1 until parts.size).none { parts[it].kind in setOf(AiMessagePartKind.TEXT, AiMessagePartKind.THINKING) && parts[it].kind == parts[it - 1].kind }) return parts
     return buildList<AiMessagePart> {
         var kind: String? = null
         val text = StringBuilder()
@@ -12,7 +12,7 @@ internal fun coalesceAiParts(parts: List<AiMessagePart>): List<AiMessagePart> {
             kind = null
         }
         parts.forEach { part ->
-            if (part.kind == AiMessagePartKind.TOOL) {
+            if (part.kind !in setOf(AiMessagePartKind.TEXT, AiMessagePartKind.THINKING)) {
                 flush()
                 add(part)
             } else {
@@ -185,6 +185,9 @@ internal fun buildAiTranscriptRows(message: AiEditorMessage): List<AiTranscriptR
         if (message.thinking.isNotBlank()) add(AiMessagePart(AiMessagePartKind.THINKING, message.thinking))
         if (message.text.isNotBlank()) add(AiMessagePart(AiMessagePartKind.TEXT, message.text))
     }
-    if (!message.notice) rows += AiTranscriptRow("${message.id}:footer", message.copy(text = "", thinking = "", parts = emptyList(), tools = emptyList(), attachments = emptyList()), true, message)
+    val compactionOnly = message.parts.isNotEmpty() && message.parts.all {
+        it.kind == AiMessagePartKind.COMPACTION || it.kind == AiMessagePartKind.COMPACTION_REQUEST
+    }
+    if (!message.notice && !compactionOnly) rows += AiTranscriptRow("${message.id}:footer", message.copy(text = "", thinking = "", parts = emptyList(), tools = emptyList(), attachments = emptyList()), true, message)
     return rows
 }

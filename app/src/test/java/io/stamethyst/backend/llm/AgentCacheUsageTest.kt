@@ -107,7 +107,7 @@ class AgentCacheUsageTest {
         val before = manager.prepare()
         val after = manager.prepare(force = true)
         assertEquals(before.first(), after.first())
-        assertTrue((after[1] as UserMessage).singleText().contains("Conversation memory"))
+        assertTrue((after[1] as UserMessage).singleText().contains("<conversation-checkpoint>"))
         assertTrue((after.last() as UserMessage).singleText().contains("alpha"))
         assertEquals(after, manager.prepare())
         assertEquals(after, manager(manager.state).prepare())
@@ -121,7 +121,8 @@ class AgentCacheUsageTest {
         ))
         val manager = manager(original)
         val compacted = manager.prepare(force = true)
-        assertTrue(compacted.filterIsInstance<UserMessage>().any { it.singleText() == "Never enable alpha" })
+        assertEquals("Never enable alpha", manager.state.messages.first().text)
+        assertTrue(manager.state.summary.contains("do not enable"))
         assertTrue((compacted.last() as UserMessage).singleText().contains("Current active patch ID: alpha"))
         assertEquals(compacted, manager.prepare())
         assertEquals(compacted, manager(manager.state).prepare())
@@ -142,6 +143,6 @@ class AgentCacheUsageTest {
     private fun manager(state: AgentContextState) = AgentContextManager(state, "fixed system", "tools",
         AgentContextBudget(), 4, object : ChatModel {
             override fun doChat(request: ChatRequest): ChatResponse = ChatResponse.builder()
-                .aiMessage(AiMessage.from("Verified memory; do not enable.")).build()
+                .aiMessage(AiMessage.from("## Objective\nVerified memory; do not enable.")).build()
         }, {})
 }

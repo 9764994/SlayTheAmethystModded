@@ -1395,7 +1395,7 @@
     <string name="ai_mod_editor_context_explanation">统计说明</string>
     <string name="ai_mod_editor_context_explanation_expanded">已展开</string>
     <string name="ai_mod_editor_context_explanation_collapsed">已收起</string>
-    <string name="ai_mod_editor_context_limit_short_hint">留空：200,000 tokens · 下次任务生效</string>
+    <string name="ai_mod_editor_context_limit_short_hint">留空：200,000 输入 tokens · 输出额度另计 · 下次任务生效</string>
     <string name="ai_mod_editor_cache_title">输入缓存命中率</string>
     <string name="ai_mod_editor_cache_last">最近请求</string>
     <string name="ai_mod_editor_cache_total">累计</string>
@@ -1412,8 +1412,8 @@
     <string name="ai_mod_editor_cache_normalized">检测到网关单独报告未缓存输入，已将缓存读取/创建 tokens 加回输入总量。该口径由网关响应推断。</string>
     <string name="ai_mod_editor_cache_tokens">最近缓存 / 输入 tokens：%1$s / %2$s。缓存统计覆盖：%3$d / %4$d 次响应。</string>
     <string name="ai_mod_editor_cache_hint">缓存读取 tokens ÷ 输入总 tokens。累计值按 token 加权，仅统计服务端报告缓存用量的响应（含空响应重试），不含独立摘要请求。-- 表示未报告。缓存不减少上下文占用；冷启动、压缩和服务端过期可能降低命中率。</string>
-    <string name="ai_mod_editor_context_limit">模型上下文上限</string>
-    <string name="ai_mod_editor_context_limit_hint">留空默认 200,000 tokens。请填写模型实际支持的上限，下次任务生效。</string>
+    <string name="ai_mod_editor_context_limit">输入 Token 限制</string>
+    <string name="ai_mod_editor_context_limit_hint">留空默认 200,000 tokens，包含系统提示词、工具定义和对话历史，不再扣除输出额度。请确保输入与输出合计不超过模型上下文窗口；下次任务生效。</string>
     <string name="ai_mod_editor_tools_available">可用工具（%1$d）</string>
     <string name="ai_mod_editor_tools_empty">当前没有可用工具。</string>
     <string name="ai_mod_editor_tool_desc_unknown">暂无说明。</string>

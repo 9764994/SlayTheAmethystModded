@@ -15,3 +15,39 @@ Reused JNI bridge modules include (non-exhaustive):
 
 Original copyright and license headers in reused source files were preserved where present.
 See `THIRD_PARTY_LICENSES.md` for attribution summary.
+
+## OpenCode V2
+
+The launcher conversation compaction, image-input plumbing and Compose compaction timeline are
+adapted from https://github.com/anomalyco/opencode, branch `v2`, revision
+`4617210822bdbb31e5749751afbfb4584ccedac8`:
+- `packages/core/src/session/compaction.ts`
+- `packages/core/src/session/model-request.ts`
+- `packages/core/src/session/message-v2.ts`
+- `packages/core/src/session/transform.ts`
+- `packages/core/src/tool/read.ts`
+- `packages/session-ui/src/message/message-content.tsx`
+- `packages/session-ui/src/components/timeline-separator.tsx`
+- `packages/gui-extensions/src/context/indicator.tsx`
+
+MIT License
+
+Copyright (c) 2025 opencode
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

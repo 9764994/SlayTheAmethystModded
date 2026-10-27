@@ -4,6 +4,14 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class AiTranscriptTest {
+    @Test fun compactionPartsAreNotCoalescedOrCopiedIntoAssistantFooter() {
+        val parts = listOf(AiMessagePart(AiMessagePartKind.COMPACTION, "first", "one"),
+            AiMessagePart(AiMessagePartKind.COMPACTION, "second", "two"))
+        assertEquals(parts, coalesceAiParts(parts))
+        val rows = buildAiTranscriptRows(AiEditorMessage(2, false, "", parts = parts))
+        assertEquals(2, rows.size)
+        assertTrue(rows.none { it.footer })
+    }
     @Test fun plainTextChunksDoNotInjectCodeFences() {
         val text = "```\n" + "plain\n".repeat(2000) + "```"
         val chunks = splitAiMarkdown(text, preserveFences = false)

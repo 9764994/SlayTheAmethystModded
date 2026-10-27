@@ -3,12 +3,27 @@ package io.stamethyst.ui.aimod
 import io.stamethyst.backend.llm.AgentToolExecutionEvent
 import io.stamethyst.backend.llm.AgentContextMessage
 import io.stamethyst.backend.llm.AgentContextState
+import io.stamethyst.backend.llm.AgentCompactionProgress
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import org.junit.Assert.*
 import org.junit.Test
 
 class AiConversationContextTest {
+    @Test fun compactionTimelineIsDurableButNotReimportedAsUserOrAssistantWork() {
+        val part = AiMessagePart(AiMessagePartKind.COMPACTION,
+            Json.encodeToString(AgentCompactionProgress(id = "checkpoint", status = "completed", summary = "## Objective\nContinue")),
+            toolId = "checkpoint")
+        val session = AiEditorSession("one", messages = listOf(
+            AiEditorMessage(1, true, "goal"),
+            AiEditorMessage(2, false, "", parts = listOf(part)),
+            AiEditorMessage(3, true, "continue"),
+        ))
+        val restored = Json.decodeFromString<AiEditorSession>(Json.encodeToString(session))
+        assertEquals(session, restored)
+        assertEquals(listOf("goal", "continue"), restored.modelContext(4).messages.map { it.text })
+    }
+
     @Test fun legacyMessagesMigrateOnceWithExplicitIncompleteToolResults() {
         val session = AiEditorSession("one", messages = listOf(
             AiEditorMessage(1, true, "inspect", attachments = listOf(AiAttachment("note.txt", "exact attachment"))),
@@ -19,6 +34,7 @@ class AiConversationContextTest {
         val migrated = session.modelContext(4)
         assertEquals(listOf("user", "assistant", "tool", "assistant", "user"), migrated.messages.map { it.role })
         assertTrue((migrated.messages.first().toChatMessages().single() as dev.langchain4j.data.message.UserMessage)
+            .singleText().contains("exact attachment"))
         assertTrue(migrated.messages[2].text.contains("may be incomplete"))
         assertEquals(migrated, session.copy(context = migrated).modelContext(4))
     }

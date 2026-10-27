@@ -33,13 +33,11 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import io.stamethyst.R
 import io.stamethyst.backend.llm.AgentContextState
 import io.stamethyst.backend.llm.AgentCacheStats
 import io.stamethyst.backend.llm.DEFAULT_AGENT_CONTEXT_LIMIT
 import java.text.NumberFormat
-import java.util.Locale
 
 /** One tool exposed to the agent, shown in the context dialog. */
 internal data class AiToolInfo(
@@ -91,6 +89,7 @@ internal fun AiContextCounter(
     tools: List<AiToolInfo> = emptyList(),
     contextState: AgentContextState? = null,
     endpoint: String? = null,
+    onCompact: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val preferences = remember(context) { context.getSharedPreferences("ai_context_limits", Context.MODE_PRIVATE) }
@@ -102,12 +101,6 @@ internal fun AiContextCounter(
     val usageLabel = stringResource(R.string.ai_mod_editor_context)
     val countLabel = tokens?.let { NumberFormat.getIntegerInstance().format(it) }
         ?: stringResource(R.string.ai_mod_editor_context_unknown)
-    val compactCount = when {
-        tokens == null -> "--"
-        tokens >= 1_000_000 -> String.format(Locale.ROOT, "%.1fM", tokens / 1_000_000.0)
-        tokens >= 1_000 -> String.format(Locale.ROOT, "%.1fk", tokens / 1_000.0)
-        else -> tokens.toString()
-    }
     IconButton(
         onClick = {
             limitDraft = limit.takeIf { it > 0 }?.toString().orEmpty()
@@ -118,12 +111,11 @@ internal fun AiContextCounter(
         Box(contentAlignment = Alignment.Center) {
             CircularProgressIndicator(
                 progress = { progress },
-                modifier = Modifier.size(34.dp),
-                strokeWidth = 3.dp,
-                color = if (progress >= 0.9f) colors.error else colors.primary,
+                modifier = Modifier.size(16.dp),
+                strokeWidth = 2.dp,
+                color = colors.onSurfaceVariant,
                 trackColor = colors.outlineVariant.copy(alpha = 0.6f),
             )
-            Text(compactCount, fontSize = 9.sp, letterSpacing = 0.sp, color = colors.onSurfaceVariant, maxLines = 1)
         }
     }
     if (showDetails) {
@@ -140,6 +132,14 @@ internal fun AiContextCounter(
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     AiContextUsagePanel(tokens, limit, busy, state, cache)
+                    if (onCompact != null) {
+                        TextButton(enabled = !busy, onClick = {
+                            showDetails = false
+                            onCompact()
+                        }) { Text(stringResource(R.string.ai_compaction_action)) }
+                        Text(stringResource(R.string.ai_compaction_hint), style = MaterialTheme.typography.bodySmall,
+                            color = colors.onSurfaceVariant)
+                    }
                     OutlinedTextField(
                         value = limitDraft,
                         onValueChange = { limitDraft = it.filter(Char::isDigit) },

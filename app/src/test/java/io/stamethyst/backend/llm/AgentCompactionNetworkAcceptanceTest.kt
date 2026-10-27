@@ -74,7 +74,7 @@ class AgentCompactionNetworkAcceptanceTest {
                     return MockResponse.Builder()
                         .addHeader("Content-Type", "application/json")
                         .headersDelay(if (body == firstFragment) 65 else 0, TimeUnit.SECONDS)
-                        .body("""{"choices":[{"index":0,"message":{"role":"assistant","content":"Verified memory: patch-alpha; compilation pending."},"finish_reason":"stop"}]}""")
+                        .body("""{"choices":[{"index":0,"message":{"role":"assistant","content":"## Objective\nVerified memory: patch-alpha; compilation pending."},"finish_reason":"stop"}]}""")
                         .build()
                 }
             }
@@ -158,9 +158,9 @@ class AgentCompactionNetworkAcceptanceTest {
         val before = manager.requestEstimate()
         val prepared = manager.prepare(force = true)
         val state = manager.state
-        assertTrue("The real summarizer must merge multiple fragments", summaryCalls > 1)
+        assertEquals("V2 creates one checkpoint rather than rolling through fragments", 1, summaryCalls)
         assertEquals(original.messages, state.messages.take(original.messages.size))
-        assertEquals(3, state.summarizedCount)
+        assertEquals(original.messages.size + 1, state.summarizedCount) // Includes the appended launcher state notice.
         assertEquals(1, state.compactionCount)
         assertEquals("patch-alpha-42", state.activePatchId)
         assertTrue(state.summary.contains("patch-alpha-42"))
@@ -169,10 +169,10 @@ class AgentCompactionNetworkAcceptanceTest {
         assertTrue(estimatedTokens < before)
         assertTrue(estimatedTokens < manager.budget.inputLimit)
         assertEquals(state, checkpoints.last())
-        assertEquals(original.messages[3].text, (prepared[2] as UserMessage).singleText())
-        assertEquals(recentCall.id(), (prepared[3] as AiMessage).toolExecutionRequests().single().id())
-        assertEquals(seed.thinking(), (prepared[3] as AiMessage).thinking())
-        assertEquals(recentCall.id(), (prepared[4] as ToolExecutionResultMessage).id())
+        assertTrue(state.recent.contains(original.messages[3].text))
+        assertTrue(state.recent.contains("[Assistant tool call]: read_workspace_file"))
+        assertTrue(state.recent.contains("[Tool result]: Verified signature"))
+        assertTrue(prepared.none { it is ToolExecutionResultMessage })
         assertTrue((prepared[1] as UserMessage).singleText().contains(state.summary))
 
         val restored = Json.decodeFromString<AgentContextState>(Json.encodeToString(state))

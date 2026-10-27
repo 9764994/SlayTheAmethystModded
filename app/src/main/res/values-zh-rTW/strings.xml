@@ -1381,7 +1381,7 @@
     <string name="ai_mod_editor_context_explanation">統計說明</string>
     <string name="ai_mod_editor_context_explanation_expanded">已展開</string>
     <string name="ai_mod_editor_context_explanation_collapsed">已收起</string>
-    <string name="ai_mod_editor_context_limit_short_hint">留空：200,000 tokens · 下次任務生效</string>
+    <string name="ai_mod_editor_context_limit_short_hint">留空：200,000 輸入 tokens · 輸出額度另計 · 下次任務生效</string>
     <string name="ai_mod_editor_cache_title">輸入快取命中率</string>
     <string name="ai_mod_editor_cache_last">最近請求</string>
     <string name="ai_mod_editor_cache_total">累計</string>
@@ -1398,8 +1398,8 @@
     <string name="ai_mod_editor_cache_normalized">偵測到閘道分開回報未快取輸入，已將快取讀取/建立 tokens 加回輸入總量。此口徑由閘道回應推斷。</string>
     <string name="ai_mod_editor_cache_tokens">最近快取 / 輸入 tokens：%1$s / %2$s。快取統計涵蓋：%3$d / %4$d 次回應。</string>
     <string name="ai_mod_editor_cache_hint">快取讀取 tokens ÷ 輸入總 tokens。累計值按 token 加權，只統計伺服器回報快取用量的回應（含空回應重試），不含獨立摘要請求。-- 表示未回報。快取不減少上下文佔用；冷啟動、壓縮和伺服器過期可能降低命中率。</string>
-    <string name="ai_mod_editor_context_limit">模型上下文上限</string>
-    <string name="ai_mod_editor_context_limit_hint">留空預設 200,000 tokens。請填寫模型實際支援的上限，下次任務生效。</string>
+    <string name="ai_mod_editor_context_limit">輸入 Token 限制</string>
+    <string name="ai_mod_editor_context_limit_hint">留空預設 200,000 tokens，包含系統提示詞、工具定義與對話歷史，不再扣除輸出額度。請確保輸入與輸出合計不超過模型上下文視窗；下次任務生效。</string>
     <string name="ai_mod_editor_tools_available">可用工具（%1$d）</string>
     <string name="ai_mod_editor_tools_empty">目前沒有可用工具。</string>
     <string name="ai_mod_editor_tool_desc_unknown">暫無說明。</string>

@@ -1,0 +1,11 @@
+<resources>
+    <string name="ai_compaction_queued">压缩已排队</string>
+    <string name="ai_compaction_started">开始压缩上下文</string>
+    <string name="ai_compaction_running">正在压缩会话…</string>
+    <string name="ai_compaction_completed">上下文已压缩</string>
+    <string name="ai_compaction_failed">压缩失败</string>
+    <string name="ai_compaction_interrupted">压缩已中断</string>
+    <string name="ai_compaction_usage">输入 %1$s · 输出 %2$s</string>
+    <string name="ai_compaction_action">压缩会话</string>
+    <string name="ai_compaction_hint">生成结构化检查点，并在旁边保留近期对话。较早的消息仍保存在会话中。</string>
+</resources>

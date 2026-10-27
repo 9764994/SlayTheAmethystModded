@@ -173,6 +173,8 @@ internal object AiMessagePartKind {
     const val TEXT = "text"
     const val THINKING = "thinking"
     const val TOOL = "tool"
+    const val COMPACTION = "compaction"
+    const val COMPACTION_REQUEST = "compaction-request"
 }
 
 @Serializable
@@ -660,6 +662,7 @@ internal class AiModEditorViewModel(
                 assistantId = id
                 session.copy(messages = session.messages + AiEditorMessage(
                     id, false, "", streaming = true, modelName = llmSettings.modelName,
+                    parts = if (compact) listOf(AiMessagePart(AiMessagePartKind.COMPACTION_REQUEST)) else emptyList(),
                 ))
             }
             val job = AiAgentJobRecord(
@@ -1013,6 +1016,7 @@ fun LauncherAiModEditorScreen(
                         tools = viewModel.availableTools(),
                         contextState = viewModel.sessions.firstOrNull { it.id == viewModel.currentSessionId }?.context,
                         endpoint = settings.endpoint.name,
+                        onCompact = viewModel::compactConversation,
                     )
                 },
                 )
@@ -1344,6 +1348,12 @@ internal fun AiMessageCard(
                 if (message.parts.isNotEmpty()) {
                     remember(message.parts) { coalesceAiParts(message.parts) }.forEachIndexed { partIndex, part ->
                         when (part.kind) {
+                            AiMessagePartKind.COMPACTION -> AiCompactionPart(part.content, message.streaming)
+                            AiMessagePartKind.COMPACTION_REQUEST -> if (message.parts.none { it.kind == AiMessagePartKind.COMPACTION })
+                                Column {
+                                    AiCompactionDivider(stringResource(if (message.streaming) R.string.ai_compaction_queued else R.string.ai_compaction_interrupted))
+                                    if (!message.streaming && message.errorMessage.isNotBlank()) Text(message.errorMessage, color = colors.error)
+                                }
                             AiMessagePartKind.TEXT -> AiAssistantText(part.content, bodyStyle, colors)
                             // Content grows during streaming; keep each block's state tied to its position.
                             AiMessagePartKind.THINKING -> key(message.id, partIndex) {

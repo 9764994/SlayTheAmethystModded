@@ -66,6 +66,7 @@ internal class AiModAgentExecutor(
     private val onRetry: (retryNumber: Int, delaySeconds: Long, error: Throwable) -> Unit = { _, _, _ -> },
     private val onContext: (AgentContextState) -> Unit = {},
     private val checkCancelled: () -> Unit = {},
+    private val onCompaction: (io.stamethyst.backend.llm.AgentCompactionProgress) -> Unit = {},
     private val receiveInbox: (Boolean) -> Pair<AiEditorMessage, Long>? = { null },
 ) {
     private val settingsRepository = io.stamethyst.backend.llm.LlmSettingsRepository(context)
@@ -122,11 +123,15 @@ internal class AiModAgentExecutor(
         val modelKey = AiContextLimits.key(settings.baseUrl, settings.modelName)
         val initial = (if (saved.modelKey == modelKey) saved else saved.copy(
             modelKey = modelKey, estimateScale = 1.0, lastInputTokens = null, lastOutputTokens = null,
+            measuredMessageCount = null,
             cacheStats = AgentCacheStats(),
         )).let { state ->
             // A gateway's Chat and Responses routes may use different input accounting conventions.
             if (state.cacheStats.endpoint == settings.endpoint.name) state else state.copy(
                 cacheStats = AgentCacheStats(endpoint = settings.endpoint.name),
+                measuredMessageCount = null,
+                lastInputTokens = null,
+                lastOutputTokens = null,
             )
         }
         val manager = AgentContextManager(
@@ -138,10 +143,19 @@ internal class AiModAgentExecutor(
             model = compactionModel,
             checkpoint = onContext,
             checkCancelled = checkCancelled,
+            toolSpecifications = registry.toolSpecifications(),
+            streamingModel = AgentChatModelFactory.createStreaming(config.copy(reasoningEffort = LlmReasoningEffort.OFF)),
+            summaryTimeoutMillis = config.requestTimeoutSeconds.toLong() * 1_000,
+            onCompaction = onCompaction,
             supportsImageInput = settings.supportsImageInput,
         )
         contextManager = manager
         manager.persist()
+        if (session.messages.firstOrNull { it.id == assistantMessageId }?.parts
+                ?.any { it.kind == AiMessagePartKind.COMPACTION_REQUEST } == true) {
+            manager.prepare(manual = true)
+            return AiAgentExecutionResult("", manager.state.estimatedTokens)
+        }
         val gateway = PolicyGatedAgentGateway(
             chatModel = model,
             agentWorkspaceRoot = workspaceAccessRoot,

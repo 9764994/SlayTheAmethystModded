@@ -19,11 +19,16 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class AgentConversationContextTest {
-    @Test fun defaultsReserveReplyAndSafetySpace() {
+    @Test fun configuredInputLimitDoesNotDeductOutputBudget() {
         val budget = AgentContextBudget()
         assertEquals(200_000, budget.limit)
-        assertEquals(16_000, budget.outputReserve)
-        assertEquals(174_000, budget.inputLimit)
+        assertEquals(20_000, budget.outputReserve)
+        assertEquals(200_000, budget.inputLimit)
+        assertEquals(20_000, budget.summaryOutputLimit)
+        assertEquals(8000, AgentContextBudget(8000).inputLimit)
+        listOf(1, 128, 32_000, 100_000, Int.MAX_VALUE).forEach { limit ->
+            assertEquals(limit, AgentContextBudget(limit).inputLimit)
+        }
     }
 
     @Test fun persistedProtocolRetainsRolesCallIdsAndThinking() {
@@ -40,7 +45,7 @@ class AgentConversationContextTest {
         assertEquals("exact result", (messages[3] as ToolExecutionResultMessage).text())
     }
 
-    @Test fun compactionChunksOversizedHistoryAndPreservesRecentToolGroup() {
+    @Test fun compactionCreatesOneCheckpointWithRecentToolGroupAsText() {
         val recent = listOf(
             AgentContextMessage(3, "user", "Keep this exact request"),
             AgentContextMessage(4, "assistant", calls = listOf(AgentContextToolCall("recent", "read", "{}"))),
@@ -51,19 +56,22 @@ class AgentConversationContextTest {
         val model = fake { request ->
             requests += request
             assertTrue(request.toolSpecifications().isEmpty())
-            assertTrue(request.messages().joinToString().length < 15_000)
-            response("Verified memory: patch-alpha, src/Test.java; compilation pending.")
+            assertTrue((request.messages().last() as UserMessage).singleText().contains("## Objective"))
+            response("## Objective\nVerified memory: patch-alpha, src/Test.java; compilation pending.")
         }
         val checkpoints = ArrayList<AgentContextState>()
         val manager = manager(original, model = model, limit = 8000, checkpoint = checkpoints::add)
         val active = manager.prepare()
-        assertTrue(requests.size > 1)
+        assertEquals(1, requests.size)
         assertEquals(original.messages, manager.state.messages)
-        assertEquals(2, manager.state.summarizedCount)
+        assertEquals(original.messages.size, manager.state.summarizedCount)
         assertEquals(1, manager.state.compactionCount)
-        assertEquals("Keep this exact request", (active[2] as UserMessage).singleText())
-        assertEquals("recent", (active[3] as AiMessage).toolExecutionRequests().single().id())
-        assertEquals("recent", (active[4] as ToolExecutionResultMessage).id())
+        assertEquals(2, active.size)
+        val checkpoint = (active[1] as UserMessage).singleText()
+        assertTrue(checkpoint.contains("<conversation-checkpoint>"))
+        assertTrue(checkpoint.contains("[User]: Keep this exact request"))
+        assertTrue(checkpoint.contains("[Assistant tool call]: read({})"))
+        assertTrue(checkpoint.contains("[Tool result]: verified signature"))
         assertTrue(manager.state.estimatedTokens!! < 8000)
         val restored = manager(manager.state, limit = 8000).prepare()
         assertEquals(active, restored)
@@ -91,18 +99,59 @@ class AgentConversationContextTest {
         }
     }
 
-    @Test fun transientEmptySummaryRetriesWithSmallerFragment() {
+    @Test fun transientEmptySummaryGetsOneTemplateReminder() {
         var calls = 0
         val original = longHistory()
         val manager = manager(original, limit = 8000, model = fake {
-            if (++calls == 1) response("") else response("Recovered memory")
+            if (++calls == 1) response("") else response("## Objective\nRecovered memory")
         })
 
         manager.prepare()
 
-        assertTrue(calls > 1)
-        assertEquals("Recovered memory", manager.state.summary)
+        assertEquals(2, calls)
+        assertEquals("## Objective\nRecovered memory", manager.state.summary)
         assertEquals(original.messages, manager.state.messages)
+    }
+
+    @Test fun truncatedSummaryFailsWithoutRetryOrCommittingPartialMemory() {
+        val requests = ArrayList<ChatRequest>()
+        val original = longHistory()
+        val manager = manager(original, limit = 8000, model = fake { request ->
+            requests += request
+            response("## Objective\nunfinished", FinishReason.LENGTH)
+        })
+
+        val error = assertThrows(AgentCompactionException::class.java) { manager.prepare() }
+
+        assertEquals(1, requests.size)
+        assertTrue(error.message!!.contains("output token limit"))
+        assertEquals("", manager.state.summary)
+        assertEquals(original.messages, manager.state.messages)
+    }
+
+    @Test fun unstructuredSummaryGetsExactlyOneReminder() {
+        val requests = ArrayList<ChatRequest>()
+        val manager = manager(longHistory(), limit = 8000, model = fake { request ->
+            requests += request
+            response("Not a structured summary")
+        })
+
+        assertThrows(AgentCompactionException::class.java) { manager.prepare() }
+
+        assertEquals(2, requests.size)
+        assertEquals(requests[0].messages(), requests[1].messages().dropLast(1))
+        assertTrue((requests[1].messages().last() as UserMessage).singleText().contains("previous response"))
+    }
+
+    @Test fun invalidSummaryReportsMetadataWithoutLeakingContent() {
+        val original = longHistory()
+        val manager = manager(original, limit = 8000, model = fake { response("sensitive", FinishReason.LENGTH) })
+
+        val error = assertThrows(AgentCompactionException::class.java) { manager.prepare() }
+
+        assertTrue(error.message!!.contains("output token limit"))
+        assertFalse(error.message!!.contains("sensitive"))
+        assertEquals(original, manager.state)
     }
 
     @Test fun oneHugeCurrentUserMessageFailsWithoutLossySummarization() {
@@ -112,7 +161,7 @@ class AgentConversationContextTest {
         assertEquals(original, manager.state)
     }
 
-    @Test fun longSingleToolTurnRetainsUserVerbatimAndCompactsWholeCallGroup() {
+    @Test fun longSingleToolTurnFlattensToolOutputAndCompactsWholeExchange() {
         val original = AgentContextState(messages = listOf(
             AgentContextMessage(1, "user", "Do not enable patch-alpha"),
             AgentContextMessage(2, "assistant", calls = listOf(AgentContextToolCall("big", "read", "{}"))),
@@ -121,8 +170,9 @@ class AgentConversationContextTest {
         val manager = manager(original, limit = 8000)
         val active = manager.prepare()
         assertEquals(3, manager.state.summarizedCount)
-        assertEquals(3, active.size)
-        assertEquals("Do not enable patch-alpha", (active[2] as UserMessage).singleText())
+        assertEquals(2, active.size)
+        assertTrue((active[1] as UserMessage).singleText().contains("## Objective"))
+        assertEquals("", manager.state.recent)
         assertEquals(original.messages, manager.state.messages)
     }
 
@@ -275,22 +325,34 @@ class AgentConversationContextTest {
         assertEquals(original, manager.state)
     }
 
-    @Test fun summaryOverflowRetriesSmallerFragmentsAndEventuallyCompletes() {
+    @Test fun summaryOverflowFlattensAndDropsWholeOldExchanges() {
         var failures = 0
         var successes = 0
-        val original = longHistory()
-        val manager = manager(original, limit = 8000, model = fake { request ->
-            val fragment = (request.messages().last() as UserMessage).singleText().substringAfter("Next history fragment")
-            if (fragment.length > 1000) {
+        val requestSizes = ArrayList<Int>()
+        val original = AgentContextState(messages = buildList {
+            repeat(10) { i ->
+                add(AgentContextMessage(i.toLong(), "user", "goal-$i"))
+                add(AgentContextMessage(i.toLong(), "assistant", "x".repeat(9000)))
+            }
+        })
+        val manager = manager(original, limit = 32_000, model = fake { request ->
+            val size = request.messages().sumOf { when (it) {
+                    is UserMessage -> it.singleText().length
+                    is AiMessage -> it.text().orEmpty().length
+                    is SystemMessage -> it.text().length
+                    else -> 0
+                } }
+            requestSizes += size
+            if (size > 24_000) {
                 failures++
                 throw IllegalArgumentException("context_length_exceeded")
             }
             successes++
-            response("memory")
+            response("## Objective\nmemory")
         })
-        manager.prepare()
-        assertTrue(failures in 1..3)
-        assertTrue(successes > 1)
+        manager.prepare(manual = true)
+        assertTrue("Expected overflow recovery; request sizes=$requestSizes, failures=$failures", failures in 1..3)
+        assertEquals(1, successes)
         assertEquals(original.messages, manager.state.messages)
         assertEquals(1, manager.state.compactionCount)
     }
@@ -305,7 +367,7 @@ class AgentConversationContextTest {
     @Test fun repeatedProviderOverflowStopsAfterOneRecoveryAttempt() {
         var attempts = 0
         val model = fake { request ->
-            if ((request.messages().first() as SystemMessage).text().startsWith("Summarize")) response("memory")
+            if ((request.messages().last() as? UserMessage)?.singleText()?.startsWith("You MUST summarize") == true) response("## Objective\nmemory")
             else { attempts++; throw IllegalArgumentException("context_length_exceeded") }
         }
         val manager = manager(AgentContextState(messages = listOf(
@@ -324,9 +386,9 @@ class AgentConversationContextTest {
         var modelTurns = 0
         var summaryTurns = 0
         val model = fake { request ->
-            if ((request.messages().first() as SystemMessage).text().startsWith("Summarize")) {
+            if ((request.messages().last() as? UserMessage)?.singleText()?.startsWith("You MUST summarize") == true) {
                 summaryTurns++
-                response("Old context memory")
+                response("## Objective\nOld context memory")
             } else when (++modelTurns) {
                 1 -> ChatResponse.builder().aiMessage(AiMessage.from(ToolExecutionRequest.builder()
                     .id("write-1").name("write").arguments("{}").build())).build()
@@ -360,7 +422,7 @@ class AgentConversationContextTest {
                 else { handler.onPartialResponse("done"); handler.onCompleteResponse(response("done")) }
             }
         }
-        val model = fake { response("memory") }
+        val model = fake { response("## Objective\nmemory") }
         val manager = manager(AgentContextState(messages = listOf(
             AgentContextMessage(1, "user", "old request ".repeat(300)),
             AgentContextMessage(2, "assistant", "old answer"),
@@ -380,7 +442,7 @@ class AgentConversationContextTest {
 
     private fun manager(
         state: AgentContextState,
-        model: ChatModel = fake { response("Verified memory: keep user constraints and patch-alpha.") },
+        model: ChatModel = fake { response("## Objective\nVerified memory: keep user constraints and patch-alpha.") },
         limit: Int = 200_000,
         checkpoint: (AgentContextState) -> Unit = {},
     ) = AgentContextManager(state, "system", "tools", AgentContextBudget(limit), 10, model, checkpoint)
