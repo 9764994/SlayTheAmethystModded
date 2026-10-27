@@ -149,7 +149,20 @@ Android 11+ 的包可见性会过滤 `PackageManager` 的查询结果。`<querie
 否则 `queryIntentActivities(ACTION_MAIN)` 只会返回已显式声明包名的那几个应用，插件永远扫描不到，
 表现为「设置里渲染后端列表没有插件条目」。日志里会看到 `Renderer plugin scan: 0 renderer(s)`。
 
-## 7. 已知限制
+## 7. 原生桥接
+
+`app/src/main/jni/egl_bridge.c` 按 `AMETHYST_RENDERER` 字符串选择桥接实现。插件渲染器使用
+`plugin_external`，走通用 EGL 分支：EGL 提交由插件环境变量 `POJAVEXEC_EGL` 指定
+（插件 APK 的 `nativeLibraryDir` 已加入 `LD_LIBRARY_PATH`），日志里会打印：
+
+```
+EGLBridge: external renderer plugin, EGL=libmobileglues.so
+```
+
+早期实现漏了这一分支，会打印 `Unknown renderer "plugin_external", fallback to GL4ES bridge`。
+功能上仍能工作（落到同一个通用 EGL 桥），但日志具有误导性，已修正。
+
+## 8. 已知限制
 
 - **ABI 必须匹配**：插件需提供与设备一致的 `lib/<abi>/`（本项目 `arm64-v8a` 为主）。
 - **插件更新不自动感知**：`RendererPluginRegistry` 有进程内缓存；插件安装/卸载/升级后需重启应用，

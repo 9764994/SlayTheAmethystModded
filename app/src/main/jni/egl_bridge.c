@@ -349,6 +349,15 @@ int pojavInitOpenGL() {
         load_vulkan();
         setenv("GALLIUM_DRIVER","zink",1);
         set_osm_bridge_tbl();
+    } else if (strcmp(renderer, "plugin_external") == 0) {
+        /* 外部渲染器插件（FCL / ZalithLauncher RendererPlugin 协议）：
+         * GL/EGL 实现由插件 APK 提供，加载路径放在 POJAVEXEC_EGL 里，
+         * 桥接层沿用通用 EGL 路径（与 opengles* 分支一致）。 */
+        const char* pluginEgl = getenv("POJAVEXEC_EGL");
+        pojav_environ->config_renderer = RENDERER_GL4ES;
+        printf("EGLBridge: external renderer plugin, EGL=%s\n",
+               (pluginEgl != NULL && pluginEgl[0] != '\0') ? pluginEgl : "(unset)");
+        set_gl_bridge_tbl();
     } else {
         printf("EGLBridge: Unknown renderer \"%s\", fallback to GL4ES bridge\n", renderer);
         pojav_environ->config_renderer = RENDERER_GL4ES;
