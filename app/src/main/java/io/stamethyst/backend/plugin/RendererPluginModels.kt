@@ -84,9 +84,21 @@ data class RendererPlugin(
     /** 持久化用的稳定 id，插件包名 + 渲染器 id */
     val id: String get() = "$packageName/$rendererId"
 
-    val glLibraryPath: String get() = toAbsolutePath(glLibraryName)
+    val glLibraryPath: String get() = resolveLibraryPath(glLibraryName)
 
-    val eglLibraryPath: String get() = if (eglLibraryName.isBlank()) "" else toAbsolutePath(eglLibraryName)
+    val eglLibraryPath: String get() = if (eglLibraryName.isBlank()) "" else resolveLibraryPath(eglLibraryName)
+
+    /**
+     * 插件目录里存在该库时返回绝对路径，否则保留裸名交给动态链接器
+     * （`libEGL.so` 这类系统库本来就不在插件 APK 里）。
+     */
+    private fun resolveLibraryPath(name: String): String {
+        if (name.isBlank()) return name
+        if (name.startsWith("/")) return name
+        if (nativeLibraryDir.isBlank()) return name
+        val candidate = java.io.File(nativeLibraryDir, name)
+        return if (candidate.isFile) candidate.absolutePath else name
+    }
 
     val hasEglLibrary: Boolean get() = eglLibraryName.isNotBlank()
 

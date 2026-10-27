@@ -172,8 +172,20 @@ EGLBridge: external renderer plugin, EGL=libmobileglues.so
 OSMesa 库名由 `LIB_MESA_NAME` 指定（插件里可能是 `libOSMesa_25.so` 这类带版本的名字），
 `ctxbridges/osmesa_loader.c` 优先使用该变量，未设置时回落到 `libOSMesa.so.8` / `libOSMesa.so`。
 
-插件库的可用性判断会依次检查：配置里的绝对路径、插件 `nativeLibraryDir`、以及 base / split APK
-内的 `lib/<abi>/`；任何一处命中即视为可用（`extractNativeLibs=false` 的插件依赖最后一条）。
+插件库的可用性判断会依次检查：配置里的绝对路径、插件 `nativeLibraryDir`、base / split APK 内的
+`lib/<abi>/`，最后回落到系统库目录（`/system/lib64`、`/vendor/lib64` 等）；任何一处命中即视为可用。
+
+最后一条是必需的：像 Zink 渲染器插件只打包 `libOSMesa_25.so`，EGL 声明的是系统库 `libEGL.so`。
+库路径解析同理——插件目录里没有的库保留裸名交给动态链接器，只有插件自带的库才拼绝对路径。
+
+实测样例（`Zink Renderer_1.0.apk`）：
+
+```xml
+<meta-data android:name="renderer" android:value="Zink:libOSMesa_25.so:libEGL.so"/>
+<meta-data android:name="pojavEnv" android:value="POJAV_RENDERER=vulkan_zink:LIB_MESA_NAME=libOSMesa_25.so"/>
+```
+
+其 APK 内只有 `lib/arm64-v8a/libOSMesa_25.so`；`libEGL.so` 由系统提供。
 
 ## 8. 已知限制
 

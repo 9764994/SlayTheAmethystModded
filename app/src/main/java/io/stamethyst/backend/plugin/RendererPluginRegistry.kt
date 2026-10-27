@@ -13,6 +13,14 @@ import java.util.zip.ZipFile
 object RendererPluginRegistry {
     private const val TAG = "RendererPluginRegistry"
 
+    /** 系统库搜索目录；插件声明的 EGL/GL 通常落在这些位置（libEGL.so 等） */
+    private val LINKER_LIBRARY_DIRECTORIES = listOf(
+        "/system/lib64",
+        "/vendor/lib64",
+        "/system/lib",
+        "/vendor/lib"
+    )
+
     @Volatile
     private var cachedPlugins: List<RendererPlugin>? = null
 
@@ -89,7 +97,14 @@ object RendererPluginRegistry {
             val inNativeDir = File(plugin.nativeLibraryDir, absolute.name)
             if (inNativeDir.isFile) return true
         }
-        return apkContainsLibrary(plugin, absolute.name)
+        if (apkContainsLibrary(plugin, absolute.name)) return true
+        // libEGL.so 这类库由系统提供，插件 APK 里不会有，按系统库目录探测。
+        return systemLibraryExists(absolute.name)
+    }
+
+    private fun systemLibraryExists(libraryName: String): Boolean {
+        val directories = LINKER_LIBRARY_DIRECTORIES
+        return directories.any { directory -> File(directory, libraryName).isFile }
     }
 
     /**

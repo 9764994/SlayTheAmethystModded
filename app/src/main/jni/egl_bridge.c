@@ -358,7 +358,13 @@ int pojavInitOpenGL() {
         if (pluginMesa != NULL && pluginMesa[0] != '\0') {
             /* OSMesa 型插件（VirGL / Zink 一类，桌面 GL 由插件自带的 OSMesa 提供） */
             pojav_environ->config_renderer = RENDERER_VK_ZINK;
-            /* 插件自带的 OSMesa 不依赖系统 Vulkan，这里不调用 load_vulkan()。 */
+            /* 插件自带的 OSMesa 不依赖系统 Vulkan，这里不调用 load_vulkan()。
+             * 插件若声明 POJAV_RENDERER=vulkan_zink，则按 Zink 语义补齐驱动变量。 */
+            const char* pluginPojavRenderer = getenv("POJAV_RENDERER");
+            if (pluginPojavRenderer != NULL && strcmp(pluginPojavRenderer, "vulkan_zink") == 0) {
+                setenv("GALLIUM_DRIVER", "zink", 1);
+                setenv("MESA_LOADER_DRIVER_OVERRIDE", "zink", 1);
+            }
             printf("EGLBridge: external renderer plugin (OSMesa), LIB_MESA_NAME=%s\n", pluginMesa);
             set_osm_bridge_tbl();
         } else {
