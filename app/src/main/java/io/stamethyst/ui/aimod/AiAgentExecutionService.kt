@@ -64,6 +64,9 @@ internal fun applyToolExecutionEvent(
                 result = displayResult.take(12_000),
                 failed = event.failed,
                 truncated = displayResult.length > 12_000,
+                imageAttachments = event.attachments.filter { it.isImage }.map {
+                    AiAttachment(name = it.name, mime = it.mime, data = it.data)
+                },
             )
         } else {
             tool

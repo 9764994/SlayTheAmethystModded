@@ -1,5 +1,8 @@
 package io.stamethyst.ui.aimod
 
+import android.graphics.BitmapFactory
+import android.util.Base64
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -40,6 +43,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.res.stringResource
@@ -51,6 +55,8 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import dev.chrisbanes.haze.HazeState
 import io.stamethyst.R
 import io.stamethyst.backend.llm.LlmReasoningEffort
@@ -252,6 +258,7 @@ private fun withoutPatchId(value: String): String =
 @Composable
 internal fun AiToolCallRow(tool: AiToolCall, streaming: Boolean) {
     var expanded by rememberSaveable(tool.id) { mutableStateOf(false) }
+    var enlargedImage by remember { mutableStateOf<AiAttachment?>(null) }
     val colors = MaterialTheme.colorScheme
     val path by produceState("", tool.arguments) {
         value = withContext(Dispatchers.Default) {
@@ -280,7 +287,12 @@ internal fun AiToolCallRow(tool: AiToolCall, streaming: Boolean) {
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Icon(agentToolIcon(tool.name), null, Modifier.size(16.dp), tint = if (tool.failed) colors.error else colors.onSurfaceVariant)
+            Icon(
+                if (tool.imageAttachments.isNotEmpty()) ImageVector.vectorResource(R.drawable.ic_image_mod) else agentToolIcon(tool.name),
+                null,
+                Modifier.size(16.dp),
+                tint = if (tool.failed) colors.error else colors.onSurfaceVariant,
+            )
             if (tool.result == null && streaming && !tool.failed) {
                 CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 1.5.dp, color = colors.onSurfaceVariant)
             }
@@ -294,6 +306,9 @@ internal fun AiToolCallRow(tool: AiToolCall, streaming: Boolean) {
         if (expanded) {
             Column(Modifier.padding(start = 24.dp, bottom = 6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(status, color = if (tool.failed) colors.error else colors.onSurfaceVariant, style = MaterialTheme.typography.labelSmall)
+                tool.imageAttachments.forEach { image ->
+                    AiToolImagePreview(image, onClick = { enlargedImage = image })
+                }
                 val chunks by produceState<List<String>>(emptyList(), tool.arguments, tool.result) {
                     value = withContext(Dispatchers.Default) {
                         splitAiMarkdown(withoutPatchId(tool.arguments), preserveFences = false) +
@@ -306,6 +321,54 @@ internal fun AiToolCallRow(tool: AiToolCall, streaming: Boolean) {
                     }
                 }
                 if (tool.truncated) Text(stringResource(R.string.ai_mod_editor_tool_truncated), style = MaterialTheme.typography.labelSmall, color = colors.onSurfaceVariant)
+            }
+        }
+    }
+    enlargedImage?.let { image -> AiToolImageDialog(image, onDismiss = { enlargedImage = null }) }
+}
+
+@Composable
+private fun AiToolImagePreview(image: AiAttachment, onClick: () -> Unit) {
+    val bitmap by produceState<android.graphics.Bitmap?>(null, image.data) {
+        value = withContext(Dispatchers.Default) {
+            runCatching { Base64.decode(image.data, Base64.DEFAULT) }
+                .mapCatching { BitmapFactory.decodeByteArray(it, 0, it.size) }
+                .getOrNull()
+        }
+    }
+    bitmap?.let {
+        Image(
+            bitmap = it.asImageBitmap(),
+            contentDescription = stringResource(R.string.ai_mod_editor_tool_image_preview, image.name),
+            modifier = Modifier.fillMaxWidth().heightIn(max = 220.dp).clip(RoundedCornerShape(8.dp))
+                .clickable(onClick = onClick),
+            contentScale = androidx.compose.ui.layout.ContentScale.Fit,
+        )
+    }
+}
+
+@Composable
+private fun AiToolImageDialog(image: AiAttachment, onDismiss: () -> Unit) {
+    val bitmap by produceState<android.graphics.Bitmap?>(null, image.data) {
+        value = withContext(Dispatchers.Default) {
+            runCatching { Base64.decode(image.data, Base64.DEFAULT) }
+                .mapCatching { BitmapFactory.decodeByteArray(it, 0, it.size) }
+                .getOrNull()
+        }
+    }
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Surface(
+            modifier = Modifier.fillMaxWidth().padding(16.dp).clickable(onClick = onDismiss),
+            shape = RoundedCornerShape(12.dp),
+            color = MaterialTheme.colorScheme.surface,
+        ) {
+            bitmap?.let {
+                Image(
+                    bitmap = it.asImageBitmap(),
+                    contentDescription = stringResource(R.string.ai_mod_editor_tool_image_preview, image.name),
+                    modifier = Modifier.fillMaxWidth().heightIn(max = 680.dp),
+                    contentScale = androidx.compose.ui.layout.ContentScale.Fit,
+                )
             }
         }
     }

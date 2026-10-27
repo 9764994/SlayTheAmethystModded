@@ -10,6 +10,27 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class AiConversationContextTest {
+    @Test fun toolImageAttachmentsSurviveCompletionAndSerializationWithoutTextTruncation() {
+        val started = applyToolExecutionEvent(
+            AiEditorMessage(2, false, ""),
+            AgentToolExecutionEvent("image", "read_agent_mod_resource", "{}"),
+        )
+        val data = "A".repeat(16_000)
+        val completed = applyToolExecutionEvent(started, AgentToolExecutionEvent(
+            "image", "read_agent_mod_resource", "{}", result = "{\"type\":\"image\"}",
+            attachments = listOf(
+                io.stamethyst.backend.llm.AgentContextAttachment("art.png", mime = "image/png", data = data),
+                io.stamethyst.backend.llm.AgentContextAttachment("note.txt", content = "text"),
+            ),
+        ))
+        val tool = completed.tools.single()
+        assertEquals(listOf(AiAttachment("art.png", mime = "image/png", data = data)), tool.imageAttachments)
+        assertFalse(tool.truncated)
+        assertEquals(completed, Json.decodeFromString<AiEditorMessage>(Json.encodeToString(completed)))
+        assertTrue(Json.decodeFromString<AiToolCall>("""{"id":"old","name":"read","arguments":"{}"}""")
+            .imageAttachments.isEmpty())
+    }
+
     @Test fun compactionTimelineIsDurableButNotReimportedAsUserOrAssistantWork() {
         val part = AiMessagePart(AiMessagePartKind.COMPACTION,
             Json.encodeToString(AgentCompactionProgress(id = "checkpoint", status = "completed", summary = "## Objective\nContinue")),

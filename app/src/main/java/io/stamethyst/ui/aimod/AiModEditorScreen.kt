@@ -155,6 +155,7 @@ internal data class AiToolCall(
     val result: String? = null,
     val failed: Boolean = false,
     val truncated: Boolean = false,
+    val imageAttachments: List<AiAttachment> = emptyList(),
 )
 
 /**

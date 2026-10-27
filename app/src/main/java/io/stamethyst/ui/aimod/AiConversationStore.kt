@@ -377,6 +377,7 @@ internal class AiConversationStore(root: File) {
             // Images ride along with a message as base64 plus a MIME type; older rows stay text.
             addColumnIfMissing(db, TABLE_ATTACHMENTS, COLUMN_MIME, "TEXT NOT NULL DEFAULT 'text/plain'")
             addColumnIfMissing(db, TABLE_ATTACHMENTS, COLUMN_ATTACHMENT_DATA, "TEXT NOT NULL DEFAULT ''")
+            addColumnIfMissing(db, TABLE_TOOLS, COLUMN_IMAGE_ATTACHMENTS_JSON, "TEXT NOT NULL DEFAULT '[]'")
             db.setTransactionSuccessful()
         } finally {
             db.endTransaction()
@@ -441,6 +442,7 @@ internal class AiConversationStore(root: File) {
                 result TEXT,
                 failed INTEGER NOT NULL,
                 truncated INTEGER NOT NULL,
+                image_attachments_json TEXT NOT NULL DEFAULT '[]',
                 PRIMARY KEY(message_id, position),
                 FOREIGN KEY(message_id) REFERENCES messages(id) ON DELETE CASCADE
             )
@@ -739,6 +741,7 @@ internal class AiConversationStore(root: File) {
                 tool.result?.let { put(COLUMN_RESULT, it) } ?: putNull(COLUMN_RESULT)
                 put(COLUMN_FAILED, if (tool.failed) 1 else 0)
                 put(COLUMN_TRUNCATED, if (tool.truncated) 1 else 0)
+                put(COLUMN_IMAGE_ATTACHMENTS_JSON, json.encodeToString(tool.imageAttachments))
             })
         }
     }
@@ -773,6 +776,7 @@ internal class AiConversationStore(root: File) {
                 COLUMN_RESULT,
                 COLUMN_FAILED,
                 COLUMN_TRUNCATED,
+                COLUMN_IMAGE_ATTACHMENTS_JSON,
             ),
             messageId?.let { "$COLUMN_FOREIGN_MESSAGE_ID = ?" },
             messageId?.let { arrayOf(it.toString()) },
@@ -790,6 +794,9 @@ internal class AiConversationStore(root: File) {
                         result = cursor.getStringOrNull(5),
                         failed = cursor.getInt(6) != 0,
                         truncated = cursor.getInt(7) != 0,
+                        imageAttachments = runCatching {
+                            json.decodeFromString<List<AiAttachment>>(cursor.getString(8))
+                        }.getOrDefault(emptyList()),
                     ),
                 )
         }
@@ -898,7 +905,7 @@ internal class AiConversationStore(root: File) {
     private companion object {
         const val LOG_TAG = "AiModStore"
         /** Bump when [createSchema] changes so existing files are migrated on next open. */
-        const val SCHEMA_VERSION = 5
+        const val SCHEMA_VERSION = 6
         const val DATABASE_EXTENSION = "db"
         const val LEGACY_CONVERSATIONS_FILE = "conversations.json"
         const val LEGACY_JOBS_FILE = "agent_jobs.json"
@@ -938,6 +945,7 @@ internal class AiConversationStore(root: File) {
         const val COLUMN_PRECEDING_TEXT = "preceding_text"
         const val COLUMN_RESULT = "result"
         const val COLUMN_TRUNCATED = "truncated"
+        const val COLUMN_IMAGE_ATTACHMENTS_JSON = "image_attachments_json"
         const val COLUMN_JOB_ID = "job_id"
         const val COLUMN_JOB_CONVERSATION_ID = "conversation_id"
         const val COLUMN_JOB_MOD_ID = "mod_id"

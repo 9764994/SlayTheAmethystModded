@@ -1,4 +1,5 @@
 <resources>
+    <string name="ai_mod_editor_tool_image_preview">预览 %1$s</string>
     <string name="ai_mod_editor_storage_error">对话记录读取或保存失败，未清除已有文件。请返回主界面后重新进入编辑器重试。详情：%1$s</string>
     <string name="settings_hide_enemy_panel_while_targeting">出牌指定敌人时，不显示敌人面板</string>
     <string name="settings_hide_enemy_panel_while_targeting_desc">有时敌人身上 buff 太多时，拖拽到敌人身上会显示很大的面板，影响观感，开启该选项后拖拽时不再显示面板。默认开启。</string>

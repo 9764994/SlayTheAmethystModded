@@ -273,6 +273,7 @@ data class AgentToolExecutionEvent(
     val arguments: String,
     val result: String? = null,
     val failed: Boolean = false,
+    val attachments: List<AgentContextAttachment> = emptyList(),
 )
 
 class AgentToolRegistry(
@@ -334,7 +335,7 @@ class AgentToolRegistry(
         val failed = runCatching {
             Json.parseToJsonElement(output.text).jsonObject.containsKey("error")
         }.getOrDefault(false)
-        notifyExecution(event.copy(result = output.text, failed = failed), checkCancelled)
+        notifyExecution(event.copy(result = output.text, failed = failed, attachments = output.attachments), checkCancelled)
         return output
     }
 
