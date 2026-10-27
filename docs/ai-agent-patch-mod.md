@@ -329,14 +329,27 @@ released together with the CPU lock, uses reference-counted-off semantics so re-
 a count, and a failure to acquire it is logged rather than fatal: some devices refuse a high-perf lock
 and the retry path below still recovers.
 
-Radio power save is only one of the two causes. Doze suspends networking for the whole device, which
-also aborts in-flight sockets, and no lock prevents that. The gateway's retry path is therefore
-network aware: after the backoff it calls the injected `hasUsableNetwork` predicate
-(`NetworkAvailability.hasValidatedNetwork`, which requires both `NET_CAPABILITY_INTERNET` and
-`NET_CAPABILITY_VALIDATED`) and waits up to 60 s for it to report `true` before re-issuing the
-request, polling every 500 ms. The wait is cancellable in 200 ms slices and bounded, after which the
-request is retried anyway so a genuinely offline device still fails with its real error instead of
-hanging.
+Radio power save is only one of the causes. Doze suspends networking for the whole device and
+**ignores wake locks**, so no lock prevents it. The platform documents exactly one mechanism for
+keeping the network during Doze: the battery-optimisation allowlist, because an exempted app "can use
+the network and hold partial wake locks during Doze and App Standby". The AI settings screen therefore
+offers that exemption (`BatteryOptimization`, `ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`, with the
+battery list as a fallback when a ROM refuses the per-app dialog). Without it, Doze still applies.
+
+Retrying alone never recovered from an abort, for two separate reasons that are both fixed:
+
+- `hasValidatedNetwork` reports `true` even while the radio is in power save, so the network wait was
+  skipped instantly. The retry path now also treats the abort itself as the signal.
+- OkHttp kept the torn-down connection in its pool, so the retry was handed a dead socket and failed
+  again immediately. The model factory owns one `ConnectionPool` per endpoint, and an abort evicts it
+  before the retry so the next attempt opens a fresh TCP connection.
+
+An abort also gets its own, larger budget: `MAX_ABORT_RETRIES` (3) with 5 s, 15 s and 30 s backoff,
+instead of the 1 s/2 s used for a transient provider failure. `isConnectionAbort` matches
+`SocketException` (connection abort/reset/broken pipe), `SocketTimeoutException`, `EOFException` and
+`ClosedChannelException` anywhere in the cause chain. The bounded `hasUsableNetwork` wait (60 s, 500 ms
+polls, cancellable in 200 ms slices) still runs first, so a genuinely offline device fails with its
+real error instead of hanging.
 
 Still missing, and deliberately not implied by the wake lock: the job is not restored after process
 death (the record stays `RUNNING` and the next editor open converts it to the explicit interrupted
