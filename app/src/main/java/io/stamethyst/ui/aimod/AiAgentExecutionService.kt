@@ -25,6 +25,7 @@ import io.stamethyst.backend.llm.MIN_LLM_REQUEST_TIMEOUT_SECONDS
 import io.stamethyst.backend.mods.AgentPatchModManager
 import io.stamethyst.backend.notify.ForegroundNotificationIds
 import io.stamethyst.config.RuntimePaths
+import io.stamethyst.navigation.Route
 import kotlin.concurrent.thread
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
@@ -96,6 +97,14 @@ class AiAgentExecutionService : Service() {
 
         private val runningJobs = AiAgentRunningJobs()
         internal val isRunning = runningJobs.isRunning
+        internal val activeEditorRoute = runningJobs.activeEditorRoute
+
+        private fun AiAgentJobRecord.editorRoute() = Route.AiModEditor(
+            storagePath = storagePath,
+            modName = modName,
+            modId = modId,
+            conversationId = conversationId,
+        )
 
         internal fun isJobRunning(jobId: String): Boolean = runningJobs.contains(jobId)
 
@@ -109,7 +118,7 @@ class AiAgentExecutionService : Service() {
                 putExtra(EXTRA_JOB_ID, job.jobId)
                 putExtra(EXTRA_MOD_ID, job.modId)
             }
-            runningJobs.add(job.jobId)
+            runningJobs.add(job.jobId, job.editorRoute())
             try {
                 ContextCompat.startForegroundService(context.applicationContext, intent)
             } catch (error: Throwable) {
@@ -214,7 +223,7 @@ class AiAgentExecutionService : Service() {
         workerJobId = jobId
         workerModId = modId
         workerJob = job
-        runningJobs.add(jobId)
+        runningJobs.add(jobId, job.editorRoute())
         acquireWakeLock()
         updateNotification("正在执行 AI 任务")
         workerThread = thread(start = false, name = "STS-AiAgent-$jobId") {

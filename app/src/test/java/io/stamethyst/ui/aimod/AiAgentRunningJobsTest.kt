@@ -1,10 +1,39 @@
 package io.stamethyst.ui.aimod
 
+import io.stamethyst.navigation.Route
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AiAgentRunningJobsTest {
+    @Test fun activeRouteTracksTheRunningConversationAndClearsOnRelease() {
+        val jobs = AiAgentRunningJobs()
+        val route = Route.AiModEditor("/mods/example.jar", "Example", "example", "conversation-1")
+        assertTrue(jobs.reserve("first"))
+        assertNull(jobs.activeEditorRoute.value)
+        jobs.add("first", route)
+        assertEquals(route, jobs.activeEditorRoute.value)
+        jobs.add("first")
+        jobs.remove("unknown")
+        assertEquals(route, jobs.activeEditorRoute.value)
+        jobs.remove("first")
+        assertNull(jobs.activeEditorRoute.value)
+    }
+
+    @Test fun removingAnotherJobPreservesTheActiveRoute() {
+        val jobs = AiAgentRunningJobs()
+        val first = Route.AiModEditor("/mods/first.jar", "First", "first", "conversation-1")
+        val second = Route.AiModEditor("/mods/second.jar", "Second", "second", "conversation-2")
+        jobs.add("first", first)
+        jobs.add("second", second)
+        jobs.remove("first")
+        assertEquals(second, jobs.activeEditorRoute.value)
+        jobs.remove("second")
+        assertNull(jobs.activeEditorRoute.value)
+    }
+
     @Test fun reservationIsVisibleUntilReleased() {
         val jobs = AiAgentRunningJobs()
         assertFalse(jobs.isRunning.value)
