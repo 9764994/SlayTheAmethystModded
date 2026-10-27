@@ -1,0 +1,1369 @@
+diff --git a/app/src/main/AndroidManifest.xml b/app/src/main/AndroidManifest.xml
+index 8bbdf6f..610dec0 100644
+--- a/app/src/main/AndroidManifest.xml
++++ b/app/src/main/AndroidManifest.xml
+@@ -16,6 +16,10 @@
+     <queries>
+         <package android:name="top.apricityx.workshop" />
+         <package android:name="com.valvesoftware.android.steam.community" />
++        <!-- 渲染器插件扫描：Android 11+ 需要声明才能看到其他应用的 launcher activity。 -->
++        <intent>
++            <action android:name="android.intent.action.MAIN" />
++        </intent>
+     </queries>
+ 
+     <application
+diff --git a/app/src/main/java/io/stamethyst/GameSessionCoordinator.kt b/app/src/main/java/io/stamethyst/GameSessionCoordinator.kt
+index efe558e..f3e57f4 100644
+--- a/app/src/main/java/io/stamethyst/GameSessionCoordinator.kt
++++ b/app/src/main/java/io/stamethyst/GameSessionCoordinator.kt
+@@ -27,6 +27,7 @@ import io.stamethyst.backend.launch.JvmLaunchController
+ import io.stamethyst.backend.launch.LaunchPreparationFailureMessageResolver
+ import io.stamethyst.backend.launch.LauncherReturnCoordinator
+ import io.stamethyst.backend.launch.StsLaunchSpec
++import io.stamethyst.backend.render.RenderBackend
+ import io.stamethyst.backend.render.RendererBackend
+ import io.stamethyst.backend.runtime.RuntimePackInstaller
+ import io.stamethyst.backend.steamcloud.SteamAchievementSyncService
+@@ -71,7 +72,7 @@ internal class GameSessionCoordinator(
+ 
+         internal fun shouldAttemptPostBootSurfaceSoftRefresh(
+             useTextureViewSurface: Boolean,
+-            rendererBackend: RendererBackend
++            rendererBackend: RenderBackend
+         ): Boolean {
+             // MobileGlues can crash in the device EGL dispatcher when this refresh destroys a
+             // SurfaceView and the native bridge temporarily falls back to a PBuffer.
+diff --git a/app/src/main/java/io/stamethyst/backend/render/RenderBackend.kt b/app/src/main/java/io/stamethyst/backend/render/RenderBackend.kt
+new file mode 100644
+index 0000000..82077df
+--- /dev/null
++++ b/app/src/main/java/io/stamethyst/backend/render/RenderBackend.kt
+@@ -0,0 +1,50 @@
++package io.stamethyst.backend.render
++
++import io.stamethyst.config.RenderSurfaceBackend
++
++/**
++ * 游戏进程可用的渲染后端统一抽象。
++ *
++ * 内置后端是编译期固定的 [RendererBackend] 枚举；插件后端由已安装 APK 的
++ * meta-data 声明动态构造（见 `io.stamethyst.plugin`，兼容 FCL 渲染器插件协议），
++ * 两者在设置、决策与启动注入链路中以同一接口流通。
++ */
++interface RenderBackend {
++
++    /** 稳定标识，持久化到偏好中的字符串；插件后端使用 `plugin:` 前缀避免与内置 id 冲突。 */
++    fun rendererId(): String
++
++    /** 设置页展示名。 */
++    val displayName: String
++
++    /** LWJGL/EGL 桥接层要 dlopen 的入口 GL 库（如 `libmobileglues.so`）。 */
++    fun lwjglOpenGlLibName(): String
++
++    /** EGL 库名（POJAVEXEC_EGL 注入用）；内置后端为 null，由各内置分支自行设置。 */
++    fun eglLibName(): String? = null
++
++    /** 可用性判定所需的原生库名；插件后端指插件 nativeLibraryDir 内的库。 */
++    val requiredNativeLibraries: Set<String>
++
++    /** 该后端是否需要设备支持 Vulkan。 */
++    val requiresVulkan: Boolean
++
++    /** 强制使用的表面后端（如 Kopper Zink 强制 TextureView）。 */
++    val forcedSurfaceBackend: RenderSurfaceBackend?
++
++    /** 启动时额外注入的环境变量。`DLOPEN` 键不放入环境，而是进入 [dlopenLibraries]。 */
++    val envVars: Map<String, String>
++
++    /** 启动前需额外 dlopen 的库（绝对路径或可经 LD_LIBRARY_PATH 解析的库名）。 */
++    val dlopenLibraries: List<String>
++
++    /** 追加到 LD_LIBRARY_PATH 的目录（如插件 nativeLibraryDir）。 */
++    val libraryDirectories: List<String>
++
++    /** 是否支持 Swappy 帧节奏；插件后端保守禁用（Swappy 仅对系统 EGL 路径可靠）。 */
++    val supportsSwappyFramePacing: Boolean
++
++    /** 是否为安装的插件提供的动态后端。 */
++    val isPlugin: Boolean
++        get() = false
++}
+diff --git a/app/src/main/java/io/stamethyst/backend/render/RendererAvailability.kt b/app/src/main/java/io/stamethyst/backend/render/RendererAvailability.kt
+index 26c7507..5ae453e 100644
+--- a/app/src/main/java/io/stamethyst/backend/render/RendererAvailability.kt
++++ b/app/src/main/java/io/stamethyst/backend/render/RendererAvailability.kt
+@@ -6,7 +6,7 @@ enum class RendererAvailabilityReason {
+ }
+ 
+ data class RendererAvailability(
+-    val backend: RendererBackend,
++    val backend: RenderBackend,
+     val available: Boolean,
+     val reasons: List<RendererAvailabilityReason> = emptyList(),
+     val missingLibraries: List<String> = emptyList()
+diff --git a/app/src/main/java/io/stamethyst/backend/render/RendererBackend.kt b/app/src/main/java/io/stamethyst/backend/render/RendererBackend.kt
+index b3a401d..bd0e41c 100644
+--- a/app/src/main/java/io/stamethyst/backend/render/RendererBackend.kt
++++ b/app/src/main/java/io/stamethyst/backend/render/RendererBackend.kt
+@@ -4,12 +4,12 @@ import io.stamethyst.config.RenderSurfaceBackend
+ 
+ enum class RendererBackend(
+     private val rendererIdValue: String,
+-    val displayName: String,
++    override val displayName: String,
+     private val lwjglOpenGlLibNameValue: String,
+-    val requiredNativeLibraries: Set<String>,
+-    val requiresVulkan: Boolean = false,
+-    val forcedSurfaceBackend: RenderSurfaceBackend? = null
+-) {
++    override val requiredNativeLibraries: Set<String>,
++    override val requiresVulkan: Boolean = false,
++    override val forcedSurfaceBackend: RenderSurfaceBackend? = null
++) : RenderBackend {
+     OPENGL_ES_MOBILEGLUES(
+         rendererIdValue = "opengles_mobileglues",
+         displayName = "MobileGlues",
+@@ -53,11 +53,20 @@ enum class RendererBackend(
+         requiresVulkan = true
+     );
+ 
+-    fun rendererId(): String = rendererIdValue
++    override fun rendererId(): String = rendererIdValue
+ 
+-    fun lwjglOpenGlLibName(): String = lwjglOpenGlLibNameValue
++    override fun lwjglOpenGlLibName(): String = lwjglOpenGlLibNameValue
+ 
+-    val supportsSwappyFramePacing: Boolean
++    override val envVars: Map<String, String>
++        get() = emptyMap()
++
++    override val dlopenLibraries: List<String>
++        get() = emptyList()
++
++    override val libraryDirectories: List<String>
++        get() = emptyList()
++
++    override val supportsSwappyFramePacing: Boolean
+         get() = this == OPENGL_ES_MOBILEGLUES ||
+             this == OPENGL_ES2_NATIVE ||
+             this == OPENGL_ES2_GL4ES
+diff --git a/app/src/main/java/io/stamethyst/backend/render/RendererBackendResolver.kt b/app/src/main/java/io/stamethyst/backend/render/RendererBackendResolver.kt
+index 83513bb..f598ef6 100644
+--- a/app/src/main/java/io/stamethyst/backend/render/RendererBackendResolver.kt
++++ b/app/src/main/java/io/stamethyst/backend/render/RendererBackendResolver.kt
+@@ -5,6 +5,8 @@ import android.content.pm.PackageManager
+ import android.os.Build
+ import io.stamethyst.config.RenderSurfaceBackend
+ import io.stamethyst.config.RuntimePaths
++import io.stamethyst.plugin.PluginRenderer
++import io.stamethyst.plugin.RendererPlugin
+ import java.io.File
+ import java.util.LinkedHashSet
+ import java.util.Locale
+@@ -33,13 +35,17 @@ object RendererBackendResolver {
+     fun resolve(
+         requestedSurfaceBackend: RenderSurfaceBackend,
+         selectionMode: RendererSelectionMode,
+-        manualBackend: RendererBackend?,
+-        runtimeInfo: RuntimeInfo
++        manualBackend: RenderBackend?,
++        runtimeInfo: RuntimeInfo,
++        pluginRenderers: List<PluginRenderer> = emptyList()
+     ): RendererDecision {
+-        val availabilityMap = LinkedHashMap<RendererBackend, RendererAvailability>(RendererBackend.entries.size)
++        val availabilityMap = LinkedHashMap<RenderBackend, RendererAvailability>()
+         for (backend in RendererBackend.entries) {
+             availabilityMap[backend] = evaluateAvailability(backend, runtimeInfo)
+         }
++        for (plugin in pluginRenderers) {
++            availabilityMap[plugin] = evaluatePluginAvailability(plugin, runtimeInfo)
++        }
+ 
+         val automaticBackend = automaticOrder.firstOrNull { backend ->
+             availabilityMap[backend]?.available == true
+@@ -66,7 +72,7 @@ object RendererBackendResolver {
+             effectiveBackend = effectiveBackend,
+             requestedSurfaceBackend = requestedSurfaceBackend,
+             effectiveSurfaceBackend = effectiveSurfaceBackend,
+-            availableBackends = RendererBackend.entries.mapNotNull { availabilityMap[it] },
++            availableBackends = availabilityMap.values.toList(),
+             manualFallbackAvailability = if (
+                 selectionMode == RendererSelectionMode.MANUAL &&
+                 manualBackend != null &&
+@@ -86,13 +92,14 @@ object RendererBackendResolver {
+         context: Context,
+         requestedSurfaceBackend: RenderSurfaceBackend,
+         selectionMode: RendererSelectionMode,
+-        manualBackend: RendererBackend?
++        manualBackend: RenderBackend?
+     ): RendererDecision {
+         return resolve(
+             requestedSurfaceBackend = requestedSurfaceBackend,
+             selectionMode = selectionMode,
+             manualBackend = manualBackend,
+-            runtimeInfo = collectRuntimeInfo(context)
++            runtimeInfo = collectRuntimeInfo(context),
++            pluginRenderers = RendererPlugin.renderers(context)
+         )
+     }
+ 
+@@ -147,6 +154,36 @@ object RendererBackendResolver {
+         )
+     }
+ 
++    /** 插件后端可用性：Vulkan 需求 + 插件 nativeLibraryDir 内目标库是否存在。 */
++    private fun evaluatePluginAvailability(
++        plugin: PluginRenderer,
++        runtimeInfo: RuntimeInfo
++    ): RendererAvailability {
++        val reasons = ArrayList<RendererAvailabilityReason>(2)
++        if (plugin.requiresVulkan && !runtimeInfo.hasVulkanSupport) {
++            reasons += RendererAvailabilityReason.VULKAN_UNSUPPORTED
++        }
++        val pluginDir = plugin.libraryDirectories.firstOrNull().orEmpty()
++        val missingLibraries = plugin.requiredNativeLibraries
++            .filterNot { lib ->
++                if (lib.startsWith("/")) {
++                    File(lib).isFile
++                } else {
++                    File(pluginDir, lib).isFile
++                }
++            }
++            .sorted()
++        if (missingLibraries.isNotEmpty()) {
++            reasons += RendererAvailabilityReason.MISSING_NATIVE_LIBRARIES
++        }
++        return RendererAvailability(
++            backend = plugin,
++            available = reasons.isEmpty(),
++            reasons = reasons,
++            missingLibraries = missingLibraries
++        )
++    }
++
+     private fun hasVulkanSupport(packageManager: PackageManager): Boolean {
+         return Build.VERSION.SDK_INT >= Build.VERSION_CODES.N &&
+             packageManager.hasSystemFeature(PackageManager.FEATURE_VULKAN_HARDWARE_LEVEL) &&
+diff --git a/app/src/main/java/io/stamethyst/backend/render/RendererDecision.kt b/app/src/main/java/io/stamethyst/backend/render/RendererDecision.kt
+index 7fb13cf..936863a 100644
+--- a/app/src/main/java/io/stamethyst/backend/render/RendererDecision.kt
++++ b/app/src/main/java/io/stamethyst/backend/render/RendererDecision.kt
+@@ -4,9 +4,9 @@ import io.stamethyst.config.RenderSurfaceBackend
+ 
+ data class RendererDecision(
+     val selectionMode: RendererSelectionMode,
+-    val manualBackend: RendererBackend?,
+-    val automaticBackend: RendererBackend,
+-    val effectiveBackend: RendererBackend,
++    val manualBackend: RenderBackend?,
++    val automaticBackend: RenderBackend,
++    val effectiveBackend: RenderBackend,
+     val requestedSurfaceBackend: RenderSurfaceBackend,
+     val effectiveSurfaceBackend: RenderSurfaceBackend,
+     val availableBackends: List<RendererAvailability>,
+diff --git a/app/src/main/java/io/stamethyst/config/LauncherConfig.kt b/app/src/main/java/io/stamethyst/config/LauncherConfig.kt
+index 756fffe..361191b 100644
+--- a/app/src/main/java/io/stamethyst/config/LauncherConfig.kt
++++ b/app/src/main/java/io/stamethyst/config/LauncherConfig.kt
+@@ -14,6 +14,7 @@ import io.stamethyst.backend.render.MobileGluesGlslCacheSizePreset
+ import io.stamethyst.backend.render.MobileGluesMultidrawMode
+ import io.stamethyst.backend.render.MobileGluesNoErrorPolicy
+ import io.stamethyst.backend.render.MobileGluesSettings
++import io.stamethyst.backend.render.RenderBackend
+ import io.stamethyst.backend.render.RendererBackend
+ import io.stamethyst.backend.render.RendererSelectionMode
+ import io.stamethyst.backend.steamcloud.SteamCloudSyncBlacklist
+@@ -22,6 +23,7 @@ import io.stamethyst.backend.mods.RuntimeDownscaleMaterialPolicy
+ import io.stamethyst.backend.mods.RuntimeTextureAtlasDownscaleQuality
+ import io.stamethyst.backend.render.VirtualResolutionMode
+ import io.stamethyst.backend.steamcloud.SteamCloudOperationMutex
++import io.stamethyst.plugin.RendererPlugin
+ import io.stamethyst.config.RuntimePaths
+ import java.io.File
+ import java.io.FileInputStream
+@@ -294,7 +296,7 @@ object LauncherConfig {
+     )
+     val DEFAULT_RENDER_SURFACE_BACKEND: RenderSurfaceBackend = RenderSurfaceBackend.SURFACE_VIEW
+     val DEFAULT_RENDERER_SELECTION_MODE: RendererSelectionMode = RendererSelectionMode.AUTO
+-    val DEFAULT_MANUAL_RENDERER_BACKEND: RendererBackend =
++    val DEFAULT_MANUAL_RENDERER_BACKEND: RenderBackend =
+         RendererBackend.OPENGL_ES_MOBILEGLUES
+     val DEFAULT_MOBILEGLUES_ANGLE_POLICY: MobileGluesAnglePolicy =
+         MobileGluesAnglePolicy.PREFER_DISABLED
+@@ -968,15 +970,17 @@ object LauncherConfig {
+         }
+     }
+ 
+-    fun readManualRendererBackend(context: Context): RendererBackend {
++    fun readManualRendererBackend(context: Context): RenderBackend {
+         val stored = prefs(context).getString(
+             PREF_KEY_MANUAL_RENDERER_BACKEND,
+             DEFAULT_MANUAL_RENDERER_BACKEND.rendererId()
+         )
+-        return RendererBackend.fromRendererId(stored) ?: DEFAULT_MANUAL_RENDERER_BACKEND
++        return RendererBackend.fromRendererId(stored)
++            ?: RendererPlugin.renderers(context).firstOrNull { it.rendererId() == stored }
++            ?: DEFAULT_MANUAL_RENDERER_BACKEND
+     }
+ 
+-    fun saveManualRendererBackend(context: Context, backend: RendererBackend) {
++    fun saveManualRendererBackend(context: Context, backend: RenderBackend) {
+         prefs(context).edit {
+             putString(PREF_KEY_MANUAL_RENDERER_BACKEND, backend.rendererId())
+         }
+diff --git a/app/src/main/java/io/stamethyst/plugin/PluginManager.kt b/app/src/main/java/io/stamethyst/plugin/PluginManager.kt
+new file mode 100644
+index 0000000..5725573
+--- /dev/null
++++ b/app/src/main/java/io/stamethyst/plugin/PluginManager.kt
+@@ -0,0 +1,76 @@
++package io.stamethyst.plugin
++
++import android.content.Context
++import android.content.Intent
++import android.content.pm.ApplicationInfo
++import android.content.pm.PackageManager
++
++/**
++ * 已安装渲染器插件的扫描器，兼容 FCL 渲染器插件 v1/v2 的 meta-data 声明协议：
++ *
++ * - v1：`renderer`（`名称:GL库:EGL库`）、`des`、`boatEnv`、`pojavEnv`；
++ * - v2：`fclPlugin_V2` 指向插件 APK 内 JSON 配置字符串资源。
++ *
++ * 扫描范围：安装了 launcher activity 的非系统应用（Android 11+ 需要
++ * manifest `<queries>` 中的 ACTION_MAIN 声明才能可见）。结果按应用名排序并缓存，
++ * 安装/卸载插件后调用 [invalidate] 失效重扫。
++ */
++object PluginManager {
++
++    const val META_PLUGIN = "fclPlugin"
++    const val META_PLUGIN_V2 = "fclPlugin_V2"
++
++    data class PluginApp(
++        val packageName: String,
++        val label: String,
++        val appInfo: ApplicationInfo,
++    )
++
++    private const val SCAN_FLAGS = PackageManager.GET_META_DATA
++
++    @Volatile
++    private var cache: List<PluginApp>? = null
++
++    fun invalidate() {
++        cache = null
++    }
++
++    fun scan(context: Context): List<PluginApp> {
++        cache?.let { return it }
++        val result = scanUncached(context)
++        cache = result
++        return result
++    }
++
++    private fun scanUncached(context: Context): List<PluginApp> {
++        val pm = context.packageManager
++        val apps = mutableListOf<PluginApp>()
++        val resolvedActivities = pm.queryIntentActivities(
++            Intent(Intent.ACTION_MAIN),
++            SCAN_FLAGS
++        )
++        for (resolved in resolvedActivities) {
++            val info = resolved.activityInfo?.applicationInfo ?: continue
++            if (info.flags and ApplicationInfo.FLAG_SYSTEM != 0) {
++                continue
++            }
++            val metaData = info.metaData ?: continue
++            // 与 FCL 的两步判定一致：先看是否声明为插件（fclPlugin=true 或 v2 JSON），
++            // 再看是否渲染器类型（v1 renderer 字符串或 v2 JSON）。
++            val isPlugin = metaData.getBoolean(META_PLUGIN, false) ||
++                metaData.containsKey(META_PLUGIN_V2)
++            if (!isPlugin) {
++                continue
++            }
++            val isRendererPlugin = metaData.getString("renderer") != null ||
++                metaData.containsKey(META_PLUGIN_V2)
++            if (!isRendererPlugin) {
++                continue
++            }
++            val label = runCatching { info.loadLabel(pm).toString() }
++                .getOrDefault(info.packageName)
++            apps += PluginApp(info.packageName, label, info)
++        }
++        return apps.sortedBy { it.label.lowercase() }
++    }
++}
+diff --git a/app/src/main/java/io/stamethyst/plugin/PluginRenderer.kt b/app/src/main/java/io/stamethyst/plugin/PluginRenderer.kt
+new file mode 100644
+index 0000000..00be967
+--- /dev/null
++++ b/app/src/main/java/io/stamethyst/plugin/PluginRenderer.kt
+@@ -0,0 +1,44 @@
++package io.stamethyst.plugin
++
++import io.stamethyst.backend.render.RenderBackend
++import io.stamethyst.config.RenderSurfaceBackend
++
++/**
++ * 由已安装插件 APK 动态构造的渲染后端。
++ *
++ * 字段在 [RendererPlugin] 解析插件 meta-data（v1 字符串 / v2 JSON）时生成，
++ * 语义与 FCL 渲染器插件启动链路对齐：插件 nativeLibraryDir 会进入
++ * LD_LIBRARY_PATH，EGL 库作为 POJAVEXEC_EGL 注入，GL 库作为 LWJGL 的
++ * `org.lwjgl.opengl.libname`，声明环境变量原样应用，DLOPEN 列表在 JVM 初始化前逐一 dlopen。
++ */
++data class PluginRenderer(
++    private val id: String,
++    override val displayName: String,
++    /** GL 翻译库：绝对路径，或可经 LD_LIBRARY_PATH 解析的库名。 */
++    private val glLibName: String,
++    /** EGL 库：绝对路径，或可经 LD_LIBRARY_PATH 解析的库名。 */
++    private val eglLibNameValue: String,
++    override val requiredNativeLibraries: Set<String>,
++    override val requiresVulkan: Boolean,
++    override val forcedSurfaceBackend: RenderSurfaceBackend?,
++    override val envVars: Map<String, String>,
++    override val dlopenLibraries: List<String>,
++    override val libraryDirectories: List<String>,
++    /** 插件 APK 包名。 */
++    val packageName: String,
++    /** 插件应用名（列表来源显示）。 */
++    val sourceLabel: String,
++) : RenderBackend {
++
++    override fun rendererId(): String = id
++
++    override fun lwjglOpenGlLibName(): String = glLibName
++
++    override fun eglLibName(): String = eglLibNameValue
++
++    override val supportsSwappyFramePacing: Boolean
++        get() = false
++
++    override val isPlugin: Boolean
++        get() = true
++}
+diff --git a/app/src/main/java/io/stamethyst/plugin/RendererConfigV2.kt b/app/src/main/java/io/stamethyst/plugin/RendererConfigV2.kt
+new file mode 100644
+index 0000000..c2cf83a
+--- /dev/null
++++ b/app/src/main/java/io/stamethyst/plugin/RendererConfigV2.kt
+@@ -0,0 +1,107 @@
++@file:OptIn(kotlinx.serialization.InternalSerializationApi::class)
++
++package io.stamethyst.plugin
++
++import kotlinx.serialization.SerialName
++import kotlinx.serialization.Serializable
++
++/**
++ * FCL 渲染器插件 v2 的 JSON 配置契约（对应 ZalithLauncher/RendererPlugin-v2 的 DSL 序列化结果）。
++ * 插件 APK 以 `fclPlugin_V2` meta-data 声明一个字符串资源 id，资源内容是下面的 JSON。
++ *
++ * 只描述公开格式本身，不含任何 FCL 实现代码；解析与生效逻辑见 [RendererPlugin]。
++ */
++@Serializable
++data class RendererConfigV2(
++    @SerialName("displayName")
++    val displayName: String,
++    @SerialName("rendererId")
++    val rendererId: String,
++    @SerialName("rendererGLPath")
++    val rendererGLPath: String,
++    @SerialName("rendererEGLPath")
++    val rendererEGLPath: String,
++    @SerialName("dlopenLibPaths")
++    val dlopenLibPaths: List<String> = emptyList(),
++    @SerialName("env")
++    val env: List<EnvV2> = emptyList(),
++    @SerialName("minMCVer")
++    val minMCVer: String? = null,
++    @SerialName("maxMCVer")
++    val maxMCVer: String? = null,
++)
++
++/** 环境变量项；JSON 中以 `type` 判别子区分具体类型。 */
++@Serializable
++sealed interface EnvV2
++
++/** 固定环境变量，不可配置。 */
++@Serializable
++@SerialName("NormalEnv")
++data class NormalEnvV2(
++    @SerialName("key")
++    val key: String,
++    @SerialName("value")
++    val value: String,
++) : EnvV2
++
++/** 预设候选中取值的环境变量；check 为 null/false 表示默认不启用。 */
++@Serializable
++@SerialName("SelectableEnv")
++data class SelectableEnvV2(
++    @SerialName("key")
++    val key: String,
++    @SerialName("title")
++    val title: MetaStringV2? = null,
++    @SerialName("check")
++    val check: Boolean? = true,
++    @SerialName("items")
++    val items: EnvItemsV2,
++) : EnvV2
++
++/** 用户自由输入值的环境变量；值为空则不启用。未做配置 UI 时按 defaultValue 生效。 */
++@Serializable
++@SerialName("CustomizableEnv")
++data class CustomizableEnvV2(
++    @SerialName("key")
++    val key: String,
++    @SerialName("title")
++    val title: MetaStringV2? = null,
++    @SerialName("defaultValue")
++    val defaultValue: String? = null,
++) : EnvV2
++
++/** 开关式环境变量；toggle 决定默认是否启用。 */
++@Serializable
++@SerialName("ToggleableEnv")
++data class ToggleableEnvV2(
++    @SerialName("key")
++    val key: String,
++    @SerialName("value")
++    val value: String,
++    @SerialName("title")
++    val title: MetaStringV2? = null,
++    @SerialName("toggle")
++    val toggle: Boolean = true,
++) : EnvV2
++
++/** Selectable 候选项；defaultValue 视为列表中的一项。 */
++@Serializable
++data class EnvItemsV2(
++    @SerialName("defaultValue")
++    val defaultValue: String,
++    @SerialName("values")
++    val values: List<String> = emptyList(),
++)
++
++/** 标题资源索引；启动器通过插件 meta-data 中同名项的资源 id 读取本地化文本。 */
++@Serializable
++data class MetaStringV2(
++    @SerialName("key")
++    val key: String,
++)
++
++/** v2 JSON 容忍未知字段（与官方 DSL 解析行为一致）。 */
++val rendererV2Json = kotlinx.serialization.json.Json {
++    ignoreUnknownKeys = true
++}
+diff --git a/app/src/main/java/io/stamethyst/plugin/RendererPlugin.kt b/app/src/main/java/io/stamethyst/plugin/RendererPlugin.kt
+new file mode 100644
+index 0000000..8d3f811
+--- /dev/null
++++ b/app/src/main/java/io/stamethyst/plugin/RendererPlugin.kt
+@@ -0,0 +1,263 @@
++package io.stamethyst.plugin
++
++import android.content.Context
++import android.os.Bundle
++import android.util.Log
++import io.stamethyst.config.RenderSurfaceBackend
++import kotlinx.serialization.decodeFromString
++import java.io.File
++
++/**
++ * FCL 兼容渲染器插件解析器：把已安装插件 APK 的 meta-data 声明解析成 [PluginRenderer]。
++ *
++ * - v1：`renderer`（`名称:GL库:EGL库`）+ `des` + `pojavEnv`（`K=V:K=V` 冒号分隔）；
++ * - v2：`fclPlugin_V2` 指向 JSON 字符串资源（见 [RendererConfigV2]），v2 优先于 v1。
++ *
++ * 解析结果按包名缓存，插件安装/卸载后调用 [invalidate] 重扫。协议行为与 FCL 启动链路
++ * 对齐（DLOPEN 列表、`**|` 插件库路径、LIB_MESA_NAME/MESA_LIBRARY 目录拼接），
++ * 但实现独立，不包含 FCL 代码。
++ */
++object RendererPlugin {
++
++    private const val TAG = "STS-RendererPlugin"
++
++    /** v2 路径前缀：`**|lib.so` 表示相对插件 nativeLibraryDir 的库路径。 */
++    private const val NATIVE_PREFIX = "**|"
++
++    /** 这些 key 的值是库文件名，最终会拼上插件目录（与 FCL 启动链路一致）。 */
++    private val joinsDirKeys = setOf("LIB_MESA_NAME", "MESA_LIBRARY", "DLOPEN")
++
++    @Volatile
++    private var cache: List<PluginRenderer>? = null
++
++    fun invalidate() {
++        cache = null
++    }
++
++    fun renderers(context: Context): List<PluginRenderer> {
++        cache?.let { return it }
++        val list = buildList {
++            for (app in PluginManager.scan(context)) {
++                parse(app, context)?.let { add(it) }
++            }
++        }
++        cache = list
++        return list
++    }
++
++    private fun parse(app: PluginManager.PluginApp, context: Context): PluginRenderer? {
++        val metaData = app.appInfo.metaData ?: return null
++        if (metaData.containsKey(PluginManager.META_PLUGIN_V2)) {
++            return parseV2(app, metaData, context)
++        }
++        return parseV1(app, metaData)
++    }
++
++    // ---- v1 -----------------------------------------------------------------------------------
++
++    private fun parseV1(app: PluginManager.PluginApp, metaData: Bundle): PluginRenderer? {
++        val rendererSpec = metaData.getString("renderer") ?: return null
++        val description = metaData.getString("des") ?: return null
++        val pojavEnv = metaData.getString("pojavEnv") ?: ""
++        val parts = rendererSpec.split(":")
++        if (parts.size < 3) {
++            Log.w(TAG, "v1 renderer spec malformed for ${app.packageName}: $rendererSpec")
++            return null
++        }
++        val nativeDir = app.appInfo.nativeLibraryDir
++        val glName = parts[1]
++        val eglName = parts[2]
++        val envResolution = resolveV1Env(pojavEnv, nativeDir)
++        val glLib = joinPluginDir(nativeDir, glName)
++        val eglLib = joinPluginDir(nativeDir, eglName)
++        return PluginRenderer(
++            id = "plugin:" + app.packageName,
++            displayName = description,
++            glLibName = glLib,
++            eglLibNameValue = eglLib,
++            requiredNativeLibraries = setOf(glName.substringAfterLast('/'), eglName.substringAfterLast('/')),
++            requiresVulkan = false,
++            forcedSurfaceBackend = null,
++            envVars = envResolution.env,
++            dlopenLibraries = buildList {
++                add(glLib)
++                addAll(envResolution.dlopen)
++            }.distinct(),
++            libraryDirectories = listOf(nativeDir),
++            packageName = app.packageName,
++            sourceLabel = app.label,
++        )
++    }
++
++    // ---- v2 -----------------------------------------------------------------------------------
++
++    private fun parseV2(app: PluginManager.PluginApp, metaData: Bundle, context: Context): PluginRenderer? {
++        val configResId = metaData.getInt(PluginManager.META_PLUGIN_V2)
++        if (configResId == 0) {
++            return null
++        }
++        val config = runCatching {
++            val resources = context.packageManager.getResourcesForApplication(app.appInfo)
++            val configJson = resources.getString(configResId) ?: return null
++            rendererV2Json.decodeFromString<RendererConfigV2>(configJson)
++        }.getOrElse { error ->
++            Log.w(TAG, "v2 renderer config unreadable for ${app.packageName}", error)
++            return null
++        }
++        val nativeDir = app.appInfo.nativeLibraryDir
++        val resolution = resolveV2Env(config, nativeDir)
++        val glLib = joinPluginDir(nativeDir, config.rendererGLPath)
++        val eglLib = joinPluginDir(nativeDir, config.rendererEGLPath)
++        val isZinkFamily = config.rendererId == "opengles3_desktopgl_zink_kopper" ||
++            resolution.env["MESA_LOADER_DRIVER_OVERRIDE"]?.equals("zink", ignoreCase = true) == true
++        val envVars = LinkedHashMap(resolution.env)
++        if (config.rendererId.isNotBlank() && !envVars.containsKey("POJAV_RENDERER")) {
++            envVars["POJAV_RENDERER"] = config.rendererId
++        }
++        return PluginRenderer(
++            id = "plugin:" + app.packageName,
++            displayName = config.displayName,
++            glLibName = glLib,
++            eglLibNameValue = eglLib,
++            requiredNativeLibraries = setOf(
++                config.rendererGLPath.substringAfterLast('/'),
++                config.rendererEGLPath.substringAfterLast('/'),
++            ),
++            requiresVulkan = isZinkFamily,
++            forcedSurfaceBackend = if (isZinkFamily) RenderSurfaceBackend.TEXTURE_VIEW else null,
++            envVars = envVars,
++            dlopenLibraries = buildList {
++                add(glLib)
++                addAll(resolution.dlopen)
++            }.distinct(),
++            libraryDirectories = listOf(nativeDir),
++            packageName = app.packageName,
++            sourceLabel = app.label,
++        )
++    }
++
++    // ---- 纯解析逻辑（无 Android 依赖，便于单元测试） -------------------------------------------
++
++    internal data class EnvResolution(
++        val env: Map<String, String>,
++        val dlopen: List<String>,
++    )
++
++    /**
++     * v1 `pojavEnv`（`K=V:K=V`）解析：`DLOPEN=liba.so,libb.so` 进入 dlopen 列表，
++     * 其余进入环境变量；`LIB_MESA_NAME`/`MESA_LIBRARY` 拼上插件目录。
++     */
++    internal fun resolveV1Env(pojavEnv: String, nativeDir: String): EnvResolution {
++        val env = LinkedHashMap<String, String>()
++        val dlopen = mutableListOf<String>()
++        pojavEnv.split(":").forEach { entry ->
++            if (entry.isBlank()) {
++                return@forEach
++            }
++            val separator = entry.indexOf('=')
++            if (separator <= 0) {
++                return@forEach
++            }
++            val key = entry.substring(0, separator)
++            val value = entry.substring(separator + 1)
++            if (key == "DLOPEN") {
++                dlopen += splitLibList(value).map { joinPluginDir(nativeDir, it) }
++            } else {
++                env[key] = resolveV1Value(key, value, nativeDir)
++            }
++        }
++        return EnvResolution(env, dlopen.distinct())
++    }
++
++    /** v2 JSON 环境解析：可配置项按默认值生效（Selectable 取 defaultValue，Toggleable 看 toggle）。 */
++    internal fun resolveV2Env(config: RendererConfigV2, nativeDir: String): EnvResolution {
++        val env = LinkedHashMap<String, String>()
++        val dlopen = mutableListOf<String>()
++        fun collectDlopen(raw: String) {
++            // DLOPEN 是逗号分隔的库列表：先按项拆分，再逐项做插件目录归一化。
++            dlopen += splitLibList(raw).map { joinPluginDir(nativeDir, it) }
++        }
++        for (item in config.env) {
++            when (item) {
++                is NormalEnvV2 -> {
++                    if (item.key == "DLOPEN") {
++                        collectDlopen(item.value)
++                    } else {
++                        env[item.key] = resolveV2Value(item.key, item.value, nativeDir)
++                    }
++                }
++
++                is SelectableEnvV2 -> {
++                    if (item.check != false) {
++                        item.items.defaultValue.takeIf { it.isNotEmpty() }
++                            ?.let { env[item.key] = it }
++                    }
++                }
++
++                is CustomizableEnvV2 -> {
++                    item.defaultValue?.takeIf { it.isNotEmpty() }?.let { env[item.key] = it }
++                }
++
++                is ToggleableEnvV2 -> {
++                    if (item.toggle) {
++                        env[item.key] = resolveV2Value(item.key, item.value, nativeDir)
++                    }
++                }
++            }
++        }
++        for (raw in config.dlopenLibPaths) {
++            collectDlopen(raw)
++        }
++        return EnvResolution(env, dlopen.distinct())
++    }
++
++    private fun resolveV1Value(key: String, value: String, nativeDir: String): String {
++        // v1 启动链路会对 LIB_MESA_NAME/MESA_LIBRARY 无条件拼接插件目录，这里同样处理为绝对路径。
++        if (key == "LIB_MESA_NAME" || key == "MESA_LIBRARY") {
++            return if (value.startsWith("/")) {
++                if (value.startsWith(nativeDir)) value else nativeDir + value
++            } else {
++                "$nativeDir/$value"
++            }
++        }
++        return value
++    }
++
++    private fun resolveV2Value(key: String, raw: String, nativeDir: String): String {
++        val joinsDir = key in joinsDirKeys
++        if (raw.startsWith(NATIVE_PREFIX)) {
++            val lib = raw.removePrefix(NATIVE_PREFIX)
++            return if (joinsDir) lib else "$nativeDir/$lib"
++        }
++        if (joinsDir && raw.startsWith("/")) {
++            return raw.substringAfterLast('/')
++        }
++        return raw
++    }
++
++    /**
++     * 库路径归一化：`**|` 前缀是"进插件 nativeLibraryDir"的显式指示，无条件拼接；
++     * `/` 开头视为相对插件目录的路径（与 FCL v1 `V1_DIR_PREFIX` 语义一致）；
++     * 裸库名若在插件目录真实存在则拼目录，否则原样返回依赖 LD_LIBRARY_PATH 解析。
++     */
++    internal fun joinPluginDir(nativeDir: String, libName: String): String {
++        if (libName.isEmpty()) {
++            return libName
++        }
++        if (libName.startsWith(NATIVE_PREFIX)) {
++            val lib = libName.removePrefix(NATIVE_PREFIX)
++            return if (lib.startsWith("/")) {
++                if (lib.startsWith(nativeDir)) lib else nativeDir + lib
++            } else {
++                "$nativeDir/$lib"
++            }
++        }
++        if (libName.startsWith("/")) {
++            return if (libName.startsWith(nativeDir)) libName else nativeDir + libName
++        }
++        return if (File(nativeDir, libName).isFile()) "$nativeDir/$libName" else libName
++    }
++
++    private fun splitLibList(raw: String): List<String> =
++        raw.split(',').map { it.trim() }.filter { it.isNotEmpty() }
++}
+diff --git a/app/src/main/java/io/stamethyst/ui/main/MainScreen.kt b/app/src/main/java/io/stamethyst/ui/main/MainScreen.kt
+index 1537f7c..3290e23 100644
+--- a/app/src/main/java/io/stamethyst/ui/main/MainScreen.kt
++++ b/app/src/main/java/io/stamethyst/ui/main/MainScreen.kt
+@@ -160,6 +160,7 @@ import io.stamethyst.backend.easytier.EASY_TIER_ROOM_DESCRIPTION_MAX_LENGTH
+ import io.stamethyst.backend.easytier.EasyTierCredentialStore
+ import io.stamethyst.backend.easytier.EASY_TIER_ROOM_PASSWORD_MAX_LENGTH
+ import io.stamethyst.backend.easytier.EASY_TIER_KICK_MESSAGE_MAX_LENGTH
++import io.stamethyst.backend.render.RenderBackend
+ import io.stamethyst.backend.render.RendererBackendResolver
+ import io.stamethyst.backend.render.RendererBackend
+ import io.stamethyst.backend.render.RendererSelectionMode
+@@ -893,10 +894,10 @@ private fun RefreshRateMismatchCard(
+ 
+ @Composable
+ private fun RendererQuickSwitchCard(
+-    currentBackend: RendererBackend,
++    currentBackend: RenderBackend,
+     mobileGluesAvailable: Boolean,
+     enabled: Boolean,
+-    onSelect: (RendererBackend) -> Unit,
++    onSelect: (RenderBackend) -> Unit,
+ ) {
+     val selectedBackend = when (currentBackend) {
+         RendererBackend.OPENGL_ES_MOBILEGLUES,
+@@ -1088,7 +1089,7 @@ private fun RendererQuickSwitchCard(
+ @Composable
+ private fun RendererQuickSwitchOption(
+     modifier: Modifier,
+-    backend: RendererBackend,
++    backend: RenderBackend,
+     selected: Boolean,
+     accentColor: Color,
+ ) {
+diff --git a/app/src/main/java/io/stamethyst/ui/main/MainScreenViewModel.kt b/app/src/main/java/io/stamethyst/ui/main/MainScreenViewModel.kt
+index 8b05a49..cd22c29 100644
+--- a/app/src/main/java/io/stamethyst/ui/main/MainScreenViewModel.kt
++++ b/app/src/main/java/io/stamethyst/ui/main/MainScreenViewModel.kt
+@@ -86,6 +86,7 @@ import io.stamethyst.backend.steamcloud.SteamCloudUploadPlan
+ import io.stamethyst.backend.mods.StsDesktopJarPatcher
+ import io.stamethyst.backend.mods.StsJarValidator
+ import io.stamethyst.backend.resources.RuntimeResourceProvider
++import io.stamethyst.backend.render.RenderBackend
+ import io.stamethyst.backend.render.RendererBackend
+ import io.stamethyst.backend.render.RendererBackendResolver
+ import io.stamethyst.backend.render.RendererSelectionMode
+@@ -390,7 +391,7 @@ class MainScreenViewModel : ViewModel() {
+         val pendingImportPatchUpdateLaunchWarning: PendingImportPatchUpdateLaunchWarning? = null,
+         val pendingMtsComponentUpdate: PendingMtsComponentUpdate? = null,
+         val rendererSelectionMode: RendererSelectionMode = RendererSelectionMode.AUTO,
+-        val effectiveRendererBackend: RendererBackend = RendererBackend.OPENGL_ES_MOBILEGLUES,
++        val effectiveRendererBackend: RenderBackend = RendererBackend.OPENGL_ES_MOBILEGLUES,
+         val mobileGluesRendererAvailable: Boolean = true,
+     )
+ 
+@@ -572,7 +573,7 @@ class MainScreenViewModel : ViewModel() {
+         refreshNow(host)
+     }
+ 
+-    fun setQuickRendererBackend(host: Activity, backend: RendererBackend) {
++    fun setQuickRendererBackend(host: Activity, backend: RenderBackend) {
+         if (uiState.busy || uiState.gameProcessRunning || uiState.launchInFlight) {
+             return
+         }
+diff --git a/app/src/main/java/io/stamethyst/ui/preferences/LauncherPreferences.kt b/app/src/main/java/io/stamethyst/ui/preferences/LauncherPreferences.kt
+index 98bfb6c..e9ee913 100644
+--- a/app/src/main/java/io/stamethyst/ui/preferences/LauncherPreferences.kt
++++ b/app/src/main/java/io/stamethyst/ui/preferences/LauncherPreferences.kt
+@@ -11,7 +11,7 @@ import io.stamethyst.backend.render.MobileGluesGlslCacheSizePreset
+ import io.stamethyst.backend.render.MobileGluesMultidrawMode
+ import io.stamethyst.backend.render.MobileGluesNoErrorPolicy
+ import io.stamethyst.backend.render.MobileGluesSettings
+-import io.stamethyst.backend.render.RendererBackend
++import io.stamethyst.backend.render.RenderBackend
+ import io.stamethyst.backend.render.RendererSelectionMode
+ import io.stamethyst.backend.render.VirtualResolutionMode
+ import io.stamethyst.config.BackBehavior
+@@ -81,7 +81,7 @@ object LauncherPreferences {
+         get() = LauncherConfig.DEFAULT_RENDER_SURFACE_BACKEND
+     val DEFAULT_RENDERER_SELECTION_MODE: RendererSelectionMode
+         get() = LauncherConfig.DEFAULT_RENDERER_SELECTION_MODE
+-    val DEFAULT_MANUAL_RENDERER_BACKEND: RendererBackend
++    val DEFAULT_MANUAL_RENDERER_BACKEND: RenderBackend
+         get() = LauncherConfig.DEFAULT_MANUAL_RENDERER_BACKEND
+     val DEFAULT_MOBILEGLUES_ANGLE_POLICY: MobileGluesAnglePolicy
+         get() = LauncherConfig.DEFAULT_MOBILEGLUES_ANGLE_POLICY
+@@ -514,11 +514,11 @@ object LauncherPreferences {
+         LauncherConfig.saveRendererSelectionMode(context, mode)
+     }
+ 
+-    fun readManualRendererBackend(context: Context): RendererBackend {
++    fun readManualRendererBackend(context: Context): RenderBackend {
+         return LauncherConfig.readManualRendererBackend(context)
+     }
+ 
+-    fun saveManualRendererBackend(context: Context, backend: RendererBackend) {
++    fun saveManualRendererBackend(context: Context, backend: RenderBackend) {
+         LauncherConfig.saveManualRendererBackend(context, backend)
+     }
+ 
+diff --git a/app/src/main/java/io/stamethyst/ui/settings/core/SettingsRepository.kt b/app/src/main/java/io/stamethyst/ui/settings/core/SettingsRepository.kt
+index 464c97b..27b77ce 100644
+--- a/app/src/main/java/io/stamethyst/ui/settings/core/SettingsRepository.kt
++++ b/app/src/main/java/io/stamethyst/ui/settings/core/SettingsRepository.kt
+@@ -25,8 +25,10 @@ import io.stamethyst.backend.render.AndroidGameModeSnapshot
+ import io.stamethyst.backend.render.AndroidGameModeSupport
+ import io.stamethyst.backend.render.MobileGluesConfigFile
+ import io.stamethyst.backend.render.MobileGluesSettings
+-import io.stamethyst.backend.render.RendererBackend
++import io.stamethyst.backend.render.RenderBackend
+ import io.stamethyst.backend.render.RendererBackendResolver
++import io.stamethyst.plugin.PluginManager
++import io.stamethyst.plugin.RendererPlugin
+ import io.stamethyst.backend.render.RendererDecision
+ import io.stamethyst.backend.render.RendererSelectionMode
+ import io.stamethyst.backend.render.VirtualResolutionMode
+@@ -81,7 +83,7 @@ internal object SettingsRepository {
+         val virtualResolutionMode: VirtualResolutionMode,
+         val renderSurfaceBackend: RenderSurfaceBackend,
+         val rendererSelectionMode: RendererSelectionMode,
+-        val manualRendererBackend: RendererBackend,
++        val manualRendererBackend: RenderBackend,
+         val mobileGluesSettings: MobileGluesSettings,
+         val rendererDecision: RendererDecision,
+         val gpuResourceGuardianMode: GpuResourceGuardianMode,
+@@ -204,6 +206,9 @@ internal object SettingsRepository {
+     }
+ 
+     fun loadSettingsSnapshot(context: Context): SettingsSnapshot {
++        // 每次进入设置页重新扫描已安装的渲染器插件，装/卸后列表即时生效。
++        PluginManager.invalidate()
++        RendererPlugin.invalidate()
+         val renderSurfaceBackend = LauncherPreferences.readRenderSurfaceBackend(context)
+         val rendererSelectionMode = LauncherPreferences.readRendererSelectionMode(context)
+         val manualRendererBackend = LauncherPreferences.readManualRendererBackend(context)
+diff --git a/app/src/main/java/io/stamethyst/ui/settings/core/SettingsScreenViewModel.kt b/app/src/main/java/io/stamethyst/ui/settings/core/SettingsScreenViewModel.kt
+index f514158..bae3f3b 100644
+--- a/app/src/main/java/io/stamethyst/ui/settings/core/SettingsScreenViewModel.kt
++++ b/app/src/main/java/io/stamethyst/ui/settings/core/SettingsScreenViewModel.kt
+@@ -98,6 +98,7 @@ import io.stamethyst.backend.render.MobileGluesNoErrorPolicy
+ import io.stamethyst.backend.render.MobileGluesPreset
+ import io.stamethyst.backend.render.MobileGluesSettings
+ import io.stamethyst.backend.render.RendererAvailability
++import io.stamethyst.backend.render.RenderBackend
+ import io.stamethyst.backend.render.RendererBackend
+ import io.stamethyst.backend.render.RendererDecision
+ import io.stamethyst.backend.render.RendererSelectionMode
+@@ -322,7 +323,7 @@ class SettingsScreenViewModel : ViewModel() {
+     )
+ 
+     data class RendererBackendOptionState(
+-        val backend: RendererBackend,
++        val backend: RenderBackend,
+         val available: Boolean,
+         val reasonText: String? = null
+     )
+@@ -353,7 +354,7 @@ class SettingsScreenViewModel : ViewModel() {
+         val renderSurfaceBackend: RenderSurfaceBackend = LauncherPreferences.DEFAULT_RENDER_SURFACE_BACKEND,
+         val rendererSelectionMode: RendererSelectionMode =
+             LauncherPreferences.DEFAULT_RENDERER_SELECTION_MODE,
+-        val manualRendererBackend: RendererBackend =
++        val manualRendererBackend: RenderBackend =
+             LauncherPreferences.DEFAULT_MANUAL_RENDERER_BACKEND,
+         val mobileGluesAnglePolicy: MobileGluesAnglePolicy =
+             LauncherPreferences.DEFAULT_MOBILEGLUES_ANGLE_POLICY,
+@@ -375,9 +376,9 @@ class SettingsScreenViewModel : ViewModel() {
+             LauncherPreferences.DEFAULT_MOBILEGLUES_CUSTOM_GL_VERSION,
+         val mobileGluesFsr1QualityPreset: MobileGluesFsr1QualityPreset =
+             LauncherPreferences.DEFAULT_MOBILEGLUES_FSR1_QUALITY_PRESET,
+-        val autoSelectedRendererBackend: RendererBackend =
++        val autoSelectedRendererBackend: RenderBackend =
+             LauncherPreferences.DEFAULT_MANUAL_RENDERER_BACKEND,
+-        val effectiveRendererBackend: RendererBackend =
++        val effectiveRendererBackend: RenderBackend =
+             LauncherPreferences.DEFAULT_MANUAL_RENDERER_BACKEND,
+         val effectiveRenderSurfaceBackend: RenderSurfaceBackend =
+             LauncherPreferences.DEFAULT_RENDER_SURFACE_BACKEND,
+@@ -3373,7 +3374,7 @@ class SettingsScreenViewModel : ViewModel() {
+         refreshStatus(host)
+     }
+ 
+-    fun onManualRendererBackendChanged(host: Activity, backend: RendererBackend) {
++    fun onManualRendererBackendChanged(host: Activity, backend: RenderBackend) {
+         if (uiState.busy || uiState.manualRendererBackend == backend) {
+             return
+         }
+@@ -6238,7 +6239,7 @@ class SettingsScreenViewModel : ViewModel() {
+         LauncherPreferences.saveRendererSelectionMode(host, mode)
+     }
+ 
+-    private fun saveManualRendererBackendSelection(host: Activity, backend: RendererBackend) {
++    private fun saveManualRendererBackendSelection(host: Activity, backend: RenderBackend) {
+         LauncherPreferences.saveManualRendererBackend(host, backend)
+     }
+ 
+diff --git a/app/src/main/java/io/stamethyst/ui/settings/sections/SettingsDeveloperSections.kt b/app/src/main/java/io/stamethyst/ui/settings/sections/SettingsDeveloperSections.kt
+index 95f22dd..dca6cfd 100644
+--- a/app/src/main/java/io/stamethyst/ui/settings/sections/SettingsDeveloperSections.kt
++++ b/app/src/main/java/io/stamethyst/ui/settings/sections/SettingsDeveloperSections.kt
+@@ -46,6 +46,7 @@ import androidx.compose.ui.text.style.TextOverflow
+ import androidx.compose.ui.unit.dp
+ import io.stamethyst.R
+ import io.stamethyst.backend.network.AccelerationStrategy
++import io.stamethyst.backend.render.RenderBackend
+ import io.stamethyst.backend.render.RendererBackend
+ import io.stamethyst.backend.render.RendererSelectionMode
+ import io.stamethyst.config.GpuResourceGuardianMode
+@@ -882,6 +883,10 @@ internal fun SettingsAdvancedRenderSection(
+             optionDescription = { option ->
+                 buildList {
+                     add(option.backend.briefProsCons(context))
++                    if (option.backend.isPlugin) {
++                        (option.backend as? io.stamethyst.plugin.PluginRenderer)?.sourceLabel
++                            ?.let { add(context.getString(R.string.settings_renderer_plugin_source, it)) }
++                    }
+                     option.reasonText?.let(::add)
+                 }.joinToString("  ")
+             },
+@@ -1297,3 +1302,12 @@ internal fun RendererBackend.briefProsCons(context: Context): String {
+             context.getString(R.string.settings_renderer_pros_cons_vulkan_zink)
+     }
+ }
++
++/** 插件后端没有内置的优劣文案，展示来源并提示来源插件包。 */
++internal fun RenderBackend.briefProsCons(context: Context): String {
++    return if (this is RendererBackend) {
++        (this as RendererBackend).briefProsCons(context)
++    } else {
++        context.getString(R.string.settings_renderer_pros_cons_plugin)
++    }
++}
+diff --git a/app/src/main/java/net/kdt/pojavlaunch/utils/JREUtils.java b/app/src/main/java/net/kdt/pojavlaunch/utils/JREUtils.java
+index 2c68098..bd37de8 100644
+--- a/app/src/main/java/net/kdt/pojavlaunch/utils/JREUtils.java
++++ b/app/src/main/java/net/kdt/pojavlaunch/utils/JREUtils.java
+@@ -15,6 +15,7 @@ import android.system.ErrnoException;
+ import android.system.Os;
+ import android.util.Log;
+ 
++import io.stamethyst.backend.render.RenderBackend;
+ import io.stamethyst.backend.render.RendererDecision;
+ import io.stamethyst.config.LauncherConfig;
+ import io.stamethyst.config.RuntimePaths;
+@@ -32,7 +33,7 @@ public final class JREUtils {
+     public static String LD_LIBRARY_PATH;
+     public static String jvmLibraryPath;
+     private static String runtimeLibDir;
+-    private static RendererBackend currentRendererBackend;
++    private static RenderBackend currentRendererBackend;
+ 
+     private JREUtils() {
+     }
+@@ -170,13 +171,65 @@ public final class JREUtils {
+         clearEnv("FD_DEV_FEATURES");
+         clearEnv("POJAV_EMUI_ITERATOR_MITIGATE");
+ 
+-        RendererBackend effectiveBackend = rendererDecision.getEffectiveBackend();
++        RenderBackend effectiveBackend = rendererDecision.getEffectiveBackend();
+         currentRendererBackend = effectiveBackend;
+         env.put("AMETHYST_RENDERER", effectiveBackend.rendererId());
+         if (rendererDecision.getEnableEmuiIteratorMitigation()) {
+             env.put("POJAV_EMUI_ITERATOR_MITIGATE", "1");
+         }
+ 
++        if (effectiveBackend.isPlugin()) {
++            applyPluginRendererEnvironment(env, effectiveBackend);
++        } else {
++            applyBuiltinRendererEnvironment(context, env, (RendererBackend) effectiveBackend, rendererDecision);
++        }
++
++        for (Map.Entry<String, String> entry : env.entrySet()) {
++            try {
++                Os.setenv(entry.getKey(), entry.getValue(), true);
++            } catch (Throwable ignored) {}
++        }
++
++        File serverFile = new File(javaHome + "/" + runtimeLibDir + "/server/libjvm.so");
++        jvmLibraryPath = javaHome + "/" + runtimeLibDir + "/" + (serverFile.exists() ? "server" : "client");
++        String completeLdLibraryPath = jvmLibraryPath + ":" + LD_LIBRARY_PATH;
++        try {
++            Os.setenv("LD_LIBRARY_PATH", completeLdLibraryPath, true);
++        } catch (Throwable ignored) {
++        }
++        setLdLibraryPath(completeLdLibraryPath);
++    }
++
++    /**
++     * 插件渲染后端的环境注入：EGL 入口库走 POJAVEXEC_EGL，插件声明环境变量原样应用
++     * （DLOPEN 已由解析阶段转为 dlopenLibraries），插件 nativeLibraryDir 追加进 LD_LIBRARY_PATH。
++     */
++    private static void applyPluginRendererEnvironment(Map<String, String> env, RenderBackend backend) {
++        String eglLib = backend.eglLibName();
++        if (eglLib == null || eglLib.isEmpty()) {
++            eglLib = backend.lwjglOpenGlLibName();
++        }
++        if (eglLib != null && !eglLib.isEmpty()) {
++            env.put("POJAVEXEC_EGL", eglLib);
++        }
++        for (Map.Entry<String, String> entry : backend.getEnvVars().entrySet()) {
++            if ("DLOPEN".equals(entry.getKey())) {
++                continue;
++            }
++            env.put(entry.getKey(), entry.getValue());
++        }
++        for (String dir : backend.getLibraryDirectories()) {
++            appendLdLibraryPathEntry(dir, env);
++        }
++    }
++
++    /** 内置渲染后端的原有注入逻辑，行为与引入插件前完全一致。 */
++    private static void applyBuiltinRendererEnvironment(
++            Context context,
++            Map<String, String> env,
++            RendererBackend effectiveBackend,
++            RendererDecision rendererDecision
++    ) {
+         switch (effectiveBackend) {
+             case OPENGL_ES_MOBILEGLUES:
+                 File mobileGluesDir = new File(context.getFilesDir(), "MobileGlues");
+@@ -212,21 +265,18 @@ public final class JREUtils {
+                 env.put("LIBGL_ES", "3");
+                 break;
+         }
++    }
+ 
+-        for (Map.Entry<String, String> entry : env.entrySet()) {
+-            try {
+-                Os.setenv(entry.getKey(), entry.getValue(), true);
+-            } catch (Throwable ignored) {}
++    private static void appendLdLibraryPathEntry(String dir, Map<String, String> env) {
++        if (dir == null || dir.isEmpty()) {
++            return;
+         }
+-
+-        File serverFile = new File(javaHome + "/" + runtimeLibDir + "/server/libjvm.so");
+-        jvmLibraryPath = javaHome + "/" + runtimeLibDir + "/" + (serverFile.exists() ? "server" : "client");
+-        String completeLdLibraryPath = jvmLibraryPath + ":" + LD_LIBRARY_PATH;
+-        try {
+-            Os.setenv("LD_LIBRARY_PATH", completeLdLibraryPath, true);
+-        } catch (Throwable ignored) {
++        if (LD_LIBRARY_PATH == null || LD_LIBRARY_PATH.isEmpty()) {
++            LD_LIBRARY_PATH = dir;
++        } else if (!LD_LIBRARY_PATH.contains(dir)) {
++            LD_LIBRARY_PATH = LD_LIBRARY_PATH + ":" + dir;
+         }
+-        setLdLibraryPath(completeLdLibraryPath);
++        env.put("LD_LIBRARY_PATH", LD_LIBRARY_PATH);
+     }
+ 
+     private static void clearEnv(String key) {
+@@ -272,7 +322,23 @@ public final class JREUtils {
+         if (currentRendererBackend == null) {
+             return;
+         }
+-        for (String libName : getRendererLibraryLoadOrder(currentRendererBackend)) {
++        if (currentRendererBackend.isPlugin()) {
++            // 插件库路径已在解析阶段绝对化；逐一 dlopen，失败则退回 LD_LIBRARY_PATH 解析。
++            for (String libName : currentRendererBackend.getDlopenLibraries()) {
++                if (libName == null || libName.isEmpty()) {
++                    continue;
++                }
++                if (dlopen(libName)) {
++                    continue;
++                }
++                String resolved = findInLdLibPath(libName);
++                if (!resolved.equals(libName)) {
++                    dlopen(resolved);
++                }
++            }
++            return;
++        }
++        for (String libName : getRendererLibraryLoadOrder((RendererBackend) currentRendererBackend)) {
+             if (libName == null || libName.isEmpty()) {
+                 continue;
+             }
+diff --git a/app/src/main/res/values-zh-rCN/strings.xml b/app/src/main/res/values-zh-rCN/strings.xml
+index d2c4251..71db0e6 100644
+--- a/app/src/main/res/values-zh-rCN/strings.xml
++++ b/app/src/main/res/values-zh-rCN/strings.xml
+@@ -2624,6 +2624,8 @@
+     <string name="settings_renderer_pros_cons_gl4es">优点：桌面 GL 兼容性更好；缺点：额外的转译开销</string>
+     <string name="settings_renderer_pros_cons_kopper">优点：Vulkan 路径在部分设备上可能更稳；缺点：要求设备支持 Vulkan，且会强制使用 TextureView</string>
+     <string name="settings_renderer_pros_cons_vulkan_zink">优点：Mesa/Zink 兼容潜力高；缺点：对驱动和库的要求最高</string>
++    <string name="settings_renderer_pros_cons_plugin">来自已安装的渲染器插件 APK；具体特性与兼容性由插件自身决定</string>
++    <string name="settings_renderer_plugin_source">来自 %1$s</string>
+     <string name="settings_mobileglues_entry_title">MobileGlues 专项设置</string>
+     <string name="settings_mobileglues_entry_summary">ANGLE：%1$s  |  Multidraw：%2$s  |  Custom GL：%3$s</string>
+     <string name="settings_jvm_heap_value_mb">%1$d MB</string>
+diff --git a/app/src/main/res/values/strings.xml b/app/src/main/res/values/strings.xml
+index c3b02d5..300049f 100644
+--- a/app/src/main/res/values/strings.xml
++++ b/app/src/main/res/values/strings.xml
+@@ -2325,6 +2325,8 @@ Patch rule: keep Ori full-resolution glow/bloom rendering, but replace the blur
+     <string name="settings_renderer_pros_cons_gl4es">Pros: better desktop GL compatibility; Cons: extra translation overhead</string>
+     <string name="settings_renderer_pros_cons_kopper">Pros: Vulkan path can be steadier on some devices; Cons: requires Vulkan and forces TextureView</string>
+     <string name="settings_renderer_pros_cons_vulkan_zink">Pros: high Mesa/Zink compatibility potential; Cons: highest driver and library requirements</string>
++    <string name="settings_renderer_pros_cons_plugin">Rendered by an installed renderer plugin APK; behavior and compatibility depend on the plugin itself</string>
++    <string name="settings_renderer_plugin_source">from %1$s</string>
+     <string name="settings_render_scale_save_failed">Failed to save render scale</string>
+     <string name="settings_log_share_failed_prefix">Log share failed</string>
+     <string name="settings_busy_exporting_jvm_logs">Exporting JVM logs...</string>
+diff --git a/app/src/test/java/io/stamethyst/plugin/RendererPluginResolutionTest.kt b/app/src/test/java/io/stamethyst/plugin/RendererPluginResolutionTest.kt
+new file mode 100644
+index 0000000..29295dd
+--- /dev/null
++++ b/app/src/test/java/io/stamethyst/plugin/RendererPluginResolutionTest.kt
+@@ -0,0 +1,133 @@
++package io.stamethyst.plugin
++
++import org.junit.Assert.assertEquals
++import org.junit.Assert.assertTrue
++import org.junit.Rule
++import org.junit.Test
++import org.junit.rules.TemporaryFolder
++import java.io.File
++
++/**
++ * 插件渲染器 v1/v2 环境与库路径解析的纯逻辑测试（不依赖 Android 运行时）。
++ * 覆盖 FCL 兼容协议的生效语义：DLOPEN 抽取、`**|` 库路径、可配置项默认值、目录拼接。
++ */
++class RendererPluginResolutionTest {
++
++    @get:Rule
++    val tempFolder = TemporaryFolder()
++
++    @Test
++    fun v1_pojavEnv_dlopenEntriesGoToDlopenListAndValuesToEnv() {
++        val dir = tempFolder.root.absolutePath
++        File(dir, "libspirv-cross-c-shared.so").createNewFile()
++        File(dir, "libzink_dri.so").createNewFile()
++
++        val result = RendererPlugin.resolveV1Env(
++            pojavEnv = "LIBGL_ES=2:LIBGL_MIPMAP=3:DLOPEN=libspirv-cross-c-shared.so,libzink_dri.so",
++            nativeDir = dir
++        )
++
++        assertEquals(mapOf("LIBGL_ES" to "2", "LIBGL_MIPMAP" to "3"), result.env)
++        assertEquals(
++            listOf(
++                "$dir/libspirv-cross-c-shared.so",
++                "$dir/libzink_dri.so"
++            ),
++            result.dlopen
++        )
++    }
++
++    @Test
++    fun v1_mesaLibraryKeyJoinsPluginDir() {
++        val dir = tempFolder.root.absolutePath
++        val result = RendererPlugin.resolveV1Env("LIB_MESA_NAME=libgallium_dri.so", nativeDir = dir)
++
++        // 与 FCL 一致：LIB_MESA_NAME 属于 joinsDirKeys，保留库名，运行时经 LD_LIBRARY_PATH（含插件目录）解析。
++        assertEquals("libgallium_dri.so", result.env["LIB_MESA_NAME"])
++    }
++
++    @Test
++    fun v2_selectableUsesDefaultValueAndDisabledCheckSkipsIt() {
++        val dir = tempFolder.root.absolutePath
++        val config = RendererConfigV2(
++            displayName = "test",
++            rendererId = "opengles2",
++            rendererGLPath = "/libgl.so",
++            rendererEGLPath = "libEGL.so",
++            env = listOf(
++                SelectableEnvV2(key = "LIBGL_ES", items = EnvItemsV2(defaultValue = "2", values = listOf("3"))),
++                SelectableEnvV2(key = "SKIPPED", check = false, items = EnvItemsV2(defaultValue = "x")),
++            )
++        )
++
++        val result = RendererPlugin.resolveV2Env(config, dir)
++
++        assertEquals("2", result.env["LIBGL_ES"])
++        assertTrue("SKIPPED" !in result.env)
++    }
++
++    @Test
++    fun v2_toggleableAndCustomizableUseTheirDefaults() {
++        val dir = tempFolder.root.absolutePath
++        val config = RendererConfigV2(
++            displayName = "test",
++            rendererId = "",
++            rendererGLPath = "libgl.so",
++            rendererEGLPath = "libEGL.so",
++            env = listOf(
++                ToggleableEnvV2(key = "LIBGL_USE_MC_COLOR", value = "1", toggle = true),
++                ToggleableEnvV2(key = "TURNED_OFF", value = "1", toggle = false),
++                CustomizableEnvV2(key = "MESA_GL_VERSION_OVERRIDE", defaultValue = "4.6"),
++                CustomizableEnvV2(key = "EMPTY", defaultValue = ""),
++            )
++        )
++
++        val result = RendererPlugin.resolveV2Env(config, dir)
++
++        assertEquals("1", result.env["LIBGL_USE_MC_COLOR"])
++        assertEquals("4.6", result.env["MESA_GL_VERSION_OVERRIDE"])
++        assertTrue("TURNED_OFF" !in result.env)
++        assertTrue("EMPTY" !in result.env)
++    }
++
++    @Test
++    fun v2_nativePrefixAndDlopenLibPathsResolveAgainstPluginDir() {
++        val dir = tempFolder.root.absolutePath
++        File(dir, "libcustom_gl.so").createNewFile()
++        File(dir, "libextra.so").createNewFile()
++        File(dir, "libfixed.so").createNewFile()
++        val config = RendererConfigV2(
++            displayName = "test",
++            rendererId = "",
++            rendererGLPath = "**|libcustom_gl.so",
++            rendererEGLPath = "**|libcustom_egl.so",
++            dlopenLibPaths = listOf("libfixed.so", "**|libcustom_gl.so"),
++            env = listOf(
++                NormalEnvV2(key = "DLOPEN", value = "**|libextra.so,libfixed.so"),
++                NormalEnvV2(key = "LIB_MESA_NAME", value = "**|libgallium_dri.so"),
++            )
++        )
++
++        val result = RendererPlugin.resolveV2Env(config, dir)
++
++        assertEquals("$dir/libgallium_dri.so", result.env["LIB_MESA_NAME"])
++        assertEquals(
++            listOf(
++                "$dir/libextra.so",
++                "$dir/libfixed.so",
++                "$dir/libcustom_gl.so"
++            ),
++            result.dlopen
++        )
++    }
++
++    @Test
++    fun joinPluginDir_absolutePrefixAndNativePrefixAreHandled() {
++        val dir = tempFolder.root.absolutePath
++        File(dir, "libexisting.so").createNewFile()
++
++        assertEquals("$dir/libexisting.so", RendererPlugin.joinPluginDir(dir, "libexisting.so"))
++        assertEquals("$dir/other.so", RendererPlugin.joinPluginDir(dir, "/other.so"))
++        assertEquals("$dir/libprefix.so", RendererPlugin.joinPluginDir(dir, "**|libprefix.so"))
++    }
++}
