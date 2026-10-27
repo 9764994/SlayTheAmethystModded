@@ -79,11 +79,11 @@ class AgentToolSchedulerGatewayTest {
             val results = messages.filter { it["role"]!!.jsonPrimitive.content == "tool" }
             assertEquals(listOf("call-0", "call-1"), results.map { it["tool_call_id"]!!.jsonPrimitive.content })
             assertEquals(listOf("result0", "result1"), results.map { it["content"]!!.jsonPrimitive.content })
-            // Multi-call turns are split into one assistant/tool pair per call on the wire so
-            // OpenAI-to-Anthropic bridges cannot see a second tool_result after a user message.
+            // The native OpenAI shape keeps one assistant turn with both calls, so a reasoning
+            // block is sent once and every tool result still follows its own call.
             val toolCallMessages = messages.filter { it["tool_calls"] != null }
-            assertEquals(2, toolCallMessages.size)
-            assertTrue(toolCallMessages.all { it["tool_calls"]!!.jsonArray.size == 1 })
+            assertEquals(1, toolCallMessages.size)
+            assertEquals(2, toolCallMessages.single()["tool_calls"]!!.jsonArray.size)
             assertEquals(
                 listOf("call-0", "call-1"),
                 toolCallMessages.flatMap { message ->

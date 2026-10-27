@@ -42,6 +42,13 @@ independent of any `patch_id`, so multiple conversations share one workspace wit
 
 ## Context Management
 
+Parallel tool calls use the native OpenAI message structure: one assistant message declares all
+calls, followed by one tool result per call ID. Neither the gateway nor context conversion splits
+the assistant message, so the original `reasoning_content` is preserved once rather than duplicated.
+This also satisfies DeepSeek thinking-mode replay requirements. Regression tests inspect actual
+serialized HTTP requests for both streaming and non-streaming responses. Provider-specific
+OpenAI-to-Anthropic bridge workarounds are not applied.
+
 The editor uses an archived protocol transcript separately from the display transcript. Each session
 stores structured user messages, assistant messages (including tool call IDs and reasoning when
 provided), tool results, the active patch ID, and a successful summary boundary. Tool previews in the

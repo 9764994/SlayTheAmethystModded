@@ -104,6 +104,63 @@ class PolicyGatedAgentGatewayTest {
         assertEquals("image_url", image.getString("type"))
         assertTrue(image.getJSONObject("image_url").getString("url").startsWith("data:image/png;base64,"))
     }
+
+    @Test
+    fun respond_waitsForNetworkBeforeRetryingAnAbortedConnection() {
+        // A screen lock aborts the socket; the retry must not be spent while the radio is still down.
+        server.enqueue(MockResponse.Builder().onRequestStart(mockwebserver3.SocketEffect.CloseSocket()).build())
+        server.enqueue(finalResponse("Recovered after the radio came back."))
+        val workspace = createTempDirectory("agent-abort").toFile()
+        val probed = java.util.concurrent.atomic.AtomicInteger()
+        val retries = mutableListOf<Long>()
+        val gateway = PolicyGatedAgentGateway(
+            chatModel = AgentChatModelFactory.create(
+                OpenAiCompatibleModelConfig(
+                    baseUrl = server.url("/v1/").toString(),
+                    apiKey = "test-key",
+                    modelName = "test-model",
+                ),
+            ),
+            toolRegistry = AgentToolRegistry(listOf(WorkspaceTextFileTool(workspace))),
+            onRetry = { number, delay, _ -> if (number == 1) retries += delay },
+            // Report the network as down on the first probe and up on the second, so the retry path
+            // must actually wait rather than pass straight through.
+            hasUsableNetwork = { probed.incrementAndGet() > 1 },
+        )
+
+        val reply = gateway.respond(systemPrompt = "Recover.", userPrompt = "Continue.")
+
+        assertEquals("Recovered after the radio came back.", reply.text)
+        assertEquals(listOf(1L), retries)
+        assertTrue("the retry must probe the network, saw ${probed.get()} probes", probed.get() >= 2)
+    }
+
+    @Test
+    fun respond_retriesImmediatelyWhenTheNetworkIsStillUsable() {
+        server.enqueue(MockResponse.Builder().onRequestStart(mockwebserver3.SocketEffect.CloseSocket()).build())
+        server.enqueue(finalResponse("Retried without waiting."))
+        val workspace = createTempDirectory("agent-abort-online").toFile()
+        val probed = java.util.concurrent.atomic.AtomicInteger()
+        val gateway = PolicyGatedAgentGateway(
+            chatModel = AgentChatModelFactory.create(
+                OpenAiCompatibleModelConfig(
+                    baseUrl = server.url("/v1/").toString(),
+                    apiKey = "test-key",
+                    modelName = "test-model",
+                ),
+            ),
+            toolRegistry = AgentToolRegistry(listOf(WorkspaceTextFileTool(workspace))),
+            hasUsableNetwork = { probed.incrementAndGet(); true },
+        )
+
+        val reply = gateway.respond(systemPrompt = "Recover.", userPrompt = "Continue.")
+
+        assertEquals("Retried without waiting.", reply.text)
+        assertEquals("one probe is enough when the network is up", 1, probed.get())
+    }
+
+    @Test
+    fun respond_preservesNativeParallelToolCallGroups() {
         server.enqueue(twoToolCallResponse())
         server.enqueue(finalResponse("Both reads completed."))
         val workspace = createTempDirectory("agent-multi-tool").toFile().apply {
@@ -120,18 +177,81 @@ class PolicyGatedAgentGatewayTest {
         val request = Json.parseToJsonElement(requireNotNull(server.takeRequest().body).utf8()).jsonObject
         val messages = request["messages"]!!.jsonArray.map { it.jsonObject }
         assertEquals(
-            listOf("system", "user", "assistant", "tool", "assistant", "tool"),
+            listOf("system", "user", "assistant", "tool", "tool"),
             messages.map { it["role"]!!.jsonPrimitive.content },
         )
         assertEquals(
-            listOf(1, 1),
+            listOf(2),
             messages.filter { it["role"]!!.jsonPrimitive.content == "assistant" }
                 .map { it["tool_calls"]!!.jsonArray.size },
         )
     }
 
     @Test
-    fun splitMultiToolCallGroups_pairsEachCallWithItsOwnResult() {
+    fun respond_preservesSingleReasoningBlockForParallelToolCallsInHttpRequest() {
+        server.enqueue(twoToolCallResponse(reasoning = "Inspect both files before answering."))
+        server.enqueue(finalResponse("Both reads completed."))
+        val workspace = createTempDirectory("agent-thinking").toFile().apply {
+            resolve("note.txt").writeText("verified")
+        }
+        newGateway(workspace).respond(systemPrompt = "Inspect the note.", userPrompt = "Read twice.")
+        server.takeRequest()
+        val request = JSONObject(requireNotNull(server.takeRequest().body).utf8())
+        val messages = request.getJSONArray("messages")
+        val assistants = (0 until messages.length()).map { messages.getJSONObject(it) }
+            .filter { it.getString("role") == "assistant" }
+        assertEquals(1, assistants.size)
+        assistants.forEach {
+            assertEquals("Inspect both files before answering.", it.optString("reasoning_content"))
+            assertEquals(2, it.getJSONArray("tool_calls").length())
+        }
+    }
+
+    @Test
+    fun respondStreaming_preservesSingleReasoningBlockForParallelToolCallsInHttpRequest() {
+        val reasoning = "Inspect both files before answering."
+        val calls = (0..1).joinToString(",") { index ->
+            """{"index":$index,"id":"call-$index","type":"function","function":{"name":"read_workspace_file","arguments":"{\"path\":\"note.txt\"}"}}"""
+        }
+        server.enqueue(MockResponse.Builder().addHeader("Content-Type", "text/event-stream").body(
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\"$reasoning\"}}]}\n\n" +
+                "data: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[$calls]},\"finish_reason\":\"tool_calls\"}]}\n\n" +
+                "data: [DONE]\n\n",
+        ).build())
+        server.enqueue(MockResponse.Builder().addHeader("Content-Type", "text/event-stream").body(
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\"Done.\",\"content\":\"Both reads completed.\"},\"finish_reason\":\"stop\"}]}\n\n" +
+                "data: [DONE]\n\n",
+        ).build())
+        val workspace = createTempDirectory("agent-thinking-stream").toFile().apply {
+            resolve("note.txt").writeText("verified")
+        }
+        val config = OpenAiCompatibleModelConfig(
+            baseUrl = server.url("/v1/").toString(), apiKey = "test-key",
+            modelName = "deepseek-flash", reasoningEffort = LlmReasoningEffort.HIGH,
+        )
+        val gateway = PolicyGatedAgentGateway(
+            chatModel = AgentChatModelFactory.create(config),
+            toolRegistry = AgentToolRegistry(listOf(WorkspaceTextFileTool(workspace))),
+        )
+        val thinking = StringBuilder()
+        val reply = gateway.respondStreaming("Inspect.", "Read twice.",
+            AgentChatModelFactory.createStreaming(config)!!, onText = {}, onThinking = { thinking.append(it) })
+        assertEquals("Both reads completed.", reply.text)
+        assertTrue(thinking.startsWith(reasoning))
+        server.takeRequest()
+        val request = JSONObject(requireNotNull(server.takeRequest().body).utf8())
+        val messages = request.getJSONArray("messages")
+        val assistants = (0 until messages.length()).map { messages.getJSONObject(it) }
+            .filter { it.getString("role") == "assistant" }
+        assertEquals(1, assistants.size)
+        assistants.forEach {
+            assertEquals(reasoning, it.optString("reasoning_content"))
+            assertEquals(2, it.getJSONArray("tool_calls").length())
+        }
+    }
+
+    @Test
+    fun sanitizeToolMessageSequence_preservesParallelCallsAndReasoning() {
         val gateway = newGateway(createTempDirectory("agent-split").toFile())
         val first = dev.langchain4j.agent.tool.ToolExecutionRequest.builder()
             .id("call-first")
@@ -145,22 +265,24 @@ class PolicyGatedAgentGatewayTest {
             .build()
         val assistant = AiMessage.builder()
             .text("I will read both notes.")
+            .thinking("Inspect both files before answering.")
             .toolExecutionRequests(listOf(first, second))
             .build()
 
-        val split = gateway.splitMultiToolCallGroups(listOf(
+        val messages = gateway.sanitizeToolMessageSequence(listOf(
             assistant,
             ToolExecutionResultMessage.from(first, "first result"),
             ToolExecutionResultMessage.from(second, "second result"),
         ))
 
-        assertEquals(4, split.size)
-        assertEquals("call-first", (split[0] as AiMessage).toolExecutionRequests().single().id())
-        assertEquals("first result", (split[1] as ToolExecutionResultMessage).text())
-        assertEquals("call-second", (split[2] as AiMessage).toolExecutionRequests().single().id())
-        assertEquals("second result", (split[3] as ToolExecutionResultMessage).text())
-        assertEquals("I will read both notes.", (split[0] as AiMessage).text())
-        assertEquals("", (split[2] as AiMessage).text())
+        assertEquals(3, messages.size)
+        assertEquals(listOf("call-first", "call-second"), (messages[0] as AiMessage).toolExecutionRequests().map { it.id() })
+        assertEquals("first result", (messages[1] as ToolExecutionResultMessage).text())
+        assertEquals("second result", (messages[2] as ToolExecutionResultMessage).text())
+        assertEquals("call-first", (messages[1] as ToolExecutionResultMessage).id())
+        assertEquals("call-second", (messages[2] as ToolExecutionResultMessage).id())
+        assertEquals("I will read both notes.", (messages[0] as AiMessage).text())
+        assertEquals(assistant.thinking(), (messages[0] as AiMessage).thinking())
     }
 
     @Test
