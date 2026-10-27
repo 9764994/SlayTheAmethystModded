@@ -105,25 +105,3 @@ internal fun AiInboxPanel(
         }
     }
 }
-
-@Composable
-internal fun AiInboxDeliveryMenu(delivery: AiInboxDelivery, onChange: (AiInboxDelivery) -> Unit) {
-    var expanded by remember { mutableStateOf(false) }
-    Box {
-        TextButton(onClick = { expanded = true }, contentPadding = PaddingValues(horizontal = 6.dp)) {
-            Text(stringResource(if (delivery == AiInboxDelivery.QUEUE) R.string.ai_inbox_queue else R.string.ai_inbox_steer),
-                style = MaterialTheme.typography.labelMedium)
-            Text(" ▾", style = MaterialTheme.typography.labelSmall)
-        }
-        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            AiInboxDelivery.entries.forEach { mode ->
-                DropdownMenuItem(onClick = { onChange(mode); expanded = false },
-                    text = { Column {
-                        Text(stringResource(if (mode == AiInboxDelivery.QUEUE) R.string.ai_inbox_queue else R.string.ai_inbox_steer))
-                        Text(stringResource(if (mode == AiInboxDelivery.QUEUE) R.string.ai_inbox_queue_hint else R.string.ai_inbox_steer_hint),
-                            style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    } }, trailingIcon = { if (mode == delivery) Text("✓") })
-            }
-        }
-    }
-}

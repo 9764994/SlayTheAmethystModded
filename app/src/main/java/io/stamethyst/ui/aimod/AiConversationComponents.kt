@@ -89,8 +89,6 @@ internal fun AiChatComposer(
     hazeState: HazeState,
     onComposerHeightChanged: (Int) -> Unit,
     inbox: List<AiInboxItem> = emptyList(),
-    delivery: AiInboxDelivery = AiInboxDelivery.QUEUE,
-    onDeliveryChange: (AiInboxDelivery) -> Unit = {},
     onInboxChange: (String, String?, AiInboxDelivery?, Boolean) -> Unit = { _, _, _, _ -> },
     onResumeInbox: () -> Unit = {},
     editingInboxId: String? = null,
@@ -177,7 +175,6 @@ internal fun AiChatComposer(
                     Box(Modifier.weight(1f)) {
                         AiReasoningEffortPicker(effort, onEffortChange, enabled = !busy, hazeState = hazeState)
                     }
-                    if (busy || editingInboxId != null) AiInboxDeliveryMenu(delivery, onDeliveryChange)
                     if (busy) AiMessageAction(
                         icon = ImageVector.vectorResource(R.drawable.ic_stop),
                         label = stringResource(R.string.ai_mod_editor_stop), onClick = onStop,

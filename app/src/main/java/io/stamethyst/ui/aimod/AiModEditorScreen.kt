@@ -246,7 +246,6 @@ internal class AiModEditorViewModel(
         private set
     var reasoningEffort by mutableStateOf(LlmReasoningEffort.HIGH)
         private set
-    var inboxDelivery by mutableStateOf(AiInboxDelivery.QUEUE)
     val inbox: List<AiInboxItem> get() = sessions.firstOrNull { it.id == currentSessionId }?.inbox.orEmpty()
 
     fun updateInbox(id: String, text: String? = null, delivery: AiInboxDelivery? = null, remove: Boolean = false) {
@@ -278,13 +277,12 @@ internal class AiModEditorViewModel(
 
     fun saveInboxEdit(id: String, text: String, attachments: List<AiAttachment>, onSaved: () -> Unit) {
         val sessionId = currentSessionId
-        val delivery = inboxDelivery
         launchStorage {
             var found = false
             val updated = conversationStore.mutate(sessionId) { session ->
                 found = session.inbox.any { it.id == id }
                 session.copy(inbox = session.inbox.map {
-                    if (it.id == id) it.copy(text = text.trim(), attachments = attachments, delivery = delivery) else it
+                    if (it.id == id) it.copy(text = text.trim(), attachments = attachments) else it
                 })
             }
             withContext(Dispatchers.Main.immediate) {
@@ -542,7 +540,7 @@ internal class AiModEditorViewModel(
         if (!storageReady || currentSessionId.isBlank() || (trimmed.isEmpty() && attachments.isEmpty())) return
         if (busy) {
             val sessionId = currentSessionId
-            val item = AiInboxItem(UUID.randomUUID().toString(), trimmed, attachments, inboxDelivery)
+            val item = AiInboxItem(UUID.randomUUID().toString(), trimmed, attachments)
             launchStorage {
                 val updated = conversationStore.mutate(sessionId) { it.copy(inbox = it.inbox + item) }
                 withContext(Dispatchers.Main.immediate) { updated?.let(::installSession) }
@@ -1172,8 +1170,6 @@ fun LauncherAiModEditorScreen(
             configured = configured && viewModel.storageReady,
             busy = viewModel.busy,
             inbox = viewModel.inbox,
-            delivery = viewModel.inboxDelivery,
-            onDeliveryChange = { viewModel.inboxDelivery = it },
             onInboxChange = viewModel::updateInbox,
             onResumeInbox = viewModel::resumeInbox,
             editingInboxId = editingInboxId,
@@ -1186,7 +1182,6 @@ fun LauncherAiModEditorScreen(
                 draft = item.text
                 draftAttachments.clear()
                 draftAttachments.addAll(item.attachments)
-                viewModel.inboxDelivery = item.delivery
             },
             onUndoInbox = { item ->
                 viewModel.updateInbox(item.id, remove = true)
