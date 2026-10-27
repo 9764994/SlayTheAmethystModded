@@ -130,7 +130,7 @@ class AgentApiSearchTool(
         val limit = json["limit"]?.jsonPrimitive?.content?.toIntOrNull() ?: DEFAULT_LIMIT
         val classpath = classpath() ?: return failure("classpath_unavailable")
         if (classpath.isEmpty()) return failure("classpath_unavailable")
-        val index = AgentApiIndex.index(classpath)
+        val index = AgentApiIndex.index(context, classpath)
         val results = AgentApiIndex.search(index.all(), query, implementsFilter, limit)
         return buildJsonObject {
             put("query", JsonPrimitive(query.orEmpty()))

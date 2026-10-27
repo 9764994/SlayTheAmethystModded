@@ -155,9 +155,11 @@ The editor exposes these tools for the selected mod workspace:
 - `list_agent_mod_entries`: discover resource or class paths in the parent JAR without extraction.
 - `inspect_agent_class`: inspect one parent class and its exact declared API without extraction.
 - `decompile_agent_class`: decompile one parent class into the shared on-demand `source/` cache.
-- `decompile_agent_api_class`: decompile one game, BaseMod, StSLib, ModTheSpire, or bundled
-  dependency class from the compile classpath and return the Java source inline. Use this for
-  vanilla behavior; installed mod classes still go through `decompile_agent_class`.
+- `decompile_agent_api_class`: decompile one or more game, BaseMod, StSLib, ModTheSpire, or bundled
+  dependency classes from the compile classpath and return the Java source inline. Several names can
+  be passed per call; a class above the inline cap returns a member index plus a signature skeleton,
+  and `member` reads one method, constructor, or field body. Use this for vanilla behavior; installed
+  mod classes still go through `decompile_agent_class`.
 - `read_agent_mod_resource`: read a bounded byte range from one parent JAR resource.
   The `source/` tree is available to the agent through read/list tools and cannot be modified
   through workspace write/delete tools. See "On-device decompilation" below.
@@ -464,15 +466,40 @@ patch sources and generated patch metadata live under the separate writable `pat
 tree for each patch mod.
 
 `decompile_agent_api_class` covers the other half of the classpath: game classes, BaseMod, StSLib,
-ModTheSpire, and bundled dependencies. It locates the class in the resolved compile classpath, gives CFR
-the same one-class temporary JAR treatment, and returns the source inline (capped at 32,000 characters)
-instead of writing it into `source/`. That keeps vanilla source out of the parent-mod cache while still
-letting the agent read the actual installed implementation before designing a patch.
+ModTheSpire, and bundled dependencies. It locates each class in the resolved compile classpath, gives CFR
+the same one-class temporary JAR treatment, and returns the source inline instead of writing it into
+`source/`. That keeps vanilla source out of the parent-mod cache while still letting the agent read the
+actual installed implementation before designing a patch.
 
 - CFR (`org.benf:cfr`, 0.152) is bundled in the APK and invoked through its `CfrDriver` API from the
   launcher process. CFR is compiled to class file 50 and does not execute the class it reads.
-- Decompilation is bounded to one requested class per tool call. `source-metadata.json` records
-  `source_mode: on_demand`, the parent JAR SHA-256, and the number of materialized classes.
+- The tool accepts up to eight binary names per call (`class_names`, or `class_name` as an array) so
+  independent classes cost one round trip. A single class keeps the flat response shape; several
+  classes return `{status, results, next_step}`.
+- Decompiled API source is cached on device under the app cache (`agent-api-source/`), keyed by the
+  archive fingerprint `name-length-lastModified` plus the binary class name. The fingerprint is not a
+  content hash because hashing the 365 MB game JAR costs more than the decompilation it would guard.
+  The cache is bounded (24 MB / 512 files) and pruned oldest-first.
+- One CFR driver is kept per classpath per thread and reused, so the archive index and parsed options
+  stay warm between calls. CFR's class-file source is not thread-safe, which is why the reuse is
+  thread-local; the tool is therefore `PARALLEL` in the scheduler.
+- A class above the 32,000-character inline cap is never cut mid-file. The response carries a member
+  index (name, kind, declaration) and a signature-only skeleton whose bodies are `{ /* … */ }`; passing
+  `member` returns that method, constructor, or field body instead. `source_chars` is always the full
+  decompiled length, `returned_chars` the returned text, `truncated` whether the returned text was cut,
+  and `sliced` whether a member subset was returned.
+- The API index (`search_agent_api`, `describe_agent_api_class`) is persisted as a binary `.idx` file
+  keyed by the SHA-256 of the classpath signature (paths, sizes, modification times), so a new process
+  does not re-parse thousands of class headers. Indexes are validated by magic and version; a corrupt
+  or stale file is deleted and rebuilt.
+- Building that index opens each archive **once** and reads every class header through that handle.
+  Constructing a `ZipFile` parses the whole central directory, so reopening it per class made the
+  build quadratic over the game JAR's thousands of entries; `search_agent_api` then appeared to hang.
+  `AgentModJarReader` exposes `readClassEntryBytes(ZipFile, …)`, `readEntryBytes(ZipFile, …)` and
+  `classEntries(ZipFile)` for this bulk path, and a jar Android cannot index falls back to the
+  sequential reader once for that archive rather than once per class.
+- The build checks for interruption every 64 classes, so cancelling a run stops indexing instead of
+  waiting for the whole classpath to be scanned.
 - Class and resource reads use random-access `ZipFile` where possible and a sequential Commons
   Compress fallback for duplicate-entry archives. If Android cannot index a duplicate-entry parent,
   the compile cache stores only a deduplicated `.class` overlay rather than a second full-size copy.

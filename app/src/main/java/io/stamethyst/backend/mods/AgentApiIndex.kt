@@ -6,6 +6,7 @@ import org.objectweb.asm.Opcodes
 import org.objectweb.asm.Type
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
+import java.util.zip.ZipFile
 
 /** One type found on the compile classpath, without its members. */
 data class ApiTypeSummary(
@@ -49,44 +50,211 @@ data class ApiTypeDetail(
  */
 object AgentApiIndex {
     private const val MAX_ENTRIES = 200_000
+    private const val MAX_MEMORY_INDEXES = 4
+    private const val MAX_DISK_INDEXES = 4
+
+    /** How many classes to index between interruption checks, so cancel takes effect promptly. */
+    private const val CANCELLATION_CHECK_INTERVAL = 64
+    private const val INDEX_CACHE_DIR = "agent-api-index"
+    private const val INDEX_MAGIC = 0x41504958
+    private const val INDEX_VERSION = 1
     private val cache = ConcurrentHashMap<String, Index>()
 
-    fun index(classpath: List<File>): Index {
-        val signature = classpath.joinToString("|") { "${it.absolutePath}:${it.length()}:${it.lastModified()}" }
-        if (cache.size > 4) cache.clear()
-        return cache.computeIfAbsent(signature) { build(classpath) }
+    /**
+     * Builds or loads the index for [classpath], optionally persisting it under [indexDir] so a new
+     * process does not re-parse thousands of class headers. The in-memory entry is still keyed by the
+     * full classpath signature; the disk entry is keyed by its SHA-256.
+     */
+    fun index(classpath: List<File>, indexDir: File? = null): Index {
+        val signature = signatureOf(classpath)
+        if (cache.size > MAX_MEMORY_INDEXES) cache.clear()
+        return cache.computeIfAbsent(signature) {
+            val directory = indexDir?.takeIf { it.isDirectory || it.mkdirs() }
+            val file = directory?.let { File(it, sha256(signature) + ".idx") }
+            val stored = file?.let(::readIndex)
+            if (stored != null) {
+                return@computeIfAbsent stored
+            }
+            val built = build(classpath)
+            if (file != null && directory != null) {
+                writeIndex(file, built)
+                pruneIndexes(directory)
+            }
+            built
+        }
     }
 
+    /** Resolves the persistent index directory for [context] and loads or builds the index. */
+    fun index(context: android.content.Context, classpath: List<File>): Index =
+        index(classpath, AgentPatchSourceCompiler.resolveAgentPatchCacheDir(context, INDEX_CACHE_DIR))
+
+    private fun signatureOf(classpath: List<File>): String =
+        classpath.joinToString("|") { "${it.absolutePath}:${it.length()}:${it.lastModified()}" }
+
+    private fun sha256(value: String): String {
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+            .digest(value.toByteArray(Charsets.UTF_8))
+        return digest.joinToString("") { "%02x".format(java.util.Locale.ROOT, it) }
+    }
+
+    /** Drops the in-memory indexes so the next call must go to disk. Test seam. */
+    internal fun clearMemoryCache() {
+        cache.clear()
+    }
+
+    internal fun readIndex(file: File): Index? {
+        if (!file.isFile) return null
+        val index = runCatching {
+            java.io.DataInputStream(java.io.BufferedInputStream(file.inputStream())).use { input ->
+                if (input.readInt() != INDEX_MAGIC) return@use null
+                if (input.readInt() != INDEX_VERSION) return@use null
+                val count = input.readInt()
+                if (count < 0 || count > MAX_ENTRIES) return@use null
+                val types = LinkedHashMap<String, ApiTypeSummary>(count)
+                repeat(count) {
+                    val binaryName = input.readUTF()
+                    val kind = input.readUTF()
+                    val superName = input.readUTF()
+                    val origin = input.readUTF()
+                    val flags = input.readByte().toInt()
+                    val interfaceCount = input.readInt().coerceAtLeast(0)
+                    val interfaces = ArrayList<String>(interfaceCount)
+                    repeat(interfaceCount) { interfaces += input.readUTF() }
+                    types[binaryName] = ApiTypeSummary(
+                        binaryName = binaryName,
+                        kind = kind,
+                        superName = superName,
+                        interfaces = interfaces,
+                        isPublic = flags and 1 != 0,
+                        isNested = flags and 2 != 0,
+                        origin = origin,
+                    )
+                }
+                Index(types)
+            }
+        }.getOrNull()
+        // A rejected entry is either corrupt or written by an older format; drop it so the next
+        // build can replace it without a stale file shadowing the fresh index.
+        if (index == null) runCatching { file.delete() }
+        return index
+    }
+
+    internal fun writeIndex(file: File, index: Index) {
+        val temporary = File(file.parentFile, "${file.name}.${System.nanoTime()}.${Thread.currentThread().id}.tmp")
+        val written = runCatching {
+            java.io.DataOutputStream(java.io.BufferedOutputStream(temporary.outputStream())).use { output ->
+                output.writeInt(INDEX_MAGIC)
+                output.writeInt(INDEX_VERSION)
+                output.writeInt(index.entries.size)
+                index.entries.values.forEach { type ->
+                    output.writeUTF(type.binaryName)
+                    output.writeUTF(type.kind)
+                    output.writeUTF(type.superName)
+                    output.writeUTF(type.origin)
+                    var flags = 0
+                    if (type.isPublic) flags = flags or 1
+                    if (type.isNested) flags = flags or 2
+                    output.writeByte(flags)
+                    output.writeInt(type.interfaces.size)
+                    type.interfaces.forEach(output::writeUTF)
+                }
+            }
+            if (file.exists() && !file.delete()) return@runCatching false
+            temporary.renameTo(file)
+        }.getOrDefault(false)
+        if (!written) temporary.delete()
+    }
+
+    private fun pruneIndexes(directory: File) {
+        val files = directory.listFiles { file -> file.isFile && file.extension == "idx" } ?: return
+        if (files.size <= MAX_DISK_INDEXES) return
+        files.sortedBy { it.lastModified() }
+            .take(files.size - MAX_DISK_INDEXES)
+            .forEach { runCatching { it.delete() } }
+    }
+
+    /**
+     * Builds the type index.
+     *
+     * Each archive is opened once and every class header is read through that single handle.
+     * Opening a `ZipFile` parses the entire central directory, so reopening it per class turned this
+     * into quadratic work over the game JAR's thousands of entries and made the tool look hung.
+     *
+     * The loop polls for interruption so cancelling a run stops indexing instead of waiting for the
+     * whole classpath to be scanned.
+     */
     private fun build(classpath: List<File>): Index {
         val types = LinkedHashMap<String, ApiTypeSummary>()
         var seen = 0
-        classpath.forEach { entry ->
-            if (!entry.exists()) return@forEach
+        for (entry in classpath) {
+            checkInterrupted()
+            if (!entry.exists()) continue
             val origin = entry.name
-            classNames(entry).forEach { internalName ->
-                if (seen >= MAX_ENTRIES) return@forEach
-                seen++
-                val summary = readSummary(entry, internalName, origin) ?: return@forEach
-                types.putIfAbsent(summary.binaryName, summary)
+            if (entry.isDirectory) {
+                for (internalName in directoryClassNames(entry)) {
+                    if (seen >= MAX_ENTRIES) break
+                    seen++
+                    if (seen % CANCELLATION_CHECK_INTERVAL == 0) checkInterrupted()
+                    val summary = readSummary(entry, internalName, origin) ?: continue
+                    types.putIfAbsent(summary.binaryName, summary)
+                }
+                continue
+            }
+            if (!entry.isFile || !entry.name.endsWith(".jar", ignoreCase = true)) continue
+            val indexedFromJar = runCatching {
+                ZipFile(entry).use { zip ->
+                    for (internalName in AgentModJarReader.classEntries(zip)) {
+                        if (seen >= MAX_ENTRIES) break
+                        seen++
+                        if (seen % CANCELLATION_CHECK_INTERVAL == 0) checkInterrupted()
+                        val summary = readSummary(zip, internalName, origin) ?: continue
+                        types.putIfAbsent(summary.binaryName, summary)
+                    }
+                    true
+                }
+            }.getOrDefault(false)
+            if (!indexedFromJar) {
+                // Android's ZipFile rejects duplicate entry names. Fall back to the sequential
+                // reader for this archive only, rather than reopening it once per class.
+                for (internalName in AgentModJarReader.classEntries(entry)) {
+                    if (seen >= MAX_ENTRIES) break
+                    seen++
+                    if (seen % CANCELLATION_CHECK_INTERVAL == 0) checkInterrupted()
+                    val summary = readSummary(entry, internalName, origin) ?: continue
+                    types.putIfAbsent(summary.binaryName, summary)
+                }
             }
         }
         return Index(types)
     }
 
-    private fun classNames(entry: File): Sequence<String> {
-        if (entry.isDirectory) {
-            val root = entry.canonicalFile.toPath()
-            return entry.walkTopDown()
-                .filter { it.isFile && it.extension.equals("class", ignoreCase = true) }
-                .map { it.canonicalFile.toPath().let { path -> root.relativize(path).toString() } }
-                .map { it.removeSuffix(".class").replace(File.separatorChar, '/') }
+    /** Fails the build as cancelled instead of finishing a scan nobody is waiting for. */
+    private fun checkInterrupted() {
+        if (Thread.currentThread().isInterrupted) {
+            throw java.util.concurrent.CancellationException("API index build cancelled")
         }
-        if (!entry.isFile || !entry.name.endsWith(".jar", ignoreCase = true)) return emptySequence()
-        return AgentModJarReader.classEntries(entry).asSequence()
+    }
+
+    private fun directoryClassNames(entry: File): List<String> {
+        val root = entry.canonicalFile.toPath()
+        return entry.walkTopDown()
+            .filter { it.isFile && it.extension.equals("class", ignoreCase = true) }
+            .map { it.canonicalFile.toPath().let { path -> root.relativize(path).toString() } }
+            .map { it.removeSuffix(".class").replace(File.separatorChar, '/') }
+            .toList()
+    }
+
+    private fun readSummary(zip: ZipFile, internalName: String, origin: String): ApiTypeSummary? {
+        val bytes = AgentModJarReader.readClassEntryBytes(zip, internalName) ?: return null
+        return summarize(bytes, internalName, origin)
     }
 
     private fun readSummary(entry: File, internalName: String, origin: String): ApiTypeSummary? {
         val bytes = readClassBytes(entry, internalName) ?: return null
+        return summarize(bytes, internalName, origin)
+    }
+
+    private fun summarize(bytes: ByteArray, internalName: String, origin: String): ApiTypeSummary? {
         var access = 0
         var name = internalName
         var superName = ""
@@ -130,7 +298,6 @@ object AgentApiIndex {
             origin = origin,
         )
     }
-
     private fun readClassBytes(entry: File, internalName: String): ByteArray? {
         if (entry.isDirectory) {
             return File(entry, "$internalName.class").takeIf(File::isFile)?.readBytes()
@@ -304,6 +471,8 @@ object AgentApiIndex {
     /** Immutable light index of every type on a resolved classpath. */
     class Index internal constructor(private val types: Map<String, ApiTypeSummary>) {
         val size: Int get() = types.size
+
+        internal val entries: Map<String, ApiTypeSummary> get() = types
 
         fun all(): Collection<ApiTypeSummary> = types.values
     }

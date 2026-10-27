@@ -102,6 +102,37 @@ object AgentModJarReader {
             ?: readClassBytes(jar, internalName.removeSuffix(".class").replace('/', '.'))
     }
 
+    /**
+     * Class-entry variant that reuses an already-open archive.
+     *
+     * Constructing a [java.util.zip.ZipFile] parses the whole central directory, so building an
+     * index by reopening the archive once per class is quadratic in the number of entries. Bulk
+     * callers must open the archive once and pass it here for every class instead.
+     */
+    fun readClassEntryBytes(zip: ZipFile, internalName: String, maxBytes: Long = MAX_CLASS_BYTES): ByteArray? {
+        val normalized = internalName.removeSuffix(".class").replace('.', '/') + ".class"
+        readEntryBytes(zip, normalized, maxBytes)?.let { return it }
+        val candidates = classEntryCandidates(internalName.removeSuffix(".class").replace('/', '.'))
+        return candidates.firstNotNullOfOrNull { name -> readEntryBytes(zip, name, maxBytes) }
+    }
+
+    /** Reads one entry from an already-open archive; never reopens the file. */
+    fun readEntryBytes(zip: ZipFile, entryName: String, maxBytes: Long = MAX_CLASS_BYTES): ByteArray? {
+        val normalized = normalizeEntry(entryName) ?: return null
+        return runCatching {
+            val entry = zip.getEntry(normalized) ?: return@runCatching null
+            zip.getInputStream(entry).use { input -> readAllBounded(input, maxBytes) }
+        }.getOrNull()
+    }
+
+    /** Class entry names from an already-open archive, avoiding a second central-directory parse. */
+    fun classEntries(zip: ZipFile): List<String> = zip.entries()
+        .asSequence()
+        .map { it.name }
+        .filter { it.endsWith(".class", ignoreCase = true) && !it.startsWith("META-INF/") }
+        .map { it.substring(0, it.length - ".class".length) }
+        .toList()
+
     fun hasClassEntry(jar: File, internalName: String): Boolean {
         val candidates = classEntryCandidates(internalName)
         if (candidates.isEmpty()) return false

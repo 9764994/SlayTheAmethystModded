@@ -335,7 +335,8 @@ class AgentToolSchedulerTest {
         }
         val context = android.app.Application()
         listOf(AgentSkillTool(context), AgentApiSearchTool(context, root), AgentApiDescribeTool(context, root),
-            AgentPatchTargetInspectTool(context, root), AgentPatchModListTool(context, "parent")).forEach {
+            AgentPatchTargetInspectTool(context, root), AgentPatchModListTool(context, "parent"),
+            AgentApiClassDecompileTool(context, root)).forEach {
             assertEquals(it.specification.name(), AgentToolConcurrency.PARALLEL, it.concurrency)
         }
         listOf(
@@ -343,7 +344,6 @@ class AgentToolSchedulerTest {
             AgentPatchWorkspaceCreateTool(context, "parent", root),
             AgentModSourceDecompileTool(context, "parent", root),
             AgentModClassDecompileTool(context, "parent", root),
-            AgentApiClassDecompileTool(context, root),
             AgentPatchSkeletonTool(context, root, { null }),
             AgentPatchModCompileTool(context, root, { null }),
             AgentPatchPreflightTool(context, root, { null }),

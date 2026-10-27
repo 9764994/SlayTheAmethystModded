@@ -18,6 +18,7 @@ import org.objectweb.asm.ClassWriter
 import org.objectweb.asm.Opcodes
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -836,6 +837,136 @@ class PolicyGatedAgentGatewayTest {
         assertEquals("class_not_found", missing["error"]?.jsonPrimitive?.content)
     }
 
+    @Test
+    fun apiClassDecompileToolCachesRepeatedReads() {
+        val root = createTempDirectory("agent-api-cache").toFile()
+        val context = testContext(root)
+        val gameJar = gameJarWith(root, "com/example/VanillaThing.class" to simpleClassBytes("com/example/VanillaThing"))
+        val tool = AgentApiClassDecompileTool(context, File(root, "parent.jar"))
+
+        val first = Json.parseToJsonElement(
+            tool.execute("""{"class_name":"com.example.VanillaThing"}"""),
+        ).jsonObject
+        val second = Json.parseToJsonElement(
+            tool.execute("""{"class_name":"com.example.VanillaThing"}"""),
+        ).jsonObject
+
+        assertEquals(false, first["cached"]?.jsonPrimitive?.content?.toBoolean())
+        assertEquals(true, second["cached"]?.jsonPrimitive?.content?.toBoolean())
+        assertEquals(first["source"], second["source"])
+        assertTrue("cache must live under the app cache", File(context.cacheDir, "agent-api-source").isDirectory)
+        assertTrue("the game jar is only read", gameJar.isFile)
+    }
+
+    @Test
+    fun apiClassDecompileToolAcceptsBatchOfClasses() {
+        val root = createTempDirectory("agent-api-batch").toFile()
+        val context = testContext(root)
+        gameJarWith(
+            root,
+            "com/example/VanillaThing.class" to simpleClassBytes("com/example/VanillaThing"),
+            "com/example/OtherThing.class" to simpleClassBytes("com/example/OtherThing"),
+        )
+        val tool = AgentApiClassDecompileTool(context, File(root, "parent.jar"))
+
+        val batch = Json.parseToJsonElement(
+            tool.execute(
+                """{"class_names":["com.example.VanillaThing","com.example.OtherThing"]}""",
+            ),
+        ).jsonObject
+
+        assertEquals("decompiled", batch["status"]?.jsonPrimitive?.content)
+        val results = batch["results"]!!.jsonArray.map { it.jsonObject }
+        assertEquals(2, results.size)
+        assertEquals(
+            listOf("com.example.VanillaThing", "com.example.OtherThing"),
+            results.map { it["class_name"]?.jsonPrimitive?.content },
+        )
+        assertTrue(results.all { it["source"]!!.jsonPrimitive.content.contains("class ") })
+
+        val arrayForm = Json.parseToJsonElement(
+            tool.execute("""{"class_name":["com.example.VanillaThing"]}"""),
+        ).jsonObject
+        assertEquals("decompiled", arrayForm["status"]?.jsonPrimitive?.content)
+        assertTrue("a single class keeps the flat shape", "source" in arrayForm)
+
+        val empty = Json.parseToJsonElement(tool.execute("""{"class_names":[]}""")).jsonObject
+        assertEquals("invalid_arguments", empty["error"]?.jsonPrimitive?.content)
+    }
+
+    @Test
+    fun apiClassDecompileToolSlicesOversizedClassByMember() {
+        val root = createTempDirectory("agent-api-slice").toFile()
+        val context = testContext(root)
+        gameJarWith(root, "com/example/Huge.class" to wideClassBytes("com/example/Huge", 1200))
+        val tool = AgentApiClassDecompileTool(context, File(root, "parent.jar"))
+
+        val skeleton = Json.parseToJsonElement(
+            tool.execute("""{"class_name":"com.example.Huge"}"""),
+        ).jsonObject
+
+        assertTrue(
+            "fixture must exceed the inline cap, was ${skeleton["source_chars"]}",
+            skeleton["source_chars"]!!.jsonPrimitive.content.toInt() > 32_000,
+        )
+        assertEquals(true, skeleton["truncated"]?.jsonPrimitive?.content?.toBoolean())
+        assertEquals(false, skeleton["sliced"]?.jsonPrimitive?.content?.toBoolean())
+        val body = skeleton["skeleton"]!!.jsonPrimitive.content
+        assertTrue("skeleton must keep the class header", body.contains("class Huge"))
+        assertTrue("skeleton must keep signatures", body.contains("public int m0() { /* … */ }"))
+        assertTrue("skeleton must drop bodies", !body.contains("return 5;"))
+        val index = skeleton["member_index"]!!.jsonArray
+        assertEquals(200, index.size)
+        assertTrue(index.any { it.jsonObject["name"]?.jsonPrimitive?.content == "m5" })
+
+        val sliced = Json.parseToJsonElement(
+            tool.execute("""{"class_name":"com.example.Huge","member":"m5"}"""),
+        ).jsonObject
+
+        assertEquals(true, sliced["sliced"]?.jsonPrimitive?.content?.toBoolean())
+        assertEquals("m5", sliced["member"]?.jsonPrimitive?.content)
+        val text = sliced["source"]!!.jsonPrimitive.content
+        assertTrue("requested member must be returned: $text", text.contains("public int m5()"))
+        assertTrue(text.contains("return 5;"))
+        assertFalse("neighbouring members must not leak", text.contains("public int m6()"))
+        assertEquals(skeleton["source_chars"], sliced["source_chars"])
+    }
+
+    private fun gameJarWith(root: File, vararg entries: Pair<String, ByteArray>): File {
+        val stsRoot = File(root, "external/sts").apply { mkdirs() }
+        val gameJar = File(stsRoot, "desktop-1.0.jar")
+        ZipOutputStream(gameJar.outputStream()).use { zip ->
+            entries.forEach { (name, bytes) ->
+                zip.putNextEntry(ZipEntry(name))
+                zip.write(bytes)
+                zip.closeEntry()
+            }
+        }
+        return gameJar
+    }
+
+    /** A class with [methodCount] trivial methods, so CFR emits far more than the inline cap. */
+    private fun wideClassBytes(binaryName: String, methodCount: Int): ByteArray {
+        val writer = ClassWriter(0)
+        writer.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC, binaryName.replace('.', '/'), null, "java/lang/Object", null)
+        repeat(methodCount) { index ->
+            val method = writer.visitMethod(Opcodes.ACC_PUBLIC, "m$index", "()I", null, null)
+            method.visitCode()
+            when {
+                index == 0 -> method.visitInsn(Opcodes.ICONST_0)
+                index in 1..5 -> method.visitInsn(Opcodes.ICONST_0 + index)
+                else -> {
+                    method.visitIntInsn(Opcodes.SIPUSH, index)
+                }
+            }
+            method.visitInsn(Opcodes.IRETURN)
+            method.visitMaxs(1, 1)
+            method.visitEnd()
+        }
+        writer.visitEnd()
+        return writer.toByteArray()
+    }
+
     private fun simpleClassBytes(binaryName: String): ByteArray {
         val writer = ClassWriter(0)
         writer.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC, binaryName.replace('.', '/'), null, "java/lang/Object", null)
@@ -936,7 +1067,7 @@ class PolicyGatedAgentGatewayTest {
         )
         .build()
 
-    private fun twoToolCallResponse(): MockResponse = MockResponse.Builder()
+    private fun twoToolCallResponse(reasoning: String = ""): MockResponse = MockResponse.Builder()
         .code(200)
         .body(
             """
@@ -949,6 +1080,7 @@ class PolicyGatedAgentGatewayTest {
                 "index": 0,
                 "message": {
                   "role": "assistant",
+                  "reasoning_content": "$reasoning",
                   "tool_calls": [
                     {
                       "id": "call-note-1",

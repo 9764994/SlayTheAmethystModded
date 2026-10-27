@@ -9,8 +9,10 @@ import dev.langchain4j.data.message.ToolExecutionResultMessage
 import dev.langchain4j.data.message.UserMessage
 import android.content.Context
 import android.util.Log
+import io.stamethyst.backend.mods.AgentApiSourceCache
 import io.stamethyst.backend.mods.AgentPatchClassDecompiler
 import io.stamethyst.backend.mods.AgentApiIndex
+import io.stamethyst.backend.mods.JavaSourceMembers
 import io.stamethyst.backend.mods.AgentModJarReader
 import io.stamethyst.backend.mods.AgentModInspectionManager
 import io.stamethyst.backend.mods.AgentModSourceSnapshot
@@ -27,13 +29,18 @@ import dev.langchain4j.model.openai.OpenAiStreamingChatModel
 import dev.langchain4j.model.chat.StreamingChatModel
 import dev.langchain4j.model.chat.response.ChatResponse
 import dev.langchain4j.model.chat.response.StreamingChatResponseHandler
+import dev.langchain4j.model.chat.request.json.JsonArraySchema
 import dev.langchain4j.model.chat.request.json.JsonObjectSchema
+import dev.langchain4j.model.chat.request.json.JsonStringSchema
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import java.io.File
@@ -1106,9 +1113,11 @@ class AgentModClassDecompileTool(
 }
 
 /**
- * Decompiles one game/BaseMod/StSLib/dependency class from the compile classpath. The class may
- * live in the game JAR, ModTheSpire, a required mod, or the parent mod; installed-mod classes
- * should still use decompile_agent_class so their source can be cached under the parent workspace.
+ * Decompiles game/BaseMod/StSLib/dependency classes from the compile classpath.
+ *
+ * Installed-mod classes still use decompile_agent_class so their source can be cached under the
+ * parent workspace. API source is returned inline, cached on device, and never enters that tree.
+ * Large classes come back as a member index plus a signature skeleton, or as one requested member.
  */
 class AgentApiClassDecompileTool(
     private val context: Context,
@@ -1117,33 +1126,46 @@ class AgentApiClassDecompileTool(
     override val specification: ToolSpecification = ToolSpecification.builder()
         .name("decompile_agent_api_class")
         .description(
-            "Decompile one game, BaseMod, StSLib, ModTheSpire, or bundled dependency class from the " +
-                "compile classpath to Java source. Use this when the behavior of a vanilla class is " +
-                "unclear before writing a patch; for installed mod classes use decompile_agent_class. " +
-                "The source is returned inline and capped, and no files are added to the patch workspace.",
+            "Decompile game, BaseMod, StSLib, ModTheSpire, or bundled dependency classes from the " +
+                "compile classpath to Java source. Pass 'class_names' (or 'class_name' as an array) " +
+                "to read several classes in one call. A class above the inline cap returns a member " +
+                "index and a signature skeleton; pass 'member' to read one method, constructor, or " +
+                "field body. Source is returned inline, cached on device, and never added to the " +
+                "patch workspace; for installed mod classes use decompile_agent_class.",
         )
         .parameters(
             JsonObjectSchema.builder()
                 .addStringProperty(
                     "class_name",
-                    "Binary class name from search_agent_api or describe_agent_api_class.",
+                    "Binary class name from search_agent_api or describe_agent_api_class. An array of names is also accepted.",
                 )
-                .required("class_name")
+                .addProperty(
+                    "class_names",
+                    JsonArraySchema.builder()
+                        .description("Several binary class names to decompile in one call; at most $MAX_API_CLASSES.")
+                        .items(JsonStringSchema.builder().build())
+                        .build(),
+                )
+                .addStringProperty(
+                    "member",
+                    "Optional method, constructor, or field name. When the full source exceeds the cap, " +
+                        "only the matching member body is returned.",
+                )
                 .additionalProperties(false)
                 .build(),
         )
         .build()
 
     override val safety: AgentToolSafety = AgentToolSafety.MOD_INSPECTION
-    // CFR writes a temporary single-class JAR, so keep decompilation serialized.
-    override val concurrency = AgentToolConcurrency.EXCLUSIVE
+    // The decompiler keeps one warm CFR driver per thread; cache entries are written atomically.
+    override val concurrency = AgentToolConcurrency.PARALLEL
 
     override fun execute(arguments: String): String {
         val json = runCatching { Json.parseToJsonElement(arguments).jsonObject }.getOrNull()
             ?: return failure("invalid_arguments")
-        val className = json["class_name"]?.jsonPrimitive?.content?.takeIf(String::isNotBlank)
-            ?: return failure("invalid_arguments")
-        val binaryName = AgentPatchTargetInspector.normalizeClassName(className)
+        val requested = requestedClasses(json)
+        if (requested.isEmpty()) return failure("invalid_arguments")
+        val member = json["member"]?.jsonPrimitive?.contentOrNull?.takeIf(String::isNotBlank)
         val resolution = runCatching {
             AgentPatchSourceCompiler.resolveCompileClasspathEntries(context, parentJar)
         }.getOrElse { error ->
@@ -1152,7 +1174,46 @@ class AgentApiClassDecompileTool(
                 put("message", JsonPrimitive(error.message ?: error.javaClass.simpleName))
             }.toString()
         }
-        val jar = resolution.entries.asSequence()
+        val classpath = resolution.entries.joinToString(File.pathSeparator) { it.absolutePath }
+        val scratchDir = File(context.cacheDir, "agent-api-decompile")
+        val cacheRoot = AgentApiSourceCache.root(context)
+        // Share one inline budget across the batch so a multi-class result still fits the tool-result
+        // cap instead of being truncated by the gateway before the model sees it.
+        val budget = (MAX_API_BATCH_CHARS / requested.size)
+            .coerceIn(MIN_API_CLASS_CHARS, MAX_API_SOURCE_CHARS)
+
+        val results = requested.map { className ->
+            decompileOne(className, resolution.entries, classpath, scratchDir, cacheRoot, member, budget)
+        }
+        if (results.size == 1) return results.single().toString()
+        val failed = results.count { "error" in it }
+        return buildJsonObject {
+            put(
+                "status",
+                JsonPrimitive(
+                    when {
+                        failed == 0 -> "decompiled"
+                        failed == results.size -> "failed"
+                        else -> "partial"
+                    },
+                ),
+            )
+            put("results", buildJsonArray { results.forEach { add(it) } })
+            put("next_step", JsonPrimitive(MULTI_NEXT_STEP))
+        }.toString()
+    }
+
+    private fun decompileOne(
+        className: String,
+        entries: List<File>,
+        classpath: String,
+        scratchDir: File,
+        cacheRoot: File?,
+        member: String?,
+        budget: Int,
+    ): JsonObject {
+        val binaryName = AgentPatchTargetInspector.normalizeClassName(className)
+        val jar = entries.asSequence()
             .filter { it.isFile }
             .firstOrNull { AgentModJarReader.classEntryName(it, binaryName) != null }
             ?: return buildJsonObject {
@@ -1165,58 +1226,156 @@ class AgentApiClassDecompileTool(
                             "ModTheSpire and bundled dependency classes are on this classpath.",
                     ),
                 )
-            }.toString()
-        val classpath = resolution.entries.joinToString(File.pathSeparator) { it.absolutePath }
-        val result = runCatching {
-            AgentPatchClassDecompiler.decompileClass(
-                jarFile = jar,
-                binaryName = binaryName,
-                classpath = classpath,
-                scratchDir = File(context.cacheDir, "agent-api-decompile"),
-            )
-        }.getOrElse { error ->
-            return buildJsonObject {
-                put("error", JsonPrimitive("decompile_failed"))
-                put("message", JsonPrimitive(error.message ?: error.javaClass.simpleName))
-                put(
-                    "next_step",
-                    JsonPrimitive(
-                        "Use inspect_agent_patch_target for the exact method bytecode, or decompile " +
-                            "a smaller helper class.",
-                    ),
-                )
-            }.toString()
+            }
+
+        val cached = cacheRoot?.let { AgentApiSourceCache.read(it, jar, binaryName) }
+        val source = if (cached != null) {
+            cached
+        } else {
+            runCatching {
+                AgentPatchClassDecompiler.decompileClass(
+                    jarFile = jar,
+                    binaryName = binaryName,
+                    classpath = classpath,
+                    scratchDir = scratchDir,
+                ).source
+            }.getOrElse { error ->
+                return buildJsonObject {
+                    put("error", JsonPrimitive("decompile_failed"))
+                    put("class_name", JsonPrimitive(binaryName))
+                    put("message", JsonPrimitive(error.message ?: error.javaClass.simpleName))
+                    put(
+                        "next_step",
+                        JsonPrimitive(
+                            "Use inspect_agent_patch_target for the exact method bytecode, or decompile " +
+                                "a smaller helper class.",
+                        ),
+                    )
+                }
+            }.also { decompiled ->
+                if (cacheRoot != null) AgentApiSourceCache.write(cacheRoot, jar, binaryName, decompiled)
+            }
         }
-        val truncated = result.source.length > MAX_API_SOURCE_CHARS
+        val entry = AgentModJarReader.classEntryName(jar, binaryName) ?: binaryName
         return buildJsonObject {
             put("status", JsonPrimitive("decompiled"))
-            put("class_name", JsonPrimitive(result.requestedClass))
-            put("class_entry", JsonPrimitive(result.classEntry))
+            put("class_name", JsonPrimitive(binaryName))
+            put("class_entry", JsonPrimitive(entry))
             put("origin", JsonPrimitive(jar.name))
-            put("source_chars", JsonPrimitive(result.source.length))
-            put("truncated", JsonPrimitive(truncated))
-            put(
-                "source",
-                JsonPrimitive(if (truncated) result.source.take(MAX_API_SOURCE_CHARS) else result.source),
-            )
-            put(
+            put("source_chars", JsonPrimitive(source.length))
+            put("cached", JsonPrimitive(cached != null))
+            if (source.length <= budget) {
+                put("truncated", JsonPrimitive(false))
+                put("source", JsonPrimitive(source))
+                put("next_step", JsonPrimitive(FULL_NEXT_STEP))
+            } else {
+                appendSlicedSource(this, source, member, budget)
+            }
+        }
+    }
+
+    /**
+     * Above the inline cap the class is never cut mid-file: the model gets the member index plus
+     * either the requested member body or a signature-only skeleton it can page through by name.
+     * The index is sized from [budget] so index and text together stay inside it.
+     */
+    private fun appendSlicedSource(
+        target: kotlinx.serialization.json.JsonObjectBuilder,
+        source: String,
+        member: String?,
+        budget: Int,
+    ) {
+        val members = JavaSourceMembers.members(source)
+        val indexLimit = (budget / INDEX_CHARS_PER_BUDGET)
+            .coerceIn(MIN_API_MEMBER_INDEX, MAX_API_MEMBER_INDEX)
+        val index = memberIndex(members, indexLimit)
+        val textBudget = (budget - index.toString().length).coerceAtLeast(budget / 2)
+        val chosen = member?.let { JavaSourceMembers.select(members, it, MAX_API_MEMBER_OVERLOADS) }.orEmpty()
+        if (chosen.isNotEmpty()) {
+            val text = chosen.joinToString("\n\n") { JavaSourceMembers.text(source, it) }
+            val returned = text.take(textBudget)
+            target.put("truncated", JsonPrimitive(returned.length < text.length))
+            target.put("sliced", JsonPrimitive(true))
+            target.put("member", JsonPrimitive(member!!))
+            target.put("member_index", index)
+            target.put("returned_chars", JsonPrimitive(returned.length))
+            target.put("source", JsonPrimitive(returned))
+            target.put(
                 "next_step",
                 JsonPrimitive(
-                    if (truncated) {
-                        "Source truncated; use inspect_agent_patch_target for the exact method bytecode, " +
-                            "or decompile a smaller helper class."
+                    if (returned.length < text.length) {
+                        "This member is larger than the cap; use inspect_agent_patch_target for its bytecode."
                     } else {
-                        "Use inspect_agent_patch_target to confirm the exact overload, descriptor and " +
-                            "local variables before patching."
+                        SLICED_NEXT_STEP
                     },
                 ),
             )
-        }.toString()
+            return
+        }
+        val full = JavaSourceMembers.skeleton(source) ?: source
+        val body = full.take(textBudget)
+        target.put("truncated", JsonPrimitive(body.length < full.length))
+        target.put("sliced", JsonPrimitive(false))
+        target.put("member_index", index)
+        target.put("returned_chars", JsonPrimitive(body.length))
+        target.put("skeleton", JsonPrimitive(body))
+        target.put("next_step", JsonPrimitive(SKELETON_NEXT_STEP))
+    }
+
+    private fun memberIndex(members: List<JavaSourceMembers.Member>, limit: Int) = buildJsonArray {
+        members.take(limit).forEach { member ->
+            add(buildJsonObject {
+                put("name", JsonPrimitive(member.name))
+                put("kind", JsonPrimitive(member.kind))
+                put(
+                    "declaration",
+                    JsonPrimitive(JavaSourceMembers.declaration(member).take(MAX_API_DECLARATION_CHARS)),
+                )
+            })
+        }
+    }
+
+    /** Accepts `class_name` as a string or array, plus the explicit `class_names` array. */
+    private fun requestedClasses(json: JsonObject): List<String> {
+        val names = LinkedHashSet<String>()
+        fun collect(element: JsonElement?) {
+            when (element) {
+                is JsonArray -> element.forEach(::collect)
+                is JsonPrimitive -> element.contentOrNull?.trim()?.takeIf(String::isNotEmpty)?.let(names::add)
+                else -> Unit
+            }
+        }
+        collect(json["class_name"])
+        collect(json["class_names"])
+        return names.take(MAX_API_CLASSES)
     }
 
     private fun failure(code: String): String = buildJsonObject {
         put("error", JsonPrimitive(code))
     }.toString()
+
+    private companion object {
+        const val MAX_API_CLASSES = 8
+        const val MAX_API_BATCH_CHARS = 30_000
+        const val MIN_API_CLASS_CHARS = 3_000
+        const val MAX_API_MEMBER_INDEX = 200
+        const val MIN_API_MEMBER_INDEX = 20
+        const val MAX_API_MEMBER_OVERLOADS = 4
+        const val MAX_API_DECLARATION_CHARS = 160
+        /** Rough JSON size of one member-index entry, used to share the budget with the text. */
+        const val INDEX_CHARS_PER_BUDGET = 128
+        const val FULL_NEXT_STEP =
+            "Use inspect_agent_patch_target to confirm the exact overload, descriptor and local " +
+                "variables before patching."
+        const val SLICED_NEXT_STEP =
+            "Read other members by name with 'member', or use inspect_agent_patch_target for the exact overload."
+        const val SKELETON_NEXT_STEP =
+            "The full class exceeds the inline cap. Pass 'member' to read one method, constructor, " +
+                "or field body, or use inspect_agent_patch_target for the exact overload."
+        const val MULTI_NEXT_STEP =
+            "Use inspect_agent_patch_target to confirm the exact overload, descriptor and local " +
+                "variables before patching. Pass 'member' to read one member of a large class."
+    }
 }
 
 /** Reads one resource entry or byte range without extracting the selected archive. */

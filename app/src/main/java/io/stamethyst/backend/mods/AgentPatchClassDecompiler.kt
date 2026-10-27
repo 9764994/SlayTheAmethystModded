@@ -62,27 +62,21 @@ object AgentPatchClassDecompiler {
                 zip.closeEntry()
             }
             val source = StringBuilder()
-            val sink = OutputSinkFactoryAdapter { _, _, java ->
-                if (source.isEmpty()) source.append(java)
-            }
-            val options = buildMap {
-                put("silent", "true")
-                put("hideutf", "true")
-                put("comments", "false")
-                put("showversion", "false")
-                if (classpath.isNotBlank()) put("extraclasspath", classpath)
-            }
-            runCatching {
-                CfrDriver.Builder()
-                    .withOptions(options)
-                    .withOutputSink(sink)
-                    .build()
-                    .analyse(listOf(temporaryJar.absolutePath))
-            }.getOrElse { error ->
-                throw IllegalStateException(
-                    "CFR failed for $binaryName: ${error.message ?: error.javaClass.simpleName}",
-                    error,
-                )
+            activeSink.set { _, _, java -> if (source.isEmpty()) source.append(java) }
+            try {
+                val driver = driverFor(classpath)
+                runCatching {
+                    driver.analyse(listOf(temporaryJar.absolutePath))
+                }.getOrElse { error ->
+                    // A driver that failed mid-analysis may hold a half-built type cache; rebuild it.
+                    drivers.get().remove(classpath)
+                    throw IllegalStateException(
+                        "CFR failed for $binaryName: ${error.message ?: error.javaClass.simpleName}",
+                        error,
+                    )
+                }
+            } finally {
+                activeSink.remove()
             }
             if (source.isEmpty()) {
                 throw IllegalStateException("CFR produced no source for $binaryName")
@@ -94,7 +88,35 @@ object AgentPatchClassDecompiler {
     }
 
     /**
-     * Turns an already-extracted JAR into a readable Java project in [sourceDir].
+     * CFR keeps its classpath source (and the archive handles behind it) inside the driver, so a
+     * driver reused for the same classpath keeps type lookups warm between calls. CFR's source is
+     * not thread-safe, so each thread owns its own cache; the API decompile tool is allowed to run
+     * in parallel and relies on that isolation.
+     */
+    private fun driverFor(classpath: String): CfrDriver {
+        val cache = drivers.get()
+        cache[classpath]?.let { return it }
+        val options = buildMap {
+            put("silent", "true")
+            put("hideutf", "true")
+            put("comments", "false")
+            put("showversion", "false")
+            if (classpath.isNotBlank()) put("extraclasspath", classpath)
+        }
+        val driver = CfrDriver.Builder()
+            .withOptions(options)
+            .withOutputSink(ThreadOutputSink)
+            .build()
+        cache[classpath] = driver
+        while (cache.size > MAX_CACHED_DRIVERS) {
+            val eldest = cache.keys.firstOrNull() ?: break
+            cache.remove(eldest)
+        }
+        return driver
+    }
+
+    /**
+     * Decompiles an already-extracted JAR into a readable Java project in [sourceDir].
      *
      * Assumes the JAR's entries were extracted into [sourceDir] first (resources and `.class`
      * files). CFR runs once over the archive; every decompiled class is written as a `.java` next
@@ -164,6 +186,41 @@ object AgentPatchClassDecompiler {
         if (rawPackage.contains("..") || rawPackage.contains('/') || rawPackage.contains('\\')) return null
         val packagePath = rawPackage.replace('.', '/')
         return (if (packagePath.isEmpty()) simple else "$packagePath/$simple") + ".class"
+    }
+
+    private const val MAX_CACHED_DRIVERS = 2
+
+    /** One warm CFR driver per classpath, per thread. See [driverFor]. */
+    private val drivers = ThreadLocal.withInitial { LinkedHashMap<String, CfrDriver>() }
+
+    /** Sink of the decompile call currently running on this thread. */
+    private val activeSink = ThreadLocal<((String?, String?, String) -> Unit)?>()
+
+    /**
+     * Stable sink handed to cached drivers. A driver is reused across calls, so the sink cannot
+     * capture one call's buffer; it forwards to whichever call is active on the current thread.
+     */
+    private object ThreadOutputSink : OutputSinkFactory {
+        override fun getSupportedSinks(
+            sinkType: OutputSinkFactory.SinkType,
+            available: Collection<OutputSinkFactory.SinkClass>,
+        ): List<OutputSinkFactory.SinkClass> = when (sinkType) {
+            OutputSinkFactory.SinkType.JAVA -> listOf(OutputSinkFactory.SinkClass.DECOMPILED)
+            OutputSinkFactory.SinkType.EXCEPTION -> listOf(OutputSinkFactory.SinkClass.EXCEPTION_MESSAGE)
+            else -> emptyList()
+        }
+
+        @Suppress("UNCHECKED_CAST")
+        override fun <T : Any?> getSink(
+            sinkType: OutputSinkFactory.SinkType,
+            sinkClass: OutputSinkFactory.SinkClass,
+        ): OutputSinkFactory.Sink<T> = object : OutputSinkFactory.Sink<T> {
+            override fun write(output: T) {
+                if (output is SinkReturns.Decompiled) {
+                    activeSink.get()?.invoke(output.packageName, output.className, output.java)
+                }
+            }
+        }
     }
 
     /**

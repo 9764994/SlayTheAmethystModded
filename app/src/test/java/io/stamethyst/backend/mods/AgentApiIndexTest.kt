@@ -118,6 +118,157 @@ class AgentApiIndexTest {
         assertEquals(null, AgentApiIndex.describe(listOf(jar), "demo.DoesNotExist", null))
     }
 
+    @Test
+    fun index_persistsAndReloadsFromDisk() {
+        val root = createTempDirectory("api-index-persist").toFile()
+        val jar = syntheticJar(root)
+        val indexDir = File(root, "index").apply { mkdirs() }
+
+        val first = AgentApiIndex.index(listOf(jar), indexDir)
+        val stored = indexDir.listFiles { file -> file.extension == "idx" }
+        assertEquals(1, stored!!.size)
+        val stamp = 1_000_000_000_000L
+        stored.single().setLastModified(stamp)
+
+        AgentApiIndex.clearMemoryCache()
+        val second = AgentApiIndex.index(listOf(jar), indexDir)
+
+        assertEquals(first.size, second.size)
+        assertEquals(
+            "a valid disk entry must be reused instead of rebuilt",
+            stamp,
+            stored.single().lastModified(),
+        )
+        assertTrue(second.all().any { it.binaryName == "demo.Outer" })
+    }
+
+    @Test
+    fun index_rebuildsAndReplacesCorruptDiskEntry() {
+        val root = createTempDirectory("api-index-corrupt").toFile()
+        val jar = syntheticJar(root)
+        val indexDir = File(root, "index").apply { mkdirs() }
+        AgentApiIndex.index(listOf(jar), indexDir)
+        val stored = indexDir.listFiles { file -> file.extension == "idx" }!!.single()
+        stored.writeText("not an index")
+
+        AgentApiIndex.clearMemoryCache()
+        val rebuilt = AgentApiIndex.index(listOf(jar), indexDir)
+
+        assertTrue(rebuilt.size > 0)
+        assertEquals(1, indexDir.listFiles { file -> file.extension == "idx" }!!.size)
+        assertNotNull(AgentApiIndex.readIndex(stored))
+    }
+
+    @Test
+    fun index_writesNothingWithoutAnIndexDirectory() {
+        val root = createTempDirectory("api-index-nodir").toFile()
+        val jar = syntheticJar(root)
+
+        AgentApiIndex.clearMemoryCache()
+        AgentApiIndex.index(listOf(jar))
+
+        assertEquals(0, root.listFiles { file -> file.extension == "idx" }?.size ?: 0)
+    }
+
+    @Test
+    fun readIndex_roundTripsEverySummaryField() {
+        val root = createTempDirectory("api-index-roundtrip").toFile()
+        val file = File(root, "roundtrip.idx")
+        val summary = ApiTypeSummary(
+            binaryName = "demo.Outer.Inner",
+            kind = "interface",
+            superName = "java.lang.Object",
+            interfaces = listOf("demo.Api", "java.io.Serializable"),
+            isPublic = true,
+            isNested = true,
+            origin = "fixture.jar",
+        )
+        val index = AgentApiIndex.Index(linkedMapOf(summary.binaryName to summary))
+
+        AgentApiIndex.writeIndex(file, index)
+        val restored = AgentApiIndex.readIndex(file)
+
+        assertNotNull(restored)
+        assertEquals(summary, restored!!.all().single())
+    }
+
+    @Test
+    fun readIndex_rejectsUnknownMagicAndMissingFile() {
+        val root = createTempDirectory("api-index-magic").toFile()
+        val file = File(root, "bad.idx")
+        file.writeBytes(byteArrayOf(0, 1, 2, 3, 4, 5, 6, 7))
+
+        assertEquals(null, AgentApiIndex.readIndex(file))
+        assertEquals(null, AgentApiIndex.readIndex(File(root, "absent.idx")))
+        assertFalse("a rejected entry must not be left behind", file.exists())
+    }
+
+    @Test
+    fun index_readsEveryClassFromOneArchiveHandle() {
+        // The build opens the archive once and reads through that handle. This covers the code path
+        // (bulk read via a shared ZipFile) end to end for a multi-class jar.
+        val root = createTempDirectory("api-index-handle").toFile()
+        val jar = manyClassJar(root, count = 300)
+        val indexDir = File(root, "index").apply { mkdirs() }
+        AgentApiIndex.clearMemoryCache()
+
+        val index = AgentApiIndex.index(listOf(jar), indexDir)
+
+        assertEquals(300, index.size)
+        assertTrue(index.all().any { it.binaryName == "demo.Many0" })
+        assertTrue(index.all().any { it.binaryName == "demo.Many299" })
+    }
+
+    @Test
+    fun sharedHandleReadsMatchFileBasedReads() {
+        // The bulk path must return exactly the same bytes as the per-file path it replaced.
+        val root = createTempDirectory("api-index-equivalence").toFile()
+        val jar = manyClassJar(root, count = 5)
+
+        val viaFile = AgentModJarReader.readClassEntryBytes(jar, "demo/Many3")
+        java.util.zip.ZipFile(jar).use { zip ->
+            val viaHandle = AgentModJarReader.readClassEntryBytes(zip, "demo/Many3")
+            assertTrue("shared-handle read must return bytes", viaHandle != null)
+            assertTrue("shared-handle read must match the file-based read", viaFile.contentEquals(viaHandle))
+            assertEquals(
+                AgentModJarReader.classEntries(jar).sorted(),
+                AgentModJarReader.classEntries(zip).sorted(),
+            )
+            assertEquals(null, AgentModJarReader.readClassEntryBytes(zip, "demo/Absent"))
+        }
+    }
+
+    @Test
+    fun index_cancelsInsteadOfScanningTheWholeClasspath() {
+        val root = createTempDirectory("api-index-cancel").toFile()
+        val jar = manyClassJar(root, count = 2_000)
+        AgentApiIndex.clearMemoryCache()
+
+        Thread.currentThread().interrupt()
+        val cancelled = runCatching { AgentApiIndex.index(listOf(jar)) }
+        Thread.interrupted()
+
+        assertTrue(
+            "an interrupted build must throw, not finish: $cancelled",
+            cancelled.exceptionOrNull() is java.util.concurrent.CancellationException,
+        )
+    }
+
+    private fun manyClassJar(root: File, count: Int): File {
+        val jar = File(root, "many.jar")
+        ZipOutputStream(jar.outputStream()).use { zip ->
+            repeat(count) { index ->
+                writeEntry(zip, "demo/Many$index.class", simpleClass("demo/Many$index"))
+            }
+        }
+        return jar
+    }
+
+    private fun simpleClass(binaryName: String): ByteArray = ClassWriter(0).also { writer ->
+        writer.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC, binaryName, null, "java/lang/Object", null)
+        writer.visitEnd()
+    }.toByteArray()
+
     private fun syntheticJar(root: File): File {
         val jar = File(root, "fixture.jar")
         ZipOutputStream(jar.outputStream()).use { zip ->
