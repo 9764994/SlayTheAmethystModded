@@ -146,6 +146,9 @@ import io.stamethyst.ui.settings.core.LauncherSettingsScreen
 import io.stamethyst.ui.settings.core.LauncherSettingsWorkshopAutoImportDefaultsScreen
 import io.stamethyst.ui.settings.llm.LauncherLlmSettingsScreen
 import io.stamethyst.ui.settings.llm.LauncherLlmTutorialScreen
+import io.stamethyst.ui.settings.llm.LauncherLlmTutorialDeepSeekScreen
+import io.stamethyst.ui.settings.llm.LauncherLlmTutorialSiliconFlowScreen
+import io.stamethyst.ui.settings.llm.LauncherLlmTutorialAgentRouterScreen
 import io.stamethyst.ui.aimod.LauncherAiModEditorScreen
 import io.stamethyst.ui.settings.steamcloud.LauncherSteamCloudGuardScreen
 import io.stamethyst.ui.settings.steamcloud.LauncherSteamCloudLoginScreen
@@ -868,6 +871,18 @@ fun LauncherContent(
 
                         entry<Route.SettingsLlmTutorial> {
                             LauncherLlmTutorialScreen(modifier = Modifier.fillMaxSize(), uiState = settingsUiState)
+                        }
+
+                        entry<Route.SettingsLlmTutorialDeepSeek> {
+                            LauncherLlmTutorialDeepSeekScreen(modifier = Modifier.fillMaxSize(), uiState = settingsUiState)
+                        }
+
+                        entry<Route.SettingsLlmTutorialSiliconFlow> {
+                            LauncherLlmTutorialSiliconFlowScreen(modifier = Modifier.fillMaxSize(), uiState = settingsUiState)
+                        }
+
+                        entry<Route.SettingsLlmTutorialAgentRouter> {
+                            LauncherLlmTutorialAgentRouterScreen(modifier = Modifier.fillMaxSize(), uiState = settingsUiState)
                         }
 
                         entry<Route.SettingsWorkshopAutoImportDefaults> {
@@ -1758,6 +1773,9 @@ private fun Route?.launcherDockRoute(): Route? {
           Route.SettingsMarketCloud,
            Route.SettingsLlm,
            Route.SettingsLlmTutorial,
+           Route.SettingsLlmTutorialDeepSeek,
+           Route.SettingsLlmTutorialSiliconFlow,
+           Route.SettingsLlmTutorialAgentRouter,
           Route.SettingsWorkshopAutoImportDefaults,
          Route.SettingsFeedback,
          Route.SettingsAbout -> Route.Settings

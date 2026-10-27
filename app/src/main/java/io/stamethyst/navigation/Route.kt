@@ -50,6 +50,12 @@ sealed interface Route : NavKey {
     @Serializable
     data object SettingsLlmTutorial : Route
     @Serializable
+    data object SettingsLlmTutorialDeepSeek : Route
+    @Serializable
+    data object SettingsLlmTutorialSiliconFlow : Route
+    @Serializable
+    data object SettingsLlmTutorialAgentRouter : Route
+    @Serializable
     data object SettingsWorkshopAutoImportDefaults : Route
     @Serializable
     data object SettingsFeedback : Route
