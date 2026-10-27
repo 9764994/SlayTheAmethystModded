@@ -66,9 +66,29 @@ object RendererPluginScanner {
                 plugins.add(plugin)
             }
         }
-        return plugins
+        val result = plugins
             .distinctBy { it.id }
             .sortedWith(compareBy({ it.pluginLabel.lowercase() }, { it.displayName.lowercase() }))
+        // 扫描结果是排查“设置里看不到插件”的第一手线索，保留一行 info 级别日志。
+        Log.i(
+            TAG,
+            "Renderer plugin scan: ${result.size} renderer(s) from " +
+                "${resolvedActivities.size} launchable app(s)"
+        )
+        if (result.isEmpty() && resolvedActivities.isEmpty()) {
+            Log.w(
+                TAG,
+                "No launchable app visible to PackageManager; check <queries><intent>ACTION_MAIN</intent></queries>"
+            )
+        }
+        result.forEach { plugin ->
+            Log.i(
+                TAG,
+                "  plugin=${plugin.packageName} renderer=${plugin.displayName} " +
+                    "gl=${plugin.glLibraryName} protocol=${plugin.protocol}"
+            )
+        }
+        return result
     }
 
     /** 插件原生库目录形如 /data/app/<pkg>-<hash>/lib/arm64，最后一段即 ABI */

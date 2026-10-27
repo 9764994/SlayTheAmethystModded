@@ -134,7 +134,22 @@
    应出现 `Renderer plugin env applied: <插件名> · <渲染器名>`。
 5. 在游戏内确认渲染正常（主菜单 → 战斗场景），再检查 `dumpsys` 或日志里的 GL 版本字符串。
 
-## 6. 已知限制
+## 6. 包可见性（必须）
+
+Android 11+ 的包可见性会过滤 `PackageManager` 的查询结果。`<queries>` 里必须声明：
+
+```xml
+<queries>
+    <intent>
+        <action android:name="android.intent.action.MAIN" />
+    </intent>
+</queries>
+```
+
+否则 `queryIntentActivities(ACTION_MAIN)` 只会返回已显式声明包名的那几个应用，插件永远扫描不到，
+表现为「设置里渲染后端列表没有插件条目」。日志里会看到 `Renderer plugin scan: 0 renderer(s)`。
+
+## 7. 已知限制
 
 - **ABI 必须匹配**：插件需提供与设备一致的 `lib/<abi>/`（本项目 `arm64-v8a` 为主）。
 - **插件更新不自动感知**：`RendererPluginRegistry` 有进程内缓存；插件安装/卸载/升级后需重启应用，

@@ -16,6 +16,14 @@
     <queries>
         <package android:name="top.apricityx.workshop" />
         <package android:name="com.valvesoftware.android.steam.community" />
+        <!--
+            外部渲染器插件（FCL / ZalithLauncher RendererPlugin 协议）通过 PackageManager
+            扫描已安装应用来发现。Android 11+ 的包可见性会让 queryIntentActivities(ACTION_MAIN)
+            只返回这里声明过的包，缺了这一段插件将永远扫描不到。
+        -->
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+        </intent>
     </queries>
 
     <application
