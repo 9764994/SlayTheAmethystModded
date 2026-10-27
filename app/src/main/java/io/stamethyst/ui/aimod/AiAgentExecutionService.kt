@@ -371,7 +371,7 @@ class AiAgentExecutionService : Service() {
                         failed = false,
                         errorMessage = "",
                         retryMessage = "",
-                        text = result.text.ifBlank { message.text },
+                        text = message.text.ifBlank { result.text },
                         elapsedMs = System.currentTimeMillis() - startedAt,
                         contextTokens = result.contextTokens,
                     )
