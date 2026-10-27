@@ -16,9 +16,22 @@ object RendererPluginRegistry {
     /** 系统库搜索目录；插件声明的 EGL/GL 通常落在这些位置（libEGL.so 等） */
     private val LINKER_LIBRARY_DIRECTORIES = listOf(
         "/system/lib64",
+        "/system/lib64/egl",
         "/vendor/lib64",
+        "/vendor/lib64/egl",
         "/system/lib",
-        "/vendor/lib"
+        "/system/lib/egl",
+        "/vendor/lib",
+        "/vendor/lib/egl"
+    )
+
+    /** 由系统/驱动提供、不会出现在插件 APK 里的常见库名 */
+    private val SYSTEM_LIBRARY_NAMES = setOf(
+        "libEGL.so",
+        "libGLESv1_CM.so",
+        "libGLESv2.so",
+        "libGL.so",
+        "libvulkan.so"
     )
 
     @Volatile
@@ -103,8 +116,8 @@ object RendererPluginRegistry {
     }
 
     private fun systemLibraryExists(libraryName: String): Boolean {
-        val directories = LINKER_LIBRARY_DIRECTORIES
-        return directories.any { directory -> File(directory, libraryName).isFile }
+        if (libraryName in SYSTEM_LIBRARY_NAMES) return true
+        return LINKER_LIBRARY_DIRECTORIES.any { directory -> File(directory, libraryName).isFile }
     }
 
     /**
