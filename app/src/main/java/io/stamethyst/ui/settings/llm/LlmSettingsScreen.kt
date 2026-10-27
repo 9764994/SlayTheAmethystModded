@@ -44,6 +44,9 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -52,6 +55,7 @@ import io.stamethyst.navigation.Route
 import io.stamethyst.backend.llm.LlmEndpoint
 import io.stamethyst.backend.llm.LlmSettings
 import io.stamethyst.backend.llm.LlmSettingsRepository
+import io.stamethyst.backend.network.BatteryOptimization
 import io.stamethyst.backend.llm.LlmReasoningEffort
 import io.stamethyst.backend.llm.LlmModelTestService
 import io.stamethyst.backend.llm.OpenAiCompatibleModelConfig
@@ -201,6 +205,17 @@ fun LauncherLlmSettingsScreen(
     uiState: SettingsScreenViewModel.UiState,
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    var batteryExempt by remember(context) { mutableStateOf(BatteryOptimization.isExempt(context)) }
+    DisposableEffect(lifecycleOwner, context) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                batteryExempt = BatteryOptimization.isExempt(context)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
     val navigator = currentNavigator
     val viewModel: LlmSettingsViewModel = viewModel(factory = LlmSettingsViewModel.factory(context))
     val current = viewModel.settings
@@ -259,6 +274,29 @@ fun LauncherLlmSettingsScreen(
                 supportingText = stringResource(R.string.llm_tutorial_entry_hint),
                 enabled = true,
                 onClick = { navigator.push(Route.SettingsLlmTutorial) },
+            )
+        }
+        item {
+            // Doze suspends network access and ignores wake locks; the allowlist is the only
+            // documented way to keep a background run reachable, so make it discoverable here.
+            SettingsActionListItem(
+                title = stringResource(R.string.llm_battery_exemption_title),
+                supportingText = stringResource(
+                    if (batteryExempt) R.string.llm_battery_exemption_granted
+                    else R.string.llm_battery_exemption_summary,
+                ),
+                enabled = true,
+                onClick = {
+                    val intent = if (BatteryOptimization.isExempt(context)) {
+                        // Android requires the user to remove the exemption in system settings.
+                        BatteryOptimization.fallbackIntent(context)
+                    } else {
+                        BatteryOptimization.requestIntent(context)
+                    }
+                    intent?.let {
+                        runCatching { context.startActivity(it) }
+                    }
+                },
             )
         }
         if (viewModel.saveError) {

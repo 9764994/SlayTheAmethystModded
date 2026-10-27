@@ -1,6 +1,9 @@
 <resources>
     <string name="llm_tutorial_title">Setup guide</string>
     <string name="llm_tutorial_entry_hint">Get a key, add a model, and test the connection</string>
+    <string name="llm_battery_exemption_title">Keep running in the background</string>
+    <string name="llm_battery_exemption_summary">Tap to disable battery optimization and avoid interrupted work.</string>
+    <string name="llm_battery_exemption_granted">Tap to enable battery optimization and save power.</string>
     <string name="llm_tutorial_provider_deepseek">DeepSeek</string>
     <string name="llm_tutorial_provider_siliconflow">SiliconFlow</string>
     <string name="llm_tutorial_provider_agentrouter">AgentRouter</string>

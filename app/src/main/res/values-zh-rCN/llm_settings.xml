@@ -1,6 +1,9 @@
 <resources>
     <string name="llm_tutorial_title">配置教程</string>
     <string name="llm_tutorial_entry_hint">按步骤获取密钥、添加模型并测试连接</string>
+    <string name="llm_battery_exemption_title">保持后台运行</string>
+    <string name="llm_battery_exemption_summary">点击关闭电池优化，避免工作中断。</string>
+    <string name="llm_battery_exemption_granted">点击开启电池优化，节省电量。</string>
     <string name="llm_tutorial_provider_deepseek">DeepSeek</string>
     <string name="llm_tutorial_provider_siliconflow">硅基流动</string>
     <string name="llm_tutorial_provider_agentrouter">AgentRouter</string>
