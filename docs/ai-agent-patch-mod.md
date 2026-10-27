@@ -159,7 +159,7 @@ The editor exposes these tools for the selected mod workspace:
 - `delete_agent_workspace_file`: delete files or, with `recursive=true`, non-empty directories only
   under `patch_source/`. The `source/` tree and `patch_source/` root cannot be deleted.
 - `decompile_agent_mod_source`: prepare the parent JAR snapshot without extracting it.
-- `list_agent_mod_entries`: discover resource or class paths in the parent JAR without extraction.
+- `list_agent_mod_entries`: discover resource or class paths in the parent or an installed mod JAR without extraction; use `source="game"` for the imported `desktop-1.0.jar`.
 - `inspect_agent_class`: inspect one parent class and its exact declared API without extraction.
 - `decompile_agent_class`: decompile one parent class into the shared on-demand `source/` cache.
 - `decompile_agent_api_class`: decompile one or more game, BaseMod, StSLib, ModTheSpire, or bundled
@@ -167,7 +167,7 @@ The editor exposes these tools for the selected mod workspace:
   be passed per call; a class above the inline cap returns a member index plus a signature skeleton,
   and `member` reads one method, constructor, or field body. Use this for vanilla behavior; installed
   mod classes still go through `decompile_agent_class`.
-- `read_agent_mod_resource`: read a bounded byte range from one parent JAR resource.
+- `read_agent_mod_resource`: read a bounded byte range from one parent or installed mod JAR resource; use `source="game"` for original game resources, including card art. Whole-image reads return viewable attachments.
   The `source/` tree is available to the agent through read/list tools and cannot be modified
   through workspace write/delete tools. See "On-device decompilation" below.
 - `read_agent_skill`: return a bundled reference skill, or list the available skills when `name` is

@@ -16,3 +16,5 @@ AI 先调用 `list_installed_mods` 获取模组 ID，再向以下工具传入可
 仅接受已安装模组目录中登记且 JAR 存在的模组，不接受任意文件路径。未知、未安装、文件缺失或歧义 ID 会返回错误，不会回退到当前模组。
 
 游戏本体、BaseMod、StSLib、ModTheSpire 等编译类路径上的类不属于“其他已安装模组”，应使用 `decompile_agent_api_class` 按需读取；该工具不接受 `mod_id`，也不会把源码写入当前工作区。
+
+读取游戏本体的卡图、JSON 等资源时，现有 `list_agent_mod_entries` 和 `read_agent_mod_resource` 可指定 `source="game"`，并省略 `mod_id`。先列出精确资源路径，再读取；这不会将本体加入模组目录。详见 [游戏本体资源读取](ai-agent-game-resources.md)。

@@ -1408,18 +1408,24 @@ class AgentApiClassDecompileTool(
 class AgentModResourceReadTool(
     private val parentJar: File,
     private val readTargets: AgentModReadTargets = AgentModReadTargets("", parentJar) { emptyList() },
+    gameJar: File? = null,
 ) : AgentTool {
+    private val resourceTargets = AgentResourceReadTargets(readTargets, gameJar)
+
     override val specification: ToolSpecification = ToolSpecification.builder()
         .name("read_agent_mod_resource")
         .description(
-            "Read a resource entry from the parent or another installed mod without extracting the JAR. Use " +
+            "Read a resource entry from the parent mod, another installed mod, or the game desktop-1.0.jar " +
+                "without extracting the JAR. Set source=game for original game assets; otherwise source defaults to mod. " +
+                "Discover paths with list_agent_mod_entries using the same source and mod_id. Use " +
                 "utf8 for JSON/XML/text and base64 for binary assets; reads are bounded and pageable. " +
                 "PNG, JPEG, WebP and GIF resources are returned as images the model can see, with a short JSON summary.",
         )
         .parameters(
             JsonObjectSchema.builder()
                 .addStringProperty("entry", "JAR-relative resource path, for example resources/cards.json.")
-                .addStringProperty("mod_id", "Optional id from list_installed_mods; defaults to the parent mod.")
+                .addStringProperty("source", "mod or game; defaults to mod. game reads the imported desktop-1.0.jar.")
+                .addStringProperty("mod_id", "Optional id from list_installed_mods; defaults to the parent mod. Only valid for source=mod.")
                 .addStringProperty("encoding", "utf8 or base64; defaults to utf8.")
                 .addStringProperty("offset", "Zero-based byte offset; defaults to 0.")
                 .addStringProperty("limit", "Maximum bytes to return; defaults to 16384.")
@@ -1444,10 +1450,12 @@ class AgentModResourceReadTool(
         val offset = json["offset"]?.jsonPrimitive?.content?.toLongOrNull()?.coerceAtLeast(0L) ?: 0L
         val limit = (json["limit"]?.jsonPrimitive?.content?.toIntOrNull() ?: DEFAULT_LIMIT)
             .coerceIn(1, DEFAULT_LIMIT)
-        val target = runCatching { readTargets.resolve(json["mod_id"]?.jsonPrimitive?.content) }
+        val target = runCatching {
+            resourceTargets.resolve(json["source"]?.jsonPrimitive?.content, json["mod_id"]?.jsonPrimitive?.content)
+        }
             .getOrElse { return failure(it.message ?: "mod_resolution_failed") }
         if (encoding == "utf8" && offset == 0L) {
-            readImage(target.jar, target.modId, entry)?.let { return it }
+            readImage(target, entry)?.let { return it }
         }
         val range = runCatching {
             AgentModJarReader.readEntryRange(target.jar, entry, offset, limit)
@@ -1455,7 +1463,9 @@ class AgentModResourceReadTool(
             ?: return failure("resource_not_found")
         return AgentToolOutput(buildJsonObject {
             put("entry", JsonPrimitive(entry))
-            put("mod_id", JsonPrimitive(target.modId))
+            put("source", JsonPrimitive(target.source))
+            put("archive", JsonPrimitive(target.jar.name))
+            target.modId?.let { put("mod_id", JsonPrimitive(it)) }
             put("encoding", JsonPrimitive(encoding))
             put("offset", JsonPrimitive(range.offset))
             put("total_bytes", JsonPrimitive(range.totalBytes))
@@ -1476,7 +1486,8 @@ class AgentModResourceReadTool(
     }
 
     /** Returns a viewable image for a whole-entry read, or null when the entry is not an image. */
-    private fun readImage(jar: File, modId: String, entry: String): AgentToolOutput? {
+    private fun readImage(target: AgentResourceReadTarget, entry: String): AgentToolOutput? {
+        val jar = target.jar
         val name = entry.substringAfterLast('/')
         // Read only a header first: most resources are text and must not be pulled into memory.
         val header = runCatching { AgentModJarReader.readEntryRange(jar, entry, 0L, 12) }.getOrNull()
@@ -1489,7 +1500,9 @@ class AgentModResourceReadTool(
         val payload = AgentImages.prepare(name, range.bytes) ?: return failure("image_unreadable")
         val text = buildJsonObject {
             put("entry", JsonPrimitive(entry))
-            put("mod_id", JsonPrimitive(modId))
+            put("source", JsonPrimitive(target.source))
+            put("archive", JsonPrimitive(jar.name))
+            target.modId?.let { put("mod_id", JsonPrimitive(it)) }
             put("type", JsonPrimitive("image"))
             put("mime", JsonPrimitive(payload.mime))
             put("total_bytes", JsonPrimitive(payload.bytes))
@@ -1530,17 +1543,22 @@ class AgentModResourceReadTool(
 class AgentModEntriesListTool(
     private val parentJar: File,
     private val readTargets: AgentModReadTargets = AgentModReadTargets("", parentJar) { emptyList() },
+    gameJar: File? = null,
 ) : AgentTool {
+    private val resourceTargets = AgentResourceReadTargets(readTargets, gameJar)
+
     override val specification: ToolSpecification = ToolSpecification.builder()
         .name("list_agent_mod_entries")
         .description(
-            "List paths in the parent or another installed mod JAR without extracting it. Filter with a path prefix " +
+            "List paths in the parent mod, another installed mod, or the game desktop-1.0.jar without extracting it. " +
+                "Set source=game to discover original game assets; otherwise source defaults to mod. Filter with a path prefix " +
                 "and choose resources, classes, or all entries; use read_agent_mod_resource to read resources.",
         )
         .parameters(
             JsonObjectSchema.builder()
                 .addStringProperty("prefix", "Optional case-sensitive JAR path prefix.")
-                .addStringProperty("mod_id", "Optional id from list_installed_mods; defaults to the parent mod.")
+                .addStringProperty("source", "mod or game; defaults to mod. game reads the imported desktop-1.0.jar.")
+                .addStringProperty("mod_id", "Optional id from list_installed_mods; defaults to the parent mod. Only valid for source=mod.")
                 .addStringProperty("entry_type", "resources, classes, or all; defaults to resources.")
                 .addStringProperty("offset", "Zero-based result offset; defaults to 0.")
                 .addStringProperty("limit", "Maximum entries to return; defaults to 100.")
@@ -1561,7 +1579,9 @@ class AgentModEntriesListTool(
         val offset = (json["offset"]?.jsonPrimitive?.content?.toIntOrNull() ?: 0).coerceAtLeast(0)
         val limit = (json["limit"]?.jsonPrimitive?.content?.toIntOrNull() ?: DEFAULT_LIMIT)
             .coerceIn(1, MAX_LIMIT)
-        val target = runCatching { readTargets.resolve(json["mod_id"]?.jsonPrimitive?.content) }
+        val target = runCatching {
+            resourceTargets.resolve(json["source"]?.jsonPrimitive?.content, json["mod_id"]?.jsonPrimitive?.content)
+        }
             .getOrElse { return failure(it.message ?: "mod_resolution_failed") }
         val entries = runCatching {
             AgentModJarReader.listEntries(target.jar)
@@ -1580,7 +1600,9 @@ class AgentModEntriesListTool(
         }.getOrElse { return failure(it.message ?: "archive_list_failed") }
         return buildJsonObject {
             put("entry_type", JsonPrimitive(type))
-            put("mod_id", JsonPrimitive(target.modId))
+            put("source", JsonPrimitive(target.source))
+            put("archive", JsonPrimitive(target.jar.name))
+            target.modId?.let { put("mod_id", JsonPrimitive(it)) }
             put("prefix", JsonPrimitive(prefix))
             put("total_entries", JsonPrimitive(entries.size))
             put("offset", JsonPrimitive(offset))

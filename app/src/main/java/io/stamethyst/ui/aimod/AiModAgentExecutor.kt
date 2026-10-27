@@ -268,8 +268,8 @@ internal class AiModAgentExecutor(
             context = context,
             parentJar = File(storagePath),
         ),
-        AgentModResourceReadTool(File(storagePath), modReadTargets),
-        AgentModEntriesListTool(File(storagePath), modReadTargets),
+        AgentModResourceReadTool(File(storagePath), modReadTargets, RuntimePaths.importedStsJar(context)),
+        AgentModEntriesListTool(File(storagePath), modReadTargets, RuntimePaths.importedStsJar(context)),
         AgentPatchTargetInspectTool(
             context = context,
             parentJar = File(storagePath),
@@ -342,6 +342,8 @@ internal fun buildAiEditorSystemPrompt(modName: String, modId: String, workspace
         Do not create a workspace unless the user asked for a new patch and no existing patch workspace should be reused. create_agent_patch_workspace prepares a dedicated patch_source/<patch_id>/ directory and returns the exact paths to use. It does not compile, package, install, or enable a mod.
         If the user asks to inspect or explain the parent mod, call decompile_agent_mod_source to prepare its SHA-256 snapshot, then inspect_agent_class or decompile_agent_class for the needed classes. Do not expect source/ to contain every parent file.
         To read another installed mod (including disabled mods), call list_installed_mods, then pass its mod_id to list_agent_mod_entries, inspect_agent_class, decompile_agent_class, or read_agent_mod_resource. Discover classes with list_agent_mod_entries(entry_type="classes", mod_id=...) rather than search_agent_api, whose classpath only covers the parent and built-in dependencies. Other mods' decompiled code is returned inline, not materialized in the current workspace. These tools are read-only with respect to installed JARs; inspecting another mod does not change the patch target or compile classpath.
+
+        To inspect original game resources (including card art) in desktop-1.0.jar, use list_agent_mod_entries(source="game", prefix=...) to discover exact paths, then read_agent_mod_resource(source="game", entry=...). Omit mod_id for source="game"; the game is not an installed mod. Image resources are returned as viewable attachments when encoding is omitted and offset is 0. Both tools default to source="mod" for backward compatibility. Game resources are read directly from the imported game JAR, not the class-only compile cache, and cannot be modified by these tools.
         Use write_agent_workspace_file to create or replace files under the current patch_workspace_path returned by create_agent_patch_workspace, and delete_agent_workspace_file to remove files or directories there with recursive=true when needed. Do not attempt to modify source/ or another patch mod's directory.
         The launcher creates ModTheSpire.json and agent-patch.json in the current patch_source/<patch_id>/ directory. Keep the patch mod's modid and parent dependency intact.
         ModTheSpire resolves dependencies case-sensitively: copy the exact 'modid' text from source/ModTheSpire.json when listing the parent or any dependency, and never change its casing.
