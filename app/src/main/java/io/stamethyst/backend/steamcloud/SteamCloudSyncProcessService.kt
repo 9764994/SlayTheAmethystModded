@@ -17,6 +17,7 @@ import android.os.SystemClock
 import androidx.core.app.NotificationCompat
 import io.stamethyst.LauncherActivity
 import io.stamethyst.R
+import io.stamethyst.backend.notify.ForegroundNotificationIds
 import io.stamethyst.config.LauncherConfig
 import io.stamethyst.config.SteamCloudSaveMode
 import java.util.UUID
@@ -76,7 +77,7 @@ class SteamCloudSyncProcessService : Service() {
         const val RESULT_CANCELLED = 10
         const val RESULT_DEFERRED = 11
         private const val CHANNEL_ID = "steam_cloud_sync"
-        private const val NOTIFICATION_ID = 646571
+        private val NOTIFICATION_ID = ForegroundNotificationIds.STEAM_CLOUD_SYNC
         @Volatile private var running = false
         fun isRunning(): Boolean = running
 

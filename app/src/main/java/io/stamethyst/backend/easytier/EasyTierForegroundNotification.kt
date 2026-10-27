@@ -10,12 +10,13 @@ import android.os.Build
 import androidx.core.app.NotificationCompat
 import io.stamethyst.LauncherActivity
 import io.stamethyst.R
+import io.stamethyst.backend.notify.ForegroundNotificationIds
 
 /** Shared notification surface while foreground-service ownership moves to the VPN. */
 internal object EasyTierForegroundNotification {
     const val CHANNEL_ID = "easytier_virtual_network"
-    const val CONNECT_NOTIFICATION_ID = 646572
-    const val VPN_NOTIFICATION_ID = 646573
+    const val CONNECT_NOTIFICATION_ID = ForegroundNotificationIds.EASY_TIER_CONNECT
+    const val VPN_NOTIFICATION_ID = ForegroundNotificationIds.EASY_TIER_VPN
 
     fun build(context: Context, message: String): Notification {
         ensureChannel(context)

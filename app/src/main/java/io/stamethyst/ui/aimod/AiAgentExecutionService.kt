@@ -17,6 +17,7 @@ import io.stamethyst.R
 import io.stamethyst.backend.llm.AgentToolExecutionEvent
 import io.stamethyst.backend.llm.LlmSettingsRepository
 import io.stamethyst.backend.mods.AgentPatchModManager
+import io.stamethyst.backend.notify.ForegroundNotificationIds
 import io.stamethyst.config.RuntimePaths
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.concurrent.thread
@@ -73,7 +74,7 @@ class AiAgentExecutionService : Service() {
         const val EXTRA_MOD_ID = "io.stamethyst.extra.AI_AGENT_MOD_ID"
 
         private const val CHANNEL_ID = "ai_agent_execution"
-        private const val NOTIFICATION_ID = 646571
+        private val NOTIFICATION_ID = ForegroundNotificationIds.AI_AGENT
         private const val LOG_TAG = "AiAgentService"
 
         private val runningJobs = ConcurrentHashMap.newKeySet<String>()

@@ -12,6 +12,7 @@ import android.os.SystemClock
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import io.stamethyst.R
+import io.stamethyst.backend.notify.ForegroundNotificationIds
 import io.stamethyst.backend.presence.GamePresenceState
 import io.stamethyst.backend.presence.GamePresenceStateMarker
 import io.stamethyst.config.LauncherConfig
@@ -27,7 +28,7 @@ class SteamGamePresenceService : Service() {
     companion object {
         private const val TAG = "SteamGamePresenceService"
         private const val CHANNEL_ID = "steam_game_presence"
-        private const val NOTIFICATION_ID = 646572
+        private val NOTIFICATION_ID = ForegroundNotificationIds.STEAM_GAME_PRESENCE
         private const val ACTION_START = "io.stamethyst.action.STEAM_GAME_PRESENCE_START"
         private const val APP_ID = 646570L
         private const val STARTUP_TIMEOUT_MS = 60_000L

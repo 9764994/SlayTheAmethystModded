@@ -15,6 +15,7 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import io.stamethyst.R
 import io.stamethyst.LauncherActivity
+import io.stamethyst.backend.notify.ForegroundNotificationIds
 import io.stamethyst.ui.main.NewlyImportedModHighlightStore
 import io.stamethyst.ui.preferences.LauncherPreferences
 import io.stamethyst.config.RuntimePaths
@@ -67,7 +68,7 @@ class WorkshopDownloadProcessService : Service() {
         const val RESULT_PAUSED = 4
         const val RESULT_CANCELLED = 5
         private const val CHANNEL_ID = "workshop_download"
-        private const val NOTIFICATION_ID = 646570
+        private val NOTIFICATION_ID = ForegroundNotificationIds.WORKSHOP_DOWNLOAD
         private const val TAG = "WorkshopDownloadService"
         private const val ACTIVE_MARKER_STALE_MS = 30_000L
         private const val ACTIVE_MARKER_HEARTBEAT_MS = 5_000L
