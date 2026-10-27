@@ -26,6 +26,7 @@ import java.util.concurrent.CompletableFuture
 internal class AndroidCompatibleSseHttpClientBuilder(
     private val delegate: OkHttpClientBuilder,
     private val connectTimeoutLimit: Duration? = null,
+    private val connectionPool: okhttp3.ConnectionPool? = null,
 ) : HttpClientBuilder {
     // langchain4j's builder getters are nullable: an unset timeout returns null and callers such as
     // DefaultOpenAiClient tolerate that. Declaring a non-null Duration here would make Kotlin insert
@@ -44,11 +45,13 @@ internal class AndroidCompatibleSseHttpClientBuilder(
         delegate.readTimeout(timeout)
     }
 
-    override fun build(): HttpClient = AndroidCompatibleSseHttpClient(delegate.build())
+    override fun build(): HttpClient = AndroidCompatibleSseHttpClient(delegate.build(), connectionPool)
 }
 
 private class AndroidCompatibleSseHttpClient(
     private val delegate: HttpClient,
+    /** Shared pool so a dead connection can be discarded before a retry reuses it. */
+    private val connectionPool: okhttp3.ConnectionPool? = null,
 ) : HttpClient {
     override fun execute(request: HttpRequest): SuccessfulHttpResponse = delegate.execute(request)
 
@@ -61,6 +64,19 @@ private class AndroidCompatibleSseHttpClient(
         listener: ServerSentEventListener,
     ) {
         delegate.execute(request, AndroidCompatibleSseParser(), listener)
+    }
+
+    /**
+     * Drops every pooled connection.
+     *
+     * After the screen turns off the platform can tear down established sockets while the Wi-Fi
+     * network still reports as connected and validated. OkHttp keeps those dead connections in its
+     * pool, so the next request reuses one and fails immediately with
+     * `SocketException: Software caused connection abort` again — which is why retrying alone never
+     * recovered. Evicting the pool forces the retry onto a fresh TCP connection.
+     */
+    internal fun evictConnectionPool() {
+        runCatching { connectionPool?.evictAll() }
     }
 }
 

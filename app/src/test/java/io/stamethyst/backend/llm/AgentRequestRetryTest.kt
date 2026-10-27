@@ -152,6 +152,86 @@ class AgentRequestRetryTest {
         assertEquals(listOf(1, 2), retries)
     }
 
+    @Test
+    fun connectionAbort_isRecognisedAcrossTheCauseChain() {
+        assertTrue(isConnectionAbort(java.net.SocketException("Software caused connection abort")))
+        assertTrue(isConnectionAbort(java.net.SocketException("Connection reset")))
+        assertTrue(isConnectionAbort(java.net.SocketException("Broken pipe")))
+        assertTrue(isConnectionAbort(java.net.SocketTimeoutException("timeout")))
+        assertTrue(isConnectionAbort(java.io.EOFException()))
+        // Transport wrappers hide the socket failure one level down.
+        assertTrue(isConnectionAbort(RuntimeException("wrapped", java.net.SocketException("Connection reset"))))
+        // A protocol error is not a dropped socket and must keep the short budget.
+        assertFalse(isConnectionAbort(HttpException(400, "bad request")))
+        assertFalse(isConnectionAbort(IllegalStateException("bad state")))
+    }
+
+    @Test
+    fun abortBackoffIsLongerThanTransientBackoff() {
+        // The radio can take tens of seconds to come back after a lock, while a transient provider
+        // hiccup is worth retrying almost immediately.
+        val abort = (0..2).map { retryDelaySeconds(it, java.net.SocketException("Software caused connection abort")) }
+        val transient = (0..2).map { retryDelaySeconds(it, IOException("temporary")) }
+        assertEquals(listOf(5L, 15L, 30L), abort)
+        assertEquals(listOf(1L, 2L, 4L), transient)
+        assertTrue("abort waits longer at every step", abort.zip(transient).all { (a, t) -> a > t })
+    }
+
+    @Test(timeout = 60_000)
+    fun connectionAbort_getsMoreAttemptsThanATransientFailure() {
+        var attempts = 0
+        val aborted = ArrayList<Int>()
+        val model = object : ChatModel {
+            override fun doChat(request: ChatRequest): ChatResponse {
+                attempts++
+                throw java.net.SocketException("Software caused connection abort")
+            }
+        }
+        val error = runCatching {
+            PolicyGatedAgentGateway(model, AgentToolRegistry(emptyList()),
+                onRetry = { number, _, _ -> aborted += number },
+            ).respond("system", "user")
+        }.exceptionOrNull()
+        assertTrue(error is java.net.SocketException)
+        // MAX_ABORT_RETRIES = 3, so four attempts and three reported retries.
+        assertEquals(4, attempts)
+        assertEquals(listOf(1, 2, 3), aborted)
+    }
+
+    @Test(timeout = 60_000)
+    fun connectionAbort_evictsTheConnectionPoolBeforeRetrying() {
+        // Reusing the dead pooled connection is why an abort used to fail again immediately.
+        val evictions = ArrayList<Int>()
+        var attempts = 0
+        val model = object : ChatModel {
+            override fun doChat(request: ChatRequest): ChatResponse {
+                attempts++
+                if (attempts == 1) throw java.net.SocketException("Software caused connection abort")
+                return ChatResponse.builder().aiMessage(AiMessage.from("recovered")).build()
+            }
+        }
+        val reply = PolicyGatedAgentGateway(model, AgentToolRegistry(emptyList()),
+            evictConnectionPool = { evictions += attempts },
+        ).respond("system", "user")
+        assertEquals("recovered", reply.text)
+        assertEquals("the pool must be cleared once, before the retry", 1, evictions.size)
+        assertEquals(1, evictions.single())
+    }
+
+    @Test
+    fun transientFailure_doesNotEvictTheConnectionPool() {
+        val evictions = ArrayList<Int>()
+        val model = object : ChatModel {
+            override fun doChat(request: ChatRequest): ChatResponse = throw HttpException(503, "unavailable")
+        }
+        runCatching {
+            PolicyGatedAgentGateway(model, AgentToolRegistry(emptyList()),
+                evictConnectionPool = { evictions += 1 },
+            ).respond("system", "user")
+        }
+        assertTrue("a provider error keeps its warm connections", evictions.isEmpty())
+    }
+
     @Test(timeout = 10_000)
     fun httpFailure_hasNoHiddenModelRetries() {
         MockWebServer().use { server ->

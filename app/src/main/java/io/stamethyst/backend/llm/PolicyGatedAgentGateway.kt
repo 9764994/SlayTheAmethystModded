@@ -90,7 +90,9 @@ private const val MAX_GREP_FILE_BYTES = 2L * 1024L * 1024L
 /** How many extra times an empty model turn is retried before it is reported as a failure. */
 private const val MAX_EMPTY_RETRIES = 1
 private const val MAX_REQUEST_RETRIES = 2
-private const val INITIAL_RETRY_DELAY_SECONDS = 1L
+
+/** A dropped socket gets three retries (5 s, 15 s, 30 s) so the radio has time to come back. */
+private const val MAX_ABORT_RETRIES = 3
 
 /** How long a retry may wait for the radio to come back before trying anyway. */
 private const val MAX_NETWORK_WAIT_MS = 60_000L
@@ -114,6 +116,24 @@ enum class LlmEndpoint {
 }
 
 object AgentChatModelFactory {
+    /**
+     * Pool shared by every model built from the same configuration.
+     *
+     * Kept here rather than per client so the gateway can drop dead connections before a retry;
+     * a screen lock tears sockets down while the network still reports as connected.
+     */
+    private val connectionPools = java.util.concurrent.ConcurrentHashMap<String, okhttp3.ConnectionPool>()
+
+    internal fun connectionPoolFor(config: OpenAiCompatibleModelConfig): okhttp3.ConnectionPool =
+        connectionPools.computeIfAbsent(config.baseUrl + "|" + config.apiKey.hashCode()) {
+            okhttp3.ConnectionPool()
+        }
+
+    /** Drops every pooled connection so the next request opens a fresh socket. */
+    fun evictConnectionPool(config: OpenAiCompatibleModelConfig) {
+        runCatching { connectionPoolFor(config).evictAll() }
+    }
+
     private const val CONNECT_TIMEOUT_SECONDS = 30L
 
     private fun affinityHeaders(config: OpenAiCompatibleModelConfig): Map<String, String> =
@@ -138,11 +158,16 @@ object AgentChatModelFactory {
         val readTimeout = requestTimeout(config)
         val timeoutSeconds = readTimeout.seconds
         val connectTimeout = java.time.Duration.ofSeconds(CONNECT_TIMEOUT_SECONDS)
+        val pool = connectionPoolFor(config)
         val okHttpClient = okhttp3.OkHttpClient.Builder()
             .connectTimeout(CONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS)
             .readTimeout(timeoutSeconds, TimeUnit.SECONDS)
             .writeTimeout(timeoutSeconds, TimeUnit.SECONDS)
             .callTimeout(timeoutSeconds, TimeUnit.SECONDS)
+            .connectionPool(pool)
+            // OkHttp already retries a connection that fails before any bytes are written; keep it
+            // explicit because a pooled connection can be dead when it is taken out of the pool.
+            .retryOnConnectionFailure(true)
         // Responses uses these builder values directly. Chat Completions additionally requires
         // model.timeout below: its model layer otherwise overwrites readTimeout with 60 seconds.
         return AndroidCompatibleSseHttpClientBuilder(
@@ -151,6 +176,7 @@ object AgentChatModelFactory {
                 .connectTimeout(connectTimeout)
                 .readTimeout(readTimeout),
             connectTimeoutLimit = connectTimeout,
+            connectionPool = pool,
         )
     }
 
@@ -2413,6 +2439,13 @@ class PolicyGatedAgentGateway(
      * a dead network, so the gateway waits for this to report `true` first.
      */
     private val hasUsableNetwork: () -> Boolean = { true },
+    /**
+     * Discards pooled connections so a retry opens a fresh socket.
+     *
+     * A screen lock tears down established connections while the network still reports as
+     * connected, and OkHttp would otherwise hand the dead connection to the retry.
+     */
+    private val evictConnectionPool: () -> Unit = {},
 ) {
     private val toolScheduler = AgentToolScheduler(toolRegistry, maxParallelTools, checkCancelled)
 
@@ -2553,7 +2586,7 @@ class PolicyGatedAgentGateway(
         checkCancelled()
         var active = contextManager?.prepare() ?: history
         var lastError: Exception? = null
-        repeat(MAX_REQUEST_RETRIES + 1) { attempt ->
+        repeat(MAX_ABORT_RETRIES + 1) { attempt ->
             val result = try {
                 checkCancelled()
                 request(active)
@@ -2565,9 +2598,15 @@ class PolicyGatedAgentGateway(
                     active = contextManager.prepare(force = true)
                     return observeTurn(request(active))
                 }
-                if (attempt == MAX_REQUEST_RETRIES || !isRetryableAgentRequestFailure(error)) throw error
-                val delaySeconds = INITIAL_RETRY_DELAY_SECONDS shl attempt
+                if (!isRetryableAgentRequestFailure(error)) throw error
+                // A dropped socket may need tens of seconds for the radio to come back, so it earns
+                // its own, larger retry budget instead of being cut off at the transient-failure one.
+                val maxRetries = if (isConnectionAbort(error)) MAX_ABORT_RETRIES else MAX_REQUEST_RETRIES
+                if (attempt >= maxRetries) throw error
+                val delaySeconds = retryDelaySeconds(attempt, error)
                 onRetry(attempt + 1, delaySeconds, error)
+                // A dropped socket must not be handed to the next attempt.
+                if (isConnectionAbort(error)) evictConnectionPool()
                 awaitNetworkAndBackoff(delaySeconds)
                 return@repeat
             }

@@ -190,6 +190,7 @@ internal class AiModAgentExecutor(
                 ) * 1_000L,
             supportsImageInput = settings.supportsImageInput,
             hasUsableNetwork = { NetworkAvailability.hasValidatedNetwork(context) },
+            evictConnectionPool = { AgentChatModelFactory.evictConnectionPool(config) },
         )
         val streamingModel = AgentChatModelFactory.createStreaming(config)
         // A resume-only request has no new user prompt; claim pending work before calling the model.

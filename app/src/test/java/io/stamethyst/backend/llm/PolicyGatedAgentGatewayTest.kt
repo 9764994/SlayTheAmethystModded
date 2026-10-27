@@ -131,7 +131,8 @@ class PolicyGatedAgentGatewayTest {
         val reply = gateway.respond(systemPrompt = "Recover.", userPrompt = "Continue.")
 
         assertEquals("Recovered after the radio came back.", reply.text)
-        assertEquals(listOf(1L), retries)
+        // The abort path uses the longer abort backoff, not the 1 s transient one.
+        assertEquals(listOf(5L), retries)
         assertTrue("the retry must probe the network, saw ${probed.get()} probes", probed.get() >= 2)
     }
 
