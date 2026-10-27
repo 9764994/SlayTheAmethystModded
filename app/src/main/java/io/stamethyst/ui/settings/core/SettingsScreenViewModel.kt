@@ -4772,17 +4772,17 @@ class SettingsScreenViewModel : ViewModel() {
             }
             // 外部渲染器插件与内置渲染器放在同一个下拉框里，靠 plugin 字段区分。
             RendererPluginRegistry.enabledPlugins(host).forEach { plugin ->
-                val available = RendererPluginRegistry.isAvailable(plugin)
+                val missingLibraries = RendererPluginRegistry.missingLibraries(plugin)
                 add(
                     RendererBackendOptionState(
                         backend = RendererBackend.PLUGIN_EXTERNAL,
-                        available = available,
-                        reasonText = if (available) {
+                        available = missingLibraries.isEmpty(),
+                        reasonText = if (missingLibraries.isEmpty()) {
                             null
                         } else {
                             host.getString(
                                 R.string.settings_renderer_plugin_missing_library,
-                                plugin.glLibraryName
+                                missingLibraries.joinToString(", ")
                             )
                         },
                         plugin = plugin

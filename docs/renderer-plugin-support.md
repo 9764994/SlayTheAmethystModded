@@ -162,6 +162,19 @@ EGLBridge: external renderer plugin, EGL=libmobileglues.so
 早期实现漏了这一分支，会打印 `Unknown renderer "plugin_external", fallback to GL4ES bridge`。
 功能上仍能工作（落到同一个通用 EGL 桥），但日志具有误导性，已修正。
 
+插件按环境变量分两种桥接：
+
+| 插件类型 | 判定 | 桥接 |
+| --- | --- | --- |
+| EGL / GLES 型（如 MobileGlues） | `POJAVEXEC_EGL` | 通用 EGL 桥（`RENDERER_GL4ES`） |
+| OSMesa 型（如 VirGL / Zink 插件） | `LIB_MESA_NAME` | OSMesa 桥（`RENDERER_VK_ZINK`） |
+
+OSMesa 库名由 `LIB_MESA_NAME` 指定（插件里可能是 `libOSMesa_25.so` 这类带版本的名字），
+`ctxbridges/osmesa_loader.c` 优先使用该变量，未设置时回落到 `libOSMesa.so.8` / `libOSMesa.so`。
+
+插件库的可用性判断会依次检查：配置里的绝对路径、插件 `nativeLibraryDir`、以及 base / split APK
+内的 `lib/<abi>/`；任何一处命中即视为可用（`extractNativeLibs=false` 的插件依赖最后一条）。
+
 ## 8. 已知限制
 
 - **ABI 必须匹配**：插件需提供与设备一致的 `lib/<abi>/`（本项目 `arm64-v8a` 为主）。

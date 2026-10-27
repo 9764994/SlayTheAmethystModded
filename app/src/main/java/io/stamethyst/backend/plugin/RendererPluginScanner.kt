@@ -91,6 +91,14 @@ object RendererPluginScanner {
         return result
     }
 
+    /** base APK + split APK；渲染器插件把 .so 放在 split 里的场景并不少见 */
+    private fun resolveApkPaths(info: ApplicationInfo): List<String> {
+        val paths = LinkedHashSet<String>()
+        info.sourceDir?.takeIf { it.isNotBlank() }?.let(paths::add)
+        info.splitSourceDirs?.forEach { path -> path?.takeIf { it.isNotBlank() }?.let(paths::add) }
+        return paths.toList()
+    }
+
     /** 插件原生库目录形如 /data/app/<pkg>-<hash>/lib/arm64，最后一段即 ABI */
     private fun resolveAbi(info: ApplicationInfo): String {
         val fromDir = info.nativeLibraryDir?.substringAfterLast('/')?.takeIf { it.isNotBlank() }
@@ -121,7 +129,7 @@ object RendererPluginScanner {
             glLibraryName = glLibrary,
             eglLibraryName = eglLibrary,
             nativeLibraryDir = info.nativeLibraryDir.orEmpty(),
-            apkPath = info.sourceDir.orEmpty(),
+            apkPaths = resolveApkPaths(info),
             abi = resolveAbi(info),
             env = parsePojavEnv(metaData.getString(KEY_POJAV_ENV)),
             protocol = RendererPluginProtocol.V1,
@@ -176,7 +184,7 @@ object RendererPluginScanner {
                 glLibraryName = glLibrary,
                 eglLibraryName = stripNativePrefix(json.optString("rendererEGLPath")),
                 nativeLibraryDir = info.nativeLibraryDir.orEmpty(),
-            apkPath = info.sourceDir.orEmpty(),
+            apkPaths = resolveApkPaths(info),
             abi = resolveAbi(info),
                 env = parseV2Env(resources, metaData, json.optJSONArray("env")),
                 protocol = RendererPluginProtocol.V2,

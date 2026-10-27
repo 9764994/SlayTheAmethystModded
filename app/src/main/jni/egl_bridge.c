@@ -354,10 +354,19 @@ int pojavInitOpenGL() {
          * GL/EGL 实现由插件 APK 提供，加载路径放在 POJAVEXEC_EGL 里，
          * 桥接层沿用通用 EGL 路径（与 opengles* 分支一致）。 */
         const char* pluginEgl = getenv("POJAVEXEC_EGL");
-        pojav_environ->config_renderer = RENDERER_GL4ES;
-        printf("EGLBridge: external renderer plugin, EGL=%s\n",
-               (pluginEgl != NULL && pluginEgl[0] != '\0') ? pluginEgl : "(unset)");
-        set_gl_bridge_tbl();
+        const char* pluginMesa = getenv("LIB_MESA_NAME");
+        if (pluginMesa != NULL && pluginMesa[0] != '\0') {
+            /* OSMesa 型插件（VirGL / Zink 一类，桌面 GL 由插件自带的 OSMesa 提供） */
+            pojav_environ->config_renderer = RENDERER_VK_ZINK;
+            /* 插件自带的 OSMesa 不依赖系统 Vulkan，这里不调用 load_vulkan()。 */
+            printf("EGLBridge: external renderer plugin (OSMesa), LIB_MESA_NAME=%s\n", pluginMesa);
+            set_osm_bridge_tbl();
+        } else {
+            pojav_environ->config_renderer = RENDERER_GL4ES;
+            printf("EGLBridge: external renderer plugin (EGL), EGL=%s\n",
+                   (pluginEgl != NULL && pluginEgl[0] != '\0') ? pluginEgl : "(unset)");
+            set_gl_bridge_tbl();
+        }
     } else {
         printf("EGLBridge: Unknown renderer \"%s\", fallback to GL4ES bridge\n", renderer);
         pojav_environ->config_renderer = RENDERER_GL4ES;

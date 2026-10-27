@@ -21,7 +21,12 @@ void (*glReadPixels_p) (GLint x, GLint y, GLsizei width, GLsizei height, GLenum 
 void* (*OSMesaGetProcAddress_p)(const char* funcName);
 
 bool dlsym_OSMesa() {
-    void* dl_handle = loader_dlopen("libOSMesa.so.8", "libOSMesa.so", RTLD_LOCAL | RTLD_LAZY);
+    /* 外部渲染器插件（FCL RendererPlugin 协议）通过 LIB_MESA_NAME 指定自带的 OSMesa，
+     * 例如插件内置 libOSMesa_25.so；未设置时保持原来的 libOSMesa.so.8 / libOSMesa.so。 */
+    const char* mesaName = getenv("LIB_MESA_NAME");
+    void* dl_handle = (mesaName != NULL && mesaName[0] != '\0')
+                      ? loader_dlopen((char*) mesaName, (char*) mesaName, RTLD_LOCAL | RTLD_LAZY)
+                      : loader_dlopen("libOSMesa.so.8", "libOSMesa.so", RTLD_LOCAL | RTLD_LAZY);
     if(dl_handle == NULL) return false;
     OSMesaGetProcAddress_p = dlsym(dl_handle, "OSMesaGetProcAddress");
     if(OSMesaGetProcAddress_p == NULL) {

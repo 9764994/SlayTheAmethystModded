@@ -69,8 +69,11 @@ data class RendererPlugin(
     val glLibraryName: String,
     val eglLibraryName: String,
     val nativeLibraryDir: String,
-    /** 插件 APK 路径；用于 `extractNativeLibs=false` 时直接检查 APK 内的 lib/<abi>/ */
-    val apkPath: String = "",
+    /**
+     * 插件 APK 路径列表（base + split）。用于 `extractNativeLibs=false` 时直接检查
+     * APK 内的 lib/<abi>/；从应用商店安装的插件库可能只存在于 split APK 里。
+     */
+    val apkPaths: List<String> = emptyList(),
     /** 插件原生库的 ABI 目录名，从 nativeLibraryDir 推断 */
     val abi: String = "",
     val env: List<RendererPluginEnvSpec>,

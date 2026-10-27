@@ -1,6 +1,7 @@
 package io.stamethyst.backend.plugin
 
 import android.content.Context
+import android.os.Build
 import android.util.Log
 import java.io.File
 import java.util.zip.ZipFile
@@ -59,43 +60,68 @@ object RendererPluginRegistry {
     }
 
     fun isAvailable(plugin: RendererPlugin): Boolean {
-        if (plugin.glLibraryPath.isBlank()) return false
-        if (libraryExists(plugin, plugin.glLibraryName)) {
-            return !plugin.hasEglLibrary || libraryExists(plugin, plugin.eglLibraryName)
-        }
-        return false
+        return missingLibraries(plugin).isEmpty()
     }
 
-    fun unavailableReason(context: Context, plugin: RendererPlugin): String? {
-        if (!isAvailable(plugin)) {
-            return "missing ${plugin.glLibraryName}"
+    /**
+     * 缺失的库名列表；空列表表示插件可用。
+     *
+     * 依次检查：配置里的绝对路径 / 插件 nativeLibraryDir / base 与 split APK 内的 lib/<abi>/。
+     * 插件若用 `extractNativeLibs=false` 打包，库只存在于 APK 内，必须走第三条路径；
+     * 从应用商店安装的插件，库还可能只在 split APK 里。
+     */
+    fun missingLibraries(plugin: RendererPlugin): List<String> {
+        val missing = ArrayList<String>(2)
+        if (plugin.glLibraryName.isBlank() || !libraryExists(plugin, plugin.glLibraryName)) {
+            missing.add(plugin.glLibraryName.ifBlank { "GL library" })
         }
-        return null
+        if (plugin.hasEglLibrary && !libraryExists(plugin, plugin.eglLibraryName)) {
+            missing.add(plugin.eglLibraryName)
+        }
+        return missing
     }
 
     private fun libraryExists(plugin: RendererPlugin, libraryName: String): Boolean {
         if (libraryName.isBlank()) return false
-        val direct = File(plugin.toAbsolutePath(libraryName))
-        if (direct.isFile) return true
-        return apkContainsLibrary(plugin, File(libraryName).name)
+        val absolute = File(plugin.toAbsolutePath(libraryName))
+        if (absolute.isFile) return true
+        if (plugin.nativeLibraryDir.isNotBlank()) {
+            val inNativeDir = File(plugin.nativeLibraryDir, absolute.name)
+            if (inNativeDir.isFile) return true
+        }
+        return apkContainsLibrary(plugin, absolute.name)
     }
 
     /**
      * `extractNativeLibs=false` 的插件 APK 不会把 .so 解包到 nativeLibraryDir，
-     * 此时需要直接在 APK 的 lib/<abi>/ 里确认库存在；真正的加载由动态链接器按需完成。
+     * 此时直接在 APK 的 lib/<abi>/ 中按文件名匹配；真正的加载由动态链接器完成。
      */
     private fun apkContainsLibrary(plugin: RendererPlugin, libraryName: String): Boolean {
-        val apkPath = plugin.apkPath
-        if (apkPath.isBlank()) return false
-        val abi = plugin.abi.ifBlank { "arm64-v8a" }
-        return try {
-            ZipFile(File(apkPath)).use { zip ->
-                zip.getEntry("lib/$abi/$libraryName") != null
+        if (plugin.apkPaths.isEmpty()) return false
+        val abis = LinkedHashSet<String>()
+        if (plugin.abi.isNotBlank()) abis.add(plugin.abi)
+        abis.addAll(Build.SUPPORTED_ABIS)
+        plugin.apkPaths.forEach { apkPath ->
+            try {
+                val found = ZipFile(File(apkPath)).use { zip ->
+                    zip.entries().asSequence().any { entry ->
+                        if (entry.isDirectory) return@any false
+                        val name = entry.name
+                        if (!name.startsWith("lib/")) return@any false
+                        if (!name.endsWith("/$libraryName", ignoreCase = true)) return@any false
+                        val entryAbi = name.removePrefix("lib/").substringBefore('/')
+                        abis.isEmpty() || entryAbi in abis
+                    }
+                }
+                if (found) {
+                    Log.i(TAG, "Plugin library found in ${File(apkPath).name}: $libraryName")
+                    return true
+                }
+            } catch (error: Throwable) {
+                Log.w(TAG, "Failed to inspect $apkPath for $libraryName", error)
             }
-        } catch (error: Throwable) {
-            Log.w(TAG, "Failed to inspect ${plugin.packageName} for $libraryName", error)
-            false
         }
+        return false
     }
 
     /** 按用户配置展开插件的环境变量，逻辑对齐 FCL 的 buildPojavEnv */

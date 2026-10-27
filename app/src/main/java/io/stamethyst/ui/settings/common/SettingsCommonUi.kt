@@ -15,6 +15,8 @@ import androidx.annotation.DrawableRes
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -22,6 +24,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -502,7 +505,14 @@ internal fun <T> SettingsDropdownField(
             onDismissRequest = { showDialog = false },
             title = { Text(label) },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                // 选项较多时（例如内置渲染器 + 多个外部渲染器插件）必须可滚动，
+                // 否则超出弹窗高度的条目无法点击。
+                Column(
+                    modifier = Modifier
+                        .heightIn(max = 420.dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
                     options.forEach { option ->
                         val optionIsEnabled = enabled && optionEnabled(option)
                         SettingsRadioOptionRow(
