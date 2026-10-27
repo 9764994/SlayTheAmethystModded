@@ -678,6 +678,7 @@ private fun ModsHeaderPinnedContent(
         subtitle = "",
         iconSize = 28.dp,
     ) {
+        AgentWorkingIndicator()
         ModsActionsMenu(
             canEditFolders = folderControlsEnabled && hostAvailable,
             dragLocked = dragLocked,

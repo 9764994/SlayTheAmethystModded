@@ -19,7 +19,6 @@ import io.stamethyst.backend.llm.LlmSettingsRepository
 import io.stamethyst.backend.mods.AgentPatchModManager
 import io.stamethyst.backend.notify.ForegroundNotificationIds
 import io.stamethyst.config.RuntimePaths
-import java.util.concurrent.ConcurrentHashMap
 import kotlin.concurrent.thread
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
@@ -77,13 +76,12 @@ class AiAgentExecutionService : Service() {
         private val NOTIFICATION_ID = ForegroundNotificationIds.AI_AGENT
         private const val LOG_TAG = "AiAgentService"
 
-        private val runningJobs = ConcurrentHashMap.newKeySet<String>()
+        private val runningJobs = AiAgentRunningJobs()
+        internal val isRunning = runningJobs.isRunning
 
         internal fun isJobRunning(jobId: String): Boolean = runningJobs.contains(jobId)
 
-        internal fun reserve(jobId: String): Boolean = synchronized(runningJobs) {
-            if (runningJobs.isNotEmpty()) false else runningJobs.add(jobId)
-        }
+        internal fun reserve(jobId: String): Boolean = runningJobs.reserve(jobId)
 
         internal fun release(jobId: String) { runningJobs.remove(jobId) }
 
@@ -93,7 +91,7 @@ class AiAgentExecutionService : Service() {
                 putExtra(EXTRA_JOB_ID, job.jobId)
                 putExtra(EXTRA_MOD_ID, job.modId)
             }
-            runningJobs += job.jobId
+            runningJobs.add(job.jobId)
             try {
                 ContextCompat.startForegroundService(context.applicationContext, intent)
             } catch (error: Throwable) {
@@ -189,7 +187,7 @@ class AiAgentExecutionService : Service() {
         workerJobId = jobId
         workerModId = modId
         workerJob = job
-        runningJobs += jobId
+        runningJobs.add(jobId)
         updateNotification("正在执行 AI 任务")
         workerThread = thread(start = false, name = "STS-AiAgent-$jobId") {
             try {
@@ -210,7 +208,11 @@ class AiAgentExecutionService : Service() {
             return
         }
         val jobStore = AiAgentJobStore(applicationContext, modId)
-        val job = jobStore.find(jobId) ?: return
+        val job = jobStore.find(jobId) ?: run {
+            runningJobs.remove(jobId)
+            stopWhenIdle(0)
+            return
+        }
         if (job.status == AiAgentJobStatus.RUNNING) {
             markCancelled(job, jobStore)
         }
