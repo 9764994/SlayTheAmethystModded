@@ -159,7 +159,7 @@ object RendererPluginRegistry {
         plugin.env.forEach { spec ->
             when (spec.type) {
                 RendererPluginEnvType.NORMAL -> {
-                    val value = resolveLibraryValue(plugin, spec.value)
+                    val value = resolveLibraryValue(plugin, spec.key, spec.value)
                     if (value.isEmpty()) return@forEach
                     // DLOPEN 的多个条目在 v2 协议里合并成一条逗号分隔的环境变量
                     if (spec.key == "DLOPEN") {
@@ -191,7 +191,7 @@ object RendererPluginRegistry {
                     val enabled = RendererPluginStore.envEnabled(context, plugin.id, spec.key)
                         ?: spec.enabledByDefault
                     if (!enabled) return@forEach
-                    val value = resolveLibraryValue(plugin, spec.value)
+                    val value = resolveLibraryValue(plugin, spec.key, spec.value)
                     if (value.isNotEmpty()) {
                         environment[spec.key] = value
                     }
@@ -204,16 +204,27 @@ object RendererPluginRegistry {
         return environment
     }
 
-    /** 环境变量值里的 `**|` 前缀表示插件目录下的文件，需要展开成绝对路径 */
-    private fun resolveLibraryValue(plugin: RendererPlugin, raw: String): String {
+    /**
+     * 展开环境变量里的库路径。
+     *
+     * - `**|` 前缀表示插件目录下的文件；
+     * - `LIB_MESA_NAME` / `MESA_LIBRARY` / `DLOPEN` 的值是库名，同样需要绝对路径
+     *   （bionic 不会在运行时重新读取 LD_LIBRARY_PATH）。
+     */
+    private fun resolveLibraryValue(plugin: RendererPlugin, key: String, raw: String): String {
         val value = raw.trim()
         if (value.isEmpty()) return value
-        return if (value.startsWith(NATIVE_PREFIX)) {
-            plugin.toAbsolutePath(value.removePrefix(NATIVE_PREFIX))
-        } else {
-            value
+        if (value.startsWith(NATIVE_PREFIX)) {
+            return plugin.toAbsolutePath(value.removePrefix(NATIVE_PREFIX))
         }
+        if (key in LIBRARY_PATH_ENV_KEYS || key == "DLOPEN") {
+            return plugin.resolveLibraryPath(value)
+        }
+        return value
     }
 
     private const val NATIVE_PREFIX = "**|"
+
+    /** 值为单个库名的环境变量 */
+    private val LIBRARY_PATH_ENV_KEYS = setOf("LIB_MESA_NAME", "MESA_LIBRARY")
 }

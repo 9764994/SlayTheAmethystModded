@@ -7,6 +7,7 @@ import android.content.pm.PackageManager
 import android.util.Log
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
 
 /**
  * 扫描设备上已安装的 FCL 渲染器插件 APK。
@@ -85,10 +86,27 @@ object RendererPluginScanner {
             Log.i(
                 TAG,
                 "  plugin=${plugin.packageName} renderer=${plugin.displayName} " +
-                    "gl=${plugin.glLibraryName} protocol=${plugin.protocol}"
+                    "gl=${plugin.glLibraryName} egl=${plugin.eglLibraryName} " +
+                    "protocol=${plugin.protocol} " +
+                    "nativeDir=${plugin.nativeLibraryDir} " +
+                    "glExists=${java.io.File(plugin.glLibraryPath).isFile}"
             )
         }
         return result
+    }
+
+    /**
+     * 插件原生库目录。
+     *
+     * 某些 ROM / 安装方式下 `ApplicationInfo.nativeLibraryDir` 为空，此时按
+     * `/data/app/<pkg>-<hash>/lib/<abi>` 推导（与系统解包位置一致）。
+     */
+    private fun resolveNativeLibraryDir(info: ApplicationInfo): String {
+        val declared = info.nativeLibraryDir?.takeIf { it.isNotBlank() }
+        if (declared != null) return declared
+        val source = info.sourceDir?.takeIf { it.isNotBlank() } ?: return ""
+        val appDir = File(source).parentFile ?: return ""
+        return File(File(appDir, "lib"), resolveAbi(info)).absolutePath
     }
 
     /** base APK + split APK；渲染器插件把 .so 放在 split 里的场景并不少见 */
@@ -117,9 +135,11 @@ object RendererPluginScanner {
         val parts = rendererValue.split(":")
         if (parts.size < 3) return null
         val displayName = parts[0].ifBlank { pluginLabel }
-        val glLibrary = parts[1].trim()
+        // FCL v1 约定：库名以 "/" 开头表示“插件 nativeLibraryDir 下的文件”，
+        // 例如 GL4ES Plus 的 renderer=...:/libEGL_angle.so 实际是 <插件目录>/libEGL_angle.so
+        val glLibrary = parts[1].trim().removePrefix("/")
         if (glLibrary.isEmpty()) return null
-        val eglLibrary = parts[2].trim()
+        val eglLibrary = parts[2].trim().removePrefix("/")
         return RendererPlugin(
             packageName = info.packageName,
             pluginLabel = pluginLabel,
@@ -128,7 +148,7 @@ object RendererPluginScanner {
             description = metaData.getString(KEY_DESCRIPTION).orEmpty(),
             glLibraryName = glLibrary,
             eglLibraryName = eglLibrary,
-            nativeLibraryDir = info.nativeLibraryDir.orEmpty(),
+            nativeLibraryDir = resolveNativeLibraryDir(info),
             apkPaths = resolveApkPaths(info),
             abi = resolveAbi(info),
             env = parsePojavEnv(metaData.getString(KEY_POJAV_ENV)),
@@ -183,7 +203,7 @@ object RendererPluginScanner {
                 description = json.optString("description"),
                 glLibraryName = glLibrary,
                 eglLibraryName = stripNativePrefix(json.optString("rendererEGLPath")),
-                nativeLibraryDir = info.nativeLibraryDir.orEmpty(),
+                nativeLibraryDir = resolveNativeLibraryDir(info),
             apkPaths = resolveApkPaths(info),
             abi = resolveAbi(info),
                 env = parseV2Env(resources, metaData, json.optJSONArray("env")),

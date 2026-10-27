@@ -172,6 +172,19 @@ EGLBridge: external renderer plugin, EGL=libmobileglues.so
 OSMesa 库名由 `LIB_MESA_NAME` 指定（插件里可能是 `libOSMesa_25.so` 这类带版本的名字），
 `ctxbridges/osmesa_loader.c` 优先使用该变量，未设置时回落到 `libOSMesa.so.8` / `libOSMesa.so`。
 
+### 库路径必须绝对化
+
+bionic 在进程启动时就缓存了 `LD_LIBRARY_PATH`，运行期 `setenv` 对后续 `dlopen("libfoo.so")` 无效。
+因此除系统库外，传给原生层的库一律是绝对路径：
+
+- `glLibraryPath` / `eglLibraryPath` → `POJAVEXEC_EGL`、`org.lwjgl.opengl.libname`
+- `LIB_MESA_NAME` / `MESA_LIBRARY` / `DLOPEN` 的值同样展开成绝对路径
+
+v1 协议里库名以 `/` 开头表示“插件目录相对路径”（FCL 的 V1_DIR_PREFIX），解析时会去掉前导斜杠；
+v2 用 `**|` 前缀表达同一含义。
+
+`ApplicationInfo.nativeLibraryDir` 为空时按 `/data/app/<pkg>-<hash>/lib/<abi>` 推导。
+
 插件库的可用性判断会依次检查：配置里的绝对路径、插件 `nativeLibraryDir`、base / split APK 内的
 `lib/<abi>/`，最后回落到系统库目录（`/system/lib64`、`/vendor/lib64` 等）；任何一处命中即视为可用。
 

@@ -89,15 +89,28 @@ data class RendererPlugin(
     val eglLibraryPath: String get() = if (eglLibraryName.isBlank()) "" else resolveLibraryPath(eglLibraryName)
 
     /**
-     * 插件目录里存在该库时返回绝对路径，否则保留裸名交给动态链接器
-     * （`libEGL.so` 这类系统库本来就不在插件 APK 里）。
+     * 计算载入时使用的库路径。
+     *
+     * Android 的链接器在进程启动时就把 LD_LIBRARY_PATH 缓存下来了，运行期 setenv 不会生效，
+     * 因此**必须**给 dlopen 传绝对路径；只有系统库（libEGL.so 等）保留裸名，交给默认命名空间。
      */
-    private fun resolveLibraryPath(name: String): String {
+    fun resolveLibraryPath(name: String): String {
         if (name.isBlank()) return name
+        if (name in SYSTEM_LIBRARY_NAMES) return name
         if (name.startsWith("/")) return name
         if (nativeLibraryDir.isBlank()) return name
-        val candidate = java.io.File(nativeLibraryDir, name)
-        return if (candidate.isFile) candidate.absolutePath else name
+        return "$nativeLibraryDir/$name"
+    }
+
+    companion object {
+        /** 由系统/驱动提供、不应拼接插件目录的常见库名 */
+        val SYSTEM_LIBRARY_NAMES = setOf(
+            "libEGL.so",
+            "libGLESv1_CM.so",
+            "libGLESv2.so",
+            "libGL.so",
+            "libvulkan.so"
+        )
     }
 
     val hasEglLibrary: Boolean get() = eglLibraryName.isNotBlank()
