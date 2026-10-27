@@ -1,39 +1,54 @@
-name: Build STS Debug APK with Patch
+name: Build STS Debug APK
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "**" ]
+  pull_request:
   workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-    - name: Apply Patch
-      run: git apply sts-fcl-renderer-plugin.patch
+      - name: Set up JDK 21
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
 
-    - name: Set up JDK 21
-      uses: actions/setup-java@v5
-      with:
-        distribution: temurin
-        java-version: "21"
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
 
-    - name: Set up Gradle
-      uses: gradle/actions/setup-gradle@v4
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
 
-    - name: Grant execute permission for gradlew
-      run: chmod +x gradlew
+      # 代码已经直接在仓库里，不需要再 git apply 补丁。
+      # build-deps（desktop.jar / jre8-pojav.zip）由 :app 的 ensureBuildDependencies 自动下载。
+      - name: Build Debug APK
+        run: ./gradlew :app:assembleDebug --stacktrace
 
-    - name: Build Debug APK
-      # 这里尝试编译普通的 Debug 包
-      run: ./gradlew :app:assembleDebug --stacktrace
+      - name: Upload APK artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: STS-Debug-APK
+          path: app/build/outputs/apk/**/*.apk
+          if-no-files-found: warn
 
-    - name: Upload APK Artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: STS-Debug-APK
-        path: app/build/outputs/apk/**/*.apk
+      - name: Upload build reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-reports
+          path: |
+            app/build/reports/**
+            build/reports/**
+          if-no-files-found: ignore
