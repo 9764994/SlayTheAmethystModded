@@ -9,6 +9,27 @@ import java.nio.file.Files
 
 class LatestLogCrashDetectorTest {
     @Test
+    fun detect_recognizesMtsModReportWithoutEarlierGameCrashedLine() {
+        val logFile = createTempLog(
+            """
+            Mods in stacktrace:
+             - amethyst.ai.patch.bloodstains.patch-1790300082256-09148499 (0.1.0)
+            Cause:
+            java.lang.NullPointerException
+                at bloodstainschinese.BloodstainsChineseStringsPatch.isApplied(BloodstainsChineseStringsPatch.java:92)
+                at bloodstainschinese.BloodstainsChineseStringsPatch.loadAndVerify(BloodstainsChineseStringsPatch.java:83)
+            """.trimIndent()
+        )
+
+        assertEquals(
+            "java.lang.NullPointerException at bloodstainschinese.BloodstainsChineseStringsPatch.isApplied(BloodstainsChineseStringsPatch.java:92)",
+            LatestLogCrashDetector.detect(logFile)?.detail
+        )
+        assertEquals(true, LatestLogCrashDetector.isCrashMarkerLine("Mods in stacktrace:"))
+        assertEquals(false, LatestLogCrashDetector.isCrashMarkerLine("java.lang.NullPointerException"))
+    }
+
+    @Test
     fun detect_returnsNull_whenOnlyExceptionStackPresentWithoutCrashMarker() {
         val logFile = createTempLog(
             """

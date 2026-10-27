@@ -25,10 +25,15 @@ object LatestLogCrashDetector {
     private val strongCrashMarkers = listOf(
         "Game crashed.",
         "Exception occurred in CardCrawlGame render method!",
-        "Exception in thread \"LWJGL Application\""
+        "Exception in thread \"LWJGL Application\"",
+        "Mods in stacktrace:"
     )
     private val exceptionHeadlineRegex =
         Regex("^(?:Caused by:\\s*)?[A-Za-z0-9_$.]+(?:Exception|Error)(?::.*)?$")
+
+    @JvmStatic
+    fun isCrashMarkerLine(line: String): Boolean =
+        strongCrashMarkers.any { marker -> line.contains(marker, ignoreCase = true) }
 
     @JvmStatic
     fun detect(context: Context): LatestLogCrashSummary? = detect(RuntimePaths.latestLog(context))
@@ -67,7 +72,7 @@ object LatestLogCrashDetector {
         }
         val lastNonBlankLine = lines.last().trim().takeIf { it.isNotEmpty() }
         val markerIndex = lines.indexOfLast { line ->
-            strongCrashMarkers.any { marker -> line.contains(marker, ignoreCase = true) }
+            isCrashMarkerLine(line)
         }
         if (markerIndex == -1) {
             return LatestLogTailAnalysis(crashSummary = null, lastNonBlankLine = lastNonBlankLine)

@@ -13,7 +13,8 @@ internal data class LauncherReturnSnapshot(
     val processExitCrash: ProcessExitSummary? = null,
     val heapPressureWarning: Boolean = false,
     val expectedBackExitRecent: Boolean = false,
-    val expectedCleanShutdown: Boolean = false
+    val expectedCleanShutdown: Boolean = false,
+    val latestLogCrash: CrashReturnPayload? = null
 )
 
 internal sealed interface LauncherReturnAction {
@@ -34,6 +35,9 @@ internal object LauncherReturnActionResolver {
         if (snapshot.expectedBackExitRecent) {
             return LauncherReturnAction.ExpectedBackExit
         }
+        // MTS can catch a game exception and end with a normal process exit. The native
+        // crash-return Intent can also be lost; log evidence must override a clean exit.
+        snapshot.latestLogCrash?.let { return LauncherReturnAction.ExplicitCrash(it) }
         if (snapshot.expectedCleanShutdown) {
             return LauncherReturnAction.ExpectedCleanShutdown
         }

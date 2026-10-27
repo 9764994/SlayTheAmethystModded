@@ -6,6 +6,44 @@ import org.junit.Test
 
 class LauncherReturnActionResolverTest {
     @Test
+    fun resolve_usesLogCrash_whenCrashIntentAndAbnormalProcessExitAreMissing() {
+        val payload = CrashReturnPayload(-1, false, "java.lang.NullPointerException")
+        assertEquals(
+            LauncherReturnAction.ExplicitCrash(payload),
+            LauncherReturnActionResolver.resolve(LauncherReturnSnapshot(latestLogCrash = payload))
+        )
+    }
+
+    @Test
+    fun resolve_prefersLogCrash_overCleanShutdownProcessExitAndHeapPressure() {
+        val payload = CrashReturnPayload(-1, false, "MTS crash")
+        assertEquals(
+            LauncherReturnAction.ExplicitCrash(payload),
+            LauncherReturnActionResolver.resolve(
+                LauncherReturnSnapshot(
+                    latestLogCrash = payload,
+                    expectedCleanShutdown = true,
+                    processExitCrash = sampleProcessExitSummary(),
+                    heapPressureWarning = true
+                )
+            )
+        )
+    }
+
+    @Test
+    fun resolve_keepsUserBackExitAheadOfLogFallback() {
+        assertEquals(
+            LauncherReturnAction.ExpectedBackExit,
+            LauncherReturnActionResolver.resolve(
+                LauncherReturnSnapshot(
+                    latestLogCrash = CrashReturnPayload(-1, false, "old crash"),
+                    expectedBackExitRecent = true
+                )
+            )
+        )
+    }
+
+    @Test
     fun resolve_prefersExplicitCrash_overAllOtherSignals() {
         val action = LauncherReturnActionResolver.resolve(
             LauncherReturnSnapshot(

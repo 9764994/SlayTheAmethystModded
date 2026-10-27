@@ -3559,7 +3559,7 @@ class MainScreenViewModel : ViewModel() {
             is LauncherReturnAction.ExplicitCrash -> {
                 BackExitNotice.consumeExpectedBackExitIfRecent(host)
                 ExpectedGameExitNotice.consumeExpectedGameExitIfRecent(host, launchStartedAtMs)
-                clearCrashExtras(intent ?: return false)
+                intent?.let(::clearCrashExtras)
                 suppressFutureProcessExitCrashFallback(host, launchStartedAtMs)
                 showCrashRecovery(
                     code = action.payload.code,
@@ -3594,10 +3594,20 @@ class MainScreenViewModel : ViewModel() {
         allowProcessExitCrashFallback: Boolean
     ): LauncherReturnSnapshot {
         val explicitCrash = buildExplicitCrashPayload(intent)
+        val logFile = RuntimePaths.latestLog(host)
+        // Never turn a previous session's latest.log into a crash for this launch.
+        val latestLogCrash = if (launchStartedAtMs > 0L && logFile.lastModified() >= launchStartedAtMs) {
+            LatestLogCrashDetector.detect(logFile)?.let {
+                CrashReturnPayload(code = -1, isSignal = false, detail = it.detail)
+            }
+        } else {
+            null
+        }
         val expectedCleanShutdown = explicitCrash == null &&
-            LatestLogCrashDetector.detect(host) == null &&
+            latestLogCrash == null &&
             ExpectedGameExitNotice.isExpectedGameExitRecent(host, launchStartedAtMs)
-        val processExitCrash = if (allowProcessExitCrashFallback && !expectedCleanShutdown && explicitCrash == null) {
+        val processExitCrash = if (allowProcessExitCrashFallback && !expectedCleanShutdown &&
+            explicitCrash == null && latestLogCrash == null) {
             ProcessExitInfoCapture.peekLatestInterestingProcessExitInfo(host, launchStartedAtMs)
         } else {
             null
@@ -3608,7 +3618,8 @@ class MainScreenViewModel : ViewModel() {
             processExitCrash = processExitCrash,
             heapPressureWarning = heapPressureWarning,
             expectedBackExitRecent = BackExitNotice.isExpectedBackExitRecent(host),
-            expectedCleanShutdown = expectedCleanShutdown
+            expectedCleanShutdown = expectedCleanShutdown,
+            latestLogCrash = latestLogCrash
         )
     }
 

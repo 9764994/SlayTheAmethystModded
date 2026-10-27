@@ -1159,8 +1159,6 @@ class JvmLaunchController(
     }
 
     private fun isRuntimeCrashMarkerLine(line: String): Boolean {
-        return line.contains("Game crashed.", ignoreCase = true) ||
-            line.contains("Exception occurred in CardCrawlGame render method!", ignoreCase = true) ||
-            line.contains("Exception in thread \"LWJGL Application\"", ignoreCase = true)
+        return LatestLogCrashDetector.isCrashMarkerLine(line)
     }
 }
