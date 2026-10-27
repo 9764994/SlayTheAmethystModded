@@ -1346,7 +1346,7 @@
     <string name="settings_llm_description">設定相容 OpenAI 的介面。API Key 使用應用程式加密儲存。AI patch 在明確確認後可以修改選取的可選模組 JAR，並先建立備份。</string>
     <string name="settings_llm_api_key">API Key</string>
     <string name="settings_llm_base_url">Base URL</string>
-    <string name="settings_llm_base_url_hint">例如：https://api.openai.com/v1</string>
+    <string name="settings_llm_base_url_hint">例如：https://api.deepseek.com/v1</string>
     <string name="settings_llm_model">模型</string>
     <string name="settings_llm_endpoint">介面協定</string>
     <string name="settings_llm_chat_completions">Chat Completions</string>

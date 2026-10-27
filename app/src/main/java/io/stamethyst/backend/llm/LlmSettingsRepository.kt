@@ -6,12 +6,13 @@ import android.util.Log
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 
-private const val DEFAULT_LLM_BASE_URL = "https://api.openai.com/v1"
+private const val DEFAULT_LLM_BASE_URL = "https://api.deepseek.com/v1"
+private const val DEFAULT_LLM_MODEL_NAME = "deepseek-flash"
 
 data class LlmSettings(
     val apiKey: String = "",
     val baseUrl: String = DEFAULT_LLM_BASE_URL,
-    val modelName: String = "deepseek-v4-flash",
+    val modelName: String = DEFAULT_LLM_MODEL_NAME,
     val endpoint: LlmEndpoint = LlmEndpoint.CHAT_COMPLETIONS,
     val requestTimeoutSeconds: Int = DEFAULT_LLM_REQUEST_TIMEOUT_SECONDS,
     val reasoningEffort: LlmReasoningEffort = LlmReasoningEffort.HIGH,
@@ -66,11 +67,11 @@ class LlmSettingsRepository(context: Context) {
             LlmSettings(
                 apiKey = it.getString(KEY_API_KEY, "").orEmpty(),
                 baseUrl = it.getString(KEY_BASE_URL, DEFAULT_LLM_BASE_URL).orEmpty(),
-                modelName = it.getString(KEY_MODEL_NAME, "deepseek-v4-flash").orEmpty(),
+                modelName = it.getString(KEY_MODEL_NAME, DEFAULT_LLM_MODEL_NAME).orEmpty(),
                 models = it.getString("models", null)?.let { value ->
                     val array = org.json.JSONArray(value)
                     List(array.length()) { index -> array.getString(index) }
-                } ?: listOf(it.getString(KEY_MODEL_NAME, "deepseek-v4-flash").orEmpty()),
+                } ?: listOf(it.getString(KEY_MODEL_NAME, DEFAULT_LLM_MODEL_NAME).orEmpty()),
                 endpoint = it.getString(KEY_ENDPOINT, LlmEndpoint.CHAT_COMPLETIONS.name)
                     ?.let { value -> runCatching { LlmEndpoint.valueOf(value) }.getOrDefault(LlmEndpoint.CHAT_COMPLETIONS) }
                     ?: LlmEndpoint.CHAT_COMPLETIONS,
