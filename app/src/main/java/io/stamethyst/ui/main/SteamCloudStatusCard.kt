@@ -483,6 +483,12 @@ private fun cloudHint(state: CloudState): String = when (state.state) {
     Status.SYNCING -> stringResource(when (state.phase) {
         SteamCloudSyncPhase.DOWNLOADING -> R.string.cloud_card_downloading_hint
         SteamCloudSyncPhase.UPLOADING -> R.string.cloud_card_uploading_hint
+        SteamCloudSyncPhase.PREPARING_LOCAL_COMMIT -> R.string.cloud_card_preparing_commit_hint
+        SteamCloudSyncPhase.RECHECKING_REMOTE -> R.string.cloud_card_rechecking_remote_hint
+        SteamCloudSyncPhase.WAITING_FOR_LOCAL_ACCESS -> R.string.cloud_card_waiting_local_hint
+        SteamCloudSyncPhase.RECHECKING_LOCAL -> R.string.cloud_card_rechecking_local_hint
+        SteamCloudSyncPhase.SAVING_SYNC_STATE -> R.string.cloud_card_saving_state_hint
+        SteamCloudSyncPhase.CLEANING_UP -> R.string.cloud_card_cleaning_up_hint
         else -> R.string.cloud_card_syncing_hint
     })
     Status.CONFLICT -> stringResource(R.string.cloud_card_conflict_hint)
@@ -497,7 +503,11 @@ private fun cloudIcon(state: CloudState): Int = when (steamCloudCardDisplayState
         SteamCloudSyncPhase.DOWNLOADING -> R.drawable.ic_workshop_download
         SteamCloudSyncPhase.UPLOADING -> R.drawable.ic_arrow_upward
         SteamCloudSyncPhase.DELETING_REMOTE -> R.drawable.ic_delete
-        SteamCloudSyncPhase.VERIFYING_REMOTE, SteamCloudSyncPhase.FINALIZING -> R.drawable.ic_check_circle
+        SteamCloudSyncPhase.VERIFYING_REMOTE, SteamCloudSyncPhase.FINALIZING,
+        SteamCloudSyncPhase.RECHECKING_REMOTE, SteamCloudSyncPhase.RECHECKING_LOCAL -> R.drawable.ic_check_circle
+        SteamCloudSyncPhase.WAITING_FOR_LOCAL_ACCESS -> R.drawable.ic_pause
+        SteamCloudSyncPhase.PREPARING_LOCAL_COMMIT, SteamCloudSyncPhase.SAVING_SYNC_STATE,
+        SteamCloudSyncPhase.CLEANING_UP -> R.drawable.ic_inventory
         SteamCloudSyncPhase.APPLYING_TO_LOCAL, SteamCloudSyncPhase.BACKING_UP_LOCAL -> R.drawable.ic_inventory
         else -> R.drawable.ic_cloud_sync
     }

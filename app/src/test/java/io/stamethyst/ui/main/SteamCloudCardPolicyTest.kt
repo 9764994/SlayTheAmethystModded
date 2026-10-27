@@ -156,6 +156,16 @@ class SteamCloudCardPolicyTest {
         assertNull(steamCloudStageFraction(download.copy(phase = SteamCloudSyncPhase.VERIFYING_REMOTE)))
         assertNull(steamCloudStageFraction(download.copy(phase = SteamCloudSyncPhase.APPLYING_TO_LOCAL)))
         assertNull(steamCloudStageFraction(download.copy(phase = SteamCloudSyncPhase.FINALIZING)))
+        listOf(
+            SteamCloudSyncPhase.PREPARING_LOCAL_COMMIT,
+            SteamCloudSyncPhase.RECHECKING_REMOTE,
+            SteamCloudSyncPhase.WAITING_FOR_LOCAL_ACCESS,
+            SteamCloudSyncPhase.RECHECKING_LOCAL,
+            SteamCloudSyncPhase.SAVING_SYNC_STATE,
+            SteamCloudSyncPhase.CLEANING_UP,
+        ).forEach { phase ->
+            assertNull(steamCloudStageFraction(download.copy(phase = phase)))
+        }
         assertNull(steamCloudStageFraction(download.copy(state = Status.CANCELLING)))
         assertNull(steamCloudStageFraction(download.copy(totalFiles = 0)))
     }

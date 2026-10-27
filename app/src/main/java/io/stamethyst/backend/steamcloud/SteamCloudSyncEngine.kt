@@ -139,6 +139,7 @@ internal class SteamCloudSyncEngine(
                     throw error
                 }
             }
+            report(SteamCloudSyncDirection.PULL_CLOUD_TO_LOCAL, SteamCloudSyncPhase.PREPARING_LOCAL_COMMIT, 0, 0, "")
             val finalLocal = local.associateBy { it.localRelativePath }.toMutableMap()
             val downloadedEntries = collect(File(work, "download")).associateBy { it.localRelativePath }
             downloads.forEach { change ->
@@ -169,26 +170,32 @@ internal class SteamCloudSyncEngine(
                 SteamCloudPathReplacement(stagedManifest, File(stateRoot, "manifest.json")))
             // Do not hold the live-save lease across network RPCs. Steam exposes no conditional
             // write token here: this is an optimistic race check, not a distributed lock.
-            report(SteamCloudSyncDirection.PULL_CLOUD_TO_LOCAL, SteamCloudSyncPhase.FINALIZING, 0, 0, "")
+            report(SteamCloudSyncDirection.PULL_CLOUD_TO_LOCAL, SteamCloudSyncPhase.RECHECKING_REMOTE, 0, 0, "")
             requireUnchanged(finalRemote, readRemote())
             val apply = {
                 checkCancelled()
+                report(SteamCloudSyncDirection.PULL_CLOUD_TO_LOCAL, SteamCloudSyncPhase.RECHECKING_LOCAL, 0, 0, "")
                 if ((downloads.isNotEmpty() || requiresLocalInstall) && !sameLocalSet(originalLive, collect(liveRoot))) {
                     throw SteamCloudStalePlanException("Local saves changed during download; no local files were replaced.")
                 }
+                report(SteamCloudSyncDirection.PULL_CLOUD_TO_LOCAL, SteamCloudSyncPhase.SAVING_SYNC_STATE, 0, 0, "")
                 transact {
                     // The Android adapter serializes this check and commit with the control file
                     // update made by an immediate launch, in addition to the game's live lease.
                     requireLocalChangesAllowed()
                     report(SteamCloudSyncDirection.PULL_CLOUD_TO_LOCAL,
                         if (downloads.isNotEmpty() || requiresLocalInstall) SteamCloudSyncPhase.APPLYING_TO_LOCAL
-                        else SteamCloudSyncPhase.FINALIZING, 0, 0, "")
+                        else SteamCloudSyncPhase.SAVING_SYNC_STATE, 0, 0, "")
                     SteamCloudFileTransaction.execute(File(stateRoot, "transactions-v2"), storageRoot,
                         replacements + metadata?.invoke(work, projectedRoot).orEmpty(),
                         retainBackup = downloads.isNotEmpty() || requiresLocalInstall)
                 }
             }
-            if (downloads.isNotEmpty() || metadataRequiresLiveLease || requiresLocalInstall) mutate(apply) else apply()
+            if (downloads.isNotEmpty() || metadataRequiresLiveLease || requiresLocalInstall) {
+                report(SteamCloudSyncDirection.PULL_CLOUD_TO_LOCAL, SteamCloudSyncPhase.WAITING_FOR_LOCAL_ACCESS, 0, 0, "")
+                mutate(apply)
+            } else apply()
+            report(SteamCloudSyncDirection.PULL_CLOUD_TO_LOCAL, SteamCloudSyncPhase.CLEANING_UP, 0, 0, "")
             pendingStore.clear()
             return Result(plan, plan.uploadCandidates.size, plan.remoteDeleteCandidates.size,
                 downloads.count { it.currentRemote?.isLive == true })

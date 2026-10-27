@@ -142,6 +142,12 @@ enum class SteamCloudSyncPhase {
     FINALIZING,
     DELETING_REMOTE,
     VERIFYING_REMOTE,
+    PREPARING_LOCAL_COMMIT,
+    RECHECKING_REMOTE,
+    WAITING_FOR_LOCAL_ACCESS,
+    RECHECKING_LOCAL,
+    SAVING_SYNC_STATE,
+    CLEANING_UP,
 }
 
 data class SteamCloudSyncProgress(

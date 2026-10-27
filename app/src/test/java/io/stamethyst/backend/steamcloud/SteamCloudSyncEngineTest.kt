@@ -346,7 +346,31 @@ class SteamCloudSyncEngineTest {
             .run(frozen, old, SteamCloudSyncMode.MERGE)
         assertTrue(phases.indexOf(SteamCloudSyncPhase.DOWNLOADING) < phases.indexOf(SteamCloudSyncPhase.UPLOADING))
         assertTrue(phases.indexOf(SteamCloudSyncPhase.UPLOADING) < phases.indexOf(SteamCloudSyncPhase.VERIFYING_REMOTE))
-        assertEquals(SteamCloudSyncPhase.APPLYING_TO_LOCAL, phases.last())
+        val finalStages = listOf(
+            SteamCloudSyncPhase.PREPARING_LOCAL_COMMIT,
+            SteamCloudSyncPhase.RECHECKING_REMOTE,
+            SteamCloudSyncPhase.WAITING_FOR_LOCAL_ACCESS,
+            SteamCloudSyncPhase.RECHECKING_LOCAL,
+            SteamCloudSyncPhase.SAVING_SYNC_STATE,
+            SteamCloudSyncPhase.APPLYING_TO_LOCAL,
+            SteamCloudSyncPhase.CLEANING_UP,
+        )
+        assertEquals(finalStages, phases.takeLast(finalStages.size))
+    }
+    @Test fun uploadOnlyReportsNetworkRecheckBeforeLocalCommitWithoutWaitingForSaveLease() {
+        val remote = FakeRemote(); put(live, path, "new"); freeze()
+        val phases = mutableListOf<SteamCloudSyncPhase>()
+        var checkedFinalRemote = false
+        remote.beforeManifest = {
+            if (phases.lastOrNull() == SteamCloudSyncPhase.RECHECKING_REMOTE) checkedFinalRemote = true
+        }
+        SteamCloudSyncEngine(root, live, state, remote, emptySet(), progress = { phases += it.phase },
+            mutate = { fail("Upload-only sync must not acquire the live save lease") })
+            .run(frozen, null, SteamCloudSyncMode.LOCAL_WINS)
+        assertTrue(checkedFinalRemote)
+        assertFalse(phases.contains(SteamCloudSyncPhase.WAITING_FOR_LOCAL_ACCESS))
+        assertFalse(phases.contains(SteamCloudSyncPhase.APPLYING_TO_LOCAL))
+        assertEquals(SteamCloudSyncPhase.CLEANING_UP, phases.last())
     }
     @Test fun uploadFailureLeavesJournalAndDoesNotReplay() {
         val remote = FakeRemote(); put(live, path, "a"); freeze(); remote.failUpload = true
