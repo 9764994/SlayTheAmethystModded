@@ -45,6 +45,7 @@ import io.stamethyst.backend.llm.PolicyGatedAgentGateway
 import io.stamethyst.backend.mods.AgentPatchModManager
 import io.stamethyst.backend.mods.ModManager
 import io.stamethyst.backend.mods.AgentPatchWorkspace
+import io.stamethyst.backend.network.NetworkAvailability
 import io.stamethyst.config.RuntimePaths
 import io.stamethyst.ui.LauncherNavigationRequestBus
 import java.io.File
@@ -188,6 +189,7 @@ internal class AiModAgentExecutor(
                     io.stamethyst.backend.llm.MAX_LLM_REQUEST_TIMEOUT_SECONDS.toLong(),
                 ) * 1_000L,
             supportsImageInput = settings.supportsImageInput,
+            hasUsableNetwork = { NetworkAvailability.hasValidatedNetwork(context) },
         )
         val streamingModel = AgentChatModelFactory.createStreaming(config)
         // A resume-only request has no new user prompt; claim pending work before calling the model.

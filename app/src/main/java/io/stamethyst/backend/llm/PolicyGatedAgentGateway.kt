@@ -85,6 +85,11 @@ private const val MAX_EMPTY_RETRIES = 1
 private const val MAX_REQUEST_RETRIES = 2
 private const val INITIAL_RETRY_DELAY_SECONDS = 1L
 
+/** How long a retry may wait for the radio to come back before trying anyway. */
+private const val MAX_NETWORK_WAIT_MS = 60_000L
+private const val NETWORK_POLL_INTERVAL_MS = 500L
+private const val CANCELLABLE_SLEEP_SLICE_MS = 200L
+
 data class OpenAiCompatibleModelConfig(
     val baseUrl: String,
     val apiKey: String,
@@ -2241,6 +2246,14 @@ class PolicyGatedAgentGateway(
     /** Called only at complete model/tool boundaries, never between a tool call and its result. */
     private val receiveInbox: (idle: Boolean) -> Boolean = { false },
     private val onNonStreamingText: (String) -> Unit = {},
+    /**
+     * Whether the device currently has a usable network.
+     *
+     * After a screen lock the radio may take seconds to come back, and Doze tears down established
+     * sockets before the app notices. Retrying a connection abort blindly burns the retry budget on
+     * a dead network, so the gateway waits for this to report `true` first.
+     */
+    private val hasUsableNetwork: () -> Boolean = { true },
 ) {
     private val toolScheduler = AgentToolScheduler(toolRegistry, maxParallelTools, checkCancelled)
 
@@ -2396,21 +2409,53 @@ class PolicyGatedAgentGateway(
                 if (attempt == MAX_REQUEST_RETRIES || !isRetryableAgentRequestFailure(error)) throw error
                 val delaySeconds = INITIAL_RETRY_DELAY_SECONDS shl attempt
                 onRetry(attempt + 1, delaySeconds, error)
-                try {
-                    repeat((delaySeconds * 10L).toInt()) {
-                        checkCancelled()
-                        Thread.sleep(100L)
-                    }
-                } catch (interrupted: InterruptedException) {
-                    Thread.currentThread().interrupt()
-                    throw java.util.concurrent.CancellationException("LLM retry cancelled")
-                }
+                awaitNetworkAndBackoff(delaySeconds)
                 return@repeat
             }
             // A checkpoint failure must never retry an already successful, billable request.
             return observeTurn(result)
         }
         throw requireNotNull(lastError)
+    }
+
+    /**
+     * Waits out the backoff, then waits for the device to have a usable network again.
+     *
+     * A screen lock puts the radio into power save and Doze suspends networking outright, which
+     * aborts in-flight sockets. The failure surfaces as `Software caused connection abort` and is
+     * classified as retryable, but retrying while the network is still down only spends the retry
+     * budget on the same dead socket. The wait is bounded so a genuinely offline device does not
+     * hang forever: after [MAX_NETWORK_WAIT_MS] the caller retries anyway and reports the real
+     * error if it fails again.
+     */
+    private fun awaitNetworkAndBackoff(delaySeconds: Long) {
+        sleepCancellable(delaySeconds * 1_000L)
+        if (hasUsableNetwork()) return
+        val deadlineAtMs = System.nanoTime() / 1_000_000L + MAX_NETWORK_WAIT_MS
+        while (!hasUsableNetwork()) {
+            if (System.nanoTime() / 1_000_000L >= deadlineAtMs) {
+                Log.w(TAG, "Network still unavailable after ${MAX_NETWORK_WAIT_MS}ms; retrying anyway")
+                return
+            }
+            sleepCancellable(NETWORK_POLL_INTERVAL_MS)
+        }
+    }
+
+    /** Sleeps in slices so cancellation is noticed promptly instead of after the whole delay. */
+    private fun sleepCancellable(totalMs: Long) {
+        var remaining = totalMs
+        while (remaining > 0L) {
+            checkCancelled()
+            val slice = minOf(remaining, CANCELLABLE_SLEEP_SLICE_MS)
+            try {
+                Thread.sleep(slice)
+            } catch (interrupted: InterruptedException) {
+                Thread.currentThread().interrupt()
+                throw java.util.concurrent.CancellationException("LLM retry cancelled")
+            }
+            remaining -= slice
+        }
+        checkCancelled()
     }
 
     private fun <T> observeTurn(result: T): T {

@@ -7,15 +7,21 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
+import android.os.SystemClock
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import io.stamethyst.LauncherActivity
 import io.stamethyst.R
 import io.stamethyst.backend.llm.AgentToolExecutionEvent
+import io.stamethyst.backend.llm.DEFAULT_LLM_REQUEST_TIMEOUT_SECONDS
 import io.stamethyst.backend.llm.LlmSettingsRepository
+import io.stamethyst.backend.llm.MAX_LLM_REQUEST_TIMEOUT_SECONDS
+import io.stamethyst.backend.llm.MIN_LLM_REQUEST_TIMEOUT_SECONDS
 import io.stamethyst.backend.mods.AgentPatchModManager
 import io.stamethyst.backend.notify.ForegroundNotificationIds
 import io.stamethyst.config.RuntimePaths
@@ -76,6 +82,15 @@ class AiAgentExecutionService : Service() {
         private val NOTIFICATION_ID = ForegroundNotificationIds.AI_AGENT
         private const val LOG_TAG = "AiAgentService"
 
+        /**
+         * The wake lock is renewed far more often than it expires, so a job that keeps making
+         * progress (stream deltas, tool rounds, compaction) never loses it. The lease itself is
+         * sized from the request timeout, which covers a whole silent non-streaming response.
+         */
+        private const val WAKE_LOCK_RENEW_INTERVAL_MS = 60_000L
+        private const val WAKE_LOCK_MARGIN_MS = 120_000L
+        private const val MIN_WAKE_LOCK_LEASE_MS = 5 * 60_000L
+
         private val runningJobs = AiAgentRunningJobs()
         internal val isRunning = runningJobs.isRunning
 
@@ -119,6 +134,14 @@ class AiAgentExecutionService : Service() {
     private var cancellationRequested = false
     @Volatile
     private var serviceDestroyed = false
+    @Volatile
+    private var wakeLock: PowerManager.WakeLock? = null
+    @Volatile
+    private var wifiLock: WifiManager.WifiLock? = null
+    @Volatile
+    private var wakeLockRenewedAtMs = 0L
+    private var wakeLockLeaseMs = MIN_WAKE_LOCK_LEASE_MS
+    private val wakeLockLock = Any()
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -158,6 +181,7 @@ class AiAgentExecutionService : Service() {
         workerThread?.interrupt()
         workerThread = null
         workerJobId = null
+        releaseWakeLock()
         super.onDestroy()
     }
 
@@ -188,6 +212,7 @@ class AiAgentExecutionService : Service() {
         workerModId = modId
         workerJob = job
         runningJobs.add(jobId)
+        acquireWakeLock()
         updateNotification("正在执行 AI 任务")
         workerThread = thread(start = false, name = "STS-AiAgent-$jobId") {
             try {
@@ -217,6 +242,8 @@ class AiAgentExecutionService : Service() {
             markCancelled(job, jobStore)
         }
         runningJobs.remove(jobId)
+        // stopWhenIdle also releases the lease; this keeps the ordering explicit for the case where
+        // the service never started this job and therefore never owned a worker thread.
         stopWhenIdle(0)
     }
 
@@ -258,11 +285,15 @@ class AiAgentExecutionService : Service() {
             thinkingBuffer.setLength(0)
             pendingParts.clear()
             lastFlush = now
+            renewWakeLockIfDue(now)
         }
         fun checkActive() {
             if (serviceDestroyed || cancellationRequested || Thread.currentThread().isInterrupted) {
                 throw java.util.concurrent.CancellationException("AI task stopped")
             }
+            // Between model rounds the worker only touches this check, so it is also the cheapest
+            // place to keep the lease fresh during long tool batches.
+            renewWakeLockIfDue(android.os.SystemClock.elapsedRealtime())
         }
         val executor = AiModAgentExecutor(
             context = applicationContext,
@@ -528,8 +559,114 @@ class AiAgentExecutionService : Service() {
         stopWhenIdle(startId)
     }
 
+    /**
+     * Holds a partial wake lock for the whole run.
+     *
+     * The agent is a foreground service, which keeps the process alive but not the CPU: with the
+     * screen off the device can still enter Doze, which suspends the network and freezes the
+     * worker thread mid-request. The lease is bounded rather than held forever, so a crashed or
+     * wedged run cannot drain the battery indefinitely; [renewWakeLockIfDue] keeps pushing the
+     * expiry forward while the job demonstrably keeps making progress.
+     */
+    private fun acquireWakeLock() {
+        synchronized(wakeLockLock) {
+            releaseWakeLockLocked()
+            wakeLockLeaseMs = wakeLockLease()
+            wakeLockRenewedAtMs = SystemClock.elapsedRealtime()
+            runCatching {
+                val powerManager = getSystemService(PowerManager::class.java)
+                if (powerManager != null) {
+                    wakeLock = powerManager
+                        .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "$packageName:ai-agent")
+                        .apply {
+                            setReferenceCounted(false)
+                            acquire(wakeLockLeaseMs)
+                        }
+                }
+            }.onFailure {
+                Log.w(LOG_TAG, "Unable to acquire the AI agent wake lock", it)
+                wakeLock = null
+            }
+            // Independent of the CPU lock: a device without a working PowerManager still benefits
+            // from keeping the radio awake, and a radio failure must not cost us the CPU lock.
+            acquireWifiLock()
+        }
+    }
+
+    /**
+     * Keeps the Wi-Fi radio out of power save while a job runs.
+     *
+     * A `PARTIAL_WAKE_LOCK` only holds the CPU. When the screen turns off the platform is free to
+     * put the Wi-Fi radio into power save, which drops or tears down established sockets even
+     * though the process is still running and its notification is still posted. `WIFI_MODE_FULL_HIGH_PERF`
+     * is the mode that keeps a long-lived connection usable; `WIFI_MODE_FULL` defers to the
+     * regular power-save policy and does not fix this.
+     *
+     * The lock is held for the whole run and released with the wake lock, but it is not renewed
+     * separately: Android releases it when the acquiring process dies, so a crash cannot leak it.
+     */
+    @Suppress("DEPRECATION")
+    private fun acquireWifiLock() {
+        runCatching {
+            val manager = applicationContext.getSystemService(WifiManager::class.java)
+                ?: return
+            val lock = manager.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "$packageName:ai-agent")
+            lock.setReferenceCounted(false)
+            lock.acquire()
+            wifiLock = lock
+        }.onFailure {
+            // Some devices reject a high-perf lock without the location permission group. The run
+            // is still worth attempting: the network retry path below recovers from the abort.
+            Log.w(LOG_TAG, "Unable to acquire the AI agent Wi-Fi lock", it)
+            wifiLock = null
+        }
+    }
+
+    /**
+     * A non-streaming round can be silent for up to the configured request timeout, so the lease
+     * has to outlast one whole request plus the retry backoff and the surrounding tool work.
+     */
+    private fun wakeLockLease(): Long {
+        val requestTimeoutMs = runCatching {
+            LlmSettingsRepository(applicationContext).get().requestTimeoutSeconds
+                .coerceIn(MIN_LLM_REQUEST_TIMEOUT_SECONDS, MAX_LLM_REQUEST_TIMEOUT_SECONDS) * 1_000L
+        }.getOrDefault(DEFAULT_LLM_REQUEST_TIMEOUT_SECONDS * 1_000L)
+        return (requestTimeoutMs + WAKE_LOCK_MARGIN_MS).coerceAtLeast(MIN_WAKE_LOCK_LEASE_MS)
+    }
+
+    private fun renewWakeLockIfDue(nowMs: Long) {
+        if (nowMs - wakeLockRenewedAtMs < WAKE_LOCK_RENEW_INTERVAL_MS) return
+        synchronized(wakeLockLock) {
+            val lock = wakeLock ?: return
+            if (nowMs - wakeLockRenewedAtMs < WAKE_LOCK_RENEW_INTERVAL_MS) return
+            wakeLockRenewedAtMs = nowMs
+            runCatching {
+                // Bounded leases cannot be extended in place, so renew by replacing the lease.
+                if (lock.isHeld) lock.release()
+                lock.acquire(wakeLockLeaseMs)
+            }.onFailure { Log.w(LOG_TAG, "Unable to renew the AI agent wake lock", it) }
+        }
+    }
+
+    private fun releaseWakeLock() = synchronized(wakeLockLock) { releaseWakeLockLocked() }
+
+    private fun releaseWakeLockLocked() {
+        wifiLock?.let { lock ->
+            wifiLock = null
+            runCatching { lock.takeIf { it.isHeld }?.release() }
+                .onFailure { Log.w(LOG_TAG, "Unable to release the AI agent Wi-Fi lock", it) }
+        }
+        val lock = wakeLock ?: return
+        wakeLock = null
+        runCatching { lock.takeIf { it.isHeld }?.release() }
+            .onFailure { Log.w(LOG_TAG, "Unable to release the AI agent wake lock", it) }
+    }
+
     private fun stopWhenIdle(startId: Int) {
         if (workerThread != null) return
+        // Every idle exit funnels through here, so the lease cannot outlive the run even on paths
+        // that do not call finishWorker (cancel of a job this service never started).
+        releaseWakeLock()
         stopForeground(true)
         if (startId > 0) stopSelfResult(startId) else stopSelf()
     }

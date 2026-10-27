@@ -294,6 +294,46 @@ processes the launcher already uses:
 Patch mods are hidden from the top-level mod list and displayed under their parent. Their manifest
 dependency also prevents a patch from being enabled without its parent.
 
+### Background execution
+
+The run itself is owned by `AiAgentExecutionService`, a started foreground service
+(`foregroundServiceType="dataSync"`) in the launcher process, not by the editor ViewModel. Leaving the
+editor, switching mods or any other navigation therefore does not cancel the job; the editor polls the
+job table in SQLite (500 ms while a job runs, 2 s idle) and the notification opens the same
+conversation. Only one job may run per process (`reserve`).
+
+A foreground service keeps the process alive but not the CPU awake, so the service also holds a
+`PARTIAL_WAKE_LOCK` named `$packageName:ai-agent` for the duration of the run. The lease is time
+bounded instead of indefinite: it is sized from the configured LLM request timeout plus a two minute
+margin, so it always outlasts one silent non-streaming round. Every stream flush and every
+`checkActive()` call (model rounds, tool batches, compaction) renews the lease once per minute by
+replacing it. All exit paths release it — `stopWhenIdle` is the single choke point, `onDestroy` covers
+a destroyed service, and a failed acquire is only logged because the run is still worth attempting
+without it.
+
+A CPU wake lock is not enough on its own. When the screen turns off the platform may put the Wi-Fi
+radio into power save even though the process is runnable and its notification is still posted; the
+established socket is then aborted and the request fails with
+`IOException: Software caused connection abort`. The service therefore also holds a
+`WifiManager.WIFI_MODE_FULL_HIGH_PERF` lock for the run (`$packageName:ai-agent`). It is acquired and
+released together with the CPU lock, uses reference-counted-off semantics so re-acquiring cannot leak
+a count, and a failure to acquire it is logged rather than fatal: some devices refuse a high-perf lock
+and the retry path below still recovers.
+
+Radio power save is only one of the two causes. Doze suspends networking for the whole device, which
+also aborts in-flight sockets, and no lock prevents that. The gateway's retry path is therefore
+network aware: after the backoff it calls the injected `hasUsableNetwork` predicate
+(`NetworkAvailability.hasValidatedNetwork`, which requires both `NET_CAPABILITY_INTERNET` and
+`NET_CAPABILITY_VALIDATED`) and waits up to 60 s for it to report `true` before re-issuing the
+request, polling every 500 ms. The wait is cancellable in 200 ms slices and bounded, after which the
+request is retried anyway so a genuinely offline device still fails with its real error instead of
+hanging.
+
+Still missing, and deliberately not implied by the wake lock: the job is not restored after process
+death (the record stays `RUNNING` and the next editor open converts it to the explicit interrupted
+error), pending inbox messages are not replayed automatically after such a death, and heavy work such
+as decompilation and Janino compilation shares the launcher's main process and heap.
+
 ### Updating a packaged revision
 
 An update reuses the revision's `patch_id`, so `resolvePatchWorkspace` reconstructs the workspace
@@ -376,11 +416,6 @@ The AI editor compiles patch source on the device; no host toolchain is involved
 - `generate_agent_patch_skeleton` consumes that inspection result and writes a Java 8 patch skeleton
   with the selected `paramtypez` and a safe `Object[] __args` hook shape. The agent edits the body
   instead of hand-writing the patch annotation and overload signature.
-- At the request boundary, an assistant turn with several tool calls is split into one
-  assistant/tool-result pair per call. OpenAI accepts this shape, and it avoids an
-  OpenAI-to-Anthropic bridge rejecting the second `tool_result` when it maps each OpenAI `tool`
-  message to a separate Anthropic user message. The UI and durable context still keep the original
-  multi-call turn, and tools can still execute in parallel.
 - `validate_agent_patch_mod` runs after compilation and before packaging. It reads the compiled patch
   annotations and compares every target class, method, constructor, and explicit parameter signature
   against the same runtime classpath. It also checks static hook methods, Prefix/Postfix return types,
