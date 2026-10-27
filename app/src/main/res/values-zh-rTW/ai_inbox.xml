@@ -1,0 +1,17 @@
+<resources>
+    <string name="ai_inbox_already_delivered">這則訊息已經投遞，修改內容仍保留在輸入框中。</string>
+    <string name="ai_inbox_count">%1$d 則待發訊息</string>
+    <string name="ai_inbox_attachments">%1$d 個附件</string>
+    <string name="ai_inbox_reorder">長按拖曳排序</string>
+    <string name="ai_inbox_undo">撤回到輸入框</string>
+    <string name="ai_inbox_cancel_edit">取消編輯</string>
+    <string name="ai_inbox_queue">待發佇列</string>
+    <string name="ai_inbox_steer">調整方向</string>
+    <string name="ai_inbox_queue_hint">目前任務完成後，依序處理待發訊息。</string>
+    <string name="ai_inbox_steer_hint">在下一次模型呼叫前調整方向，不中斷正在執行的工具。</string>
+    <string name="ai_inbox_add">加入訊息收件匣</string>
+    <string name="ai_inbox_cancel">撤回</string>
+    <string name="ai_inbox_resume">繼續處理待發訊息</string>
+    <string name="ai_inbox_edit">編輯待發訊息</string>
+    <string name="ai_inbox_save">儲存</string>
+</resources>

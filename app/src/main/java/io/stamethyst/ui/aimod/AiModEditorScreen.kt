@@ -201,6 +201,7 @@ internal data class AiEditorSession(
     val title: String = "",
     val revision: Long = 0,
     val context: io.stamethyst.backend.llm.AgentContextState? = null,
+    val inbox: List<AiInboxItem> = emptyList(),
 )
 
 internal fun AiEditorSession.hasUserPrompt(): Boolean =
@@ -242,6 +243,53 @@ internal class AiModEditorViewModel(
         private set
     var reasoningEffort by mutableStateOf(LlmReasoningEffort.HIGH)
         private set
+    var inboxDelivery by mutableStateOf(AiInboxDelivery.QUEUE)
+    val inbox: List<AiInboxItem> get() = sessions.firstOrNull { it.id == currentSessionId }?.inbox.orEmpty()
+
+    fun updateInbox(id: String, text: String? = null, delivery: AiInboxDelivery? = null, remove: Boolean = false) {
+        val sessionId = currentSessionId
+        launchStorage {
+            val updated = conversationStore.mutate(sessionId) { session ->
+                session.copy(inbox = if (remove) session.inbox.filterNot { it.id == id } else session.inbox.map {
+                    if (it.id == id) it.copy(text = text ?: it.text, delivery = delivery ?: it.delivery) else it
+                })
+            }
+            withContext(Dispatchers.Main.immediate) { updated?.let(::installSession) }
+            pollWakeUp.tryEmit(Unit)
+        }
+    }
+
+    fun reorderInbox(id: String, direction: Int) {
+        val sessionId = currentSessionId
+        launchStorage {
+            val updated = conversationStore.mutate(sessionId) { session ->
+                val items = session.inbox.toMutableList()
+                val from = items.indexOfFirst { it.id == id }
+                val to = from + direction
+                if (from >= 0 && to in items.indices) java.util.Collections.swap(items, from, to)
+                session.copy(inbox = items)
+            }
+            withContext(Dispatchers.Main.immediate) { updated?.let(::installSession) }
+        }
+    }
+
+    fun saveInboxEdit(id: String, text: String, attachments: List<AiAttachment>, onSaved: () -> Unit) {
+        val sessionId = currentSessionId
+        val delivery = inboxDelivery
+        launchStorage {
+            var found = false
+            val updated = conversationStore.mutate(sessionId) { session ->
+                found = session.inbox.any { it.id == id }
+                session.copy(inbox = session.inbox.map {
+                    if (it.id == id) it.copy(text = text.trim(), attachments = attachments, delivery = delivery) else it
+                })
+            }
+            withContext(Dispatchers.Main.immediate) {
+                updated?.let(::installSession)
+                if (found) onSaved() else error = context.getString(R.string.ai_inbox_already_delivered)
+            }
+        }
+    }
 
     private var nextMessageId = 1L
     /** Wakes the conversation poller when a job starts, so the slower idle cadence is invisible. */
@@ -420,6 +468,11 @@ internal class AiModEditorViewModel(
                     withContext(Dispatchers.Main.immediate) {
                         applyExternalState(stored)
                         refreshBusyState(jobs)
+                        // Covers an input admitted just after the worker's final inbox check.
+                        if (!busy && inbox.isNotEmpty() && jobs.maxByOrNull { it.updatedAtMillis }?.status == AiAgentJobStatus.SUCCEEDED &&
+                            !AiAgentExecutionService.isRunning.value) {
+                            resumeInbox()
+                        }
                     }
                 }
             }
@@ -483,7 +536,21 @@ internal class AiModEditorViewModel(
 
     fun send(prompt: String, attachments: List<AiAttachment> = emptyList()) {
         val trimmed = prompt.trim()
-        if (!storageReady || currentSessionId.isBlank() || (trimmed.isEmpty() && attachments.isEmpty()) || busy) return
+        if (!storageReady || currentSessionId.isBlank() || (trimmed.isEmpty() && attachments.isEmpty())) return
+        if (busy) {
+            val sessionId = currentSessionId
+            val item = AiInboxItem(UUID.randomUUID().toString(), trimmed, attachments, inboxDelivery)
+            launchStorage {
+                val updated = conversationStore.mutate(sessionId) { it.copy(inbox = it.inbox + item) }
+                withContext(Dispatchers.Main.immediate) { updated?.let(::installSession) }
+                pollWakeUp.tryEmit(Unit)
+            }
+            return
+        }
+        if (trimmed == "/compact" && attachments.isEmpty()) {
+            compactConversation()
+            return
+        }
         runCatching {
             mutateCurrent { session ->
                 val id = (session.messages.maxOfOrNull { it.id } ?: 0L) + 1
@@ -504,6 +571,12 @@ internal class AiModEditorViewModel(
         val index = messages.indexOfFirst { it.id == messageId }
         if (index <= 0 || messages[index].fromUser) return
         truncateConversation(messageId)
+        startRequest()
+    }
+
+    fun resumeInbox() {
+        if (busy || inbox.isEmpty()) return
+        // Do not remove pending input until a worker actually claims it.
         startRequest()
     }
 
@@ -568,7 +641,12 @@ internal class AiModEditorViewModel(
         }
     }
 
-    private fun startRequest() {
+    fun compactConversation() {
+        if (messages.isEmpty() || !llmSettings.isConfigured()) return
+        startRequest(compact = true)
+    }
+
+    private fun startRequest(compact: Boolean = false) {
         if (!storageReady || currentSessionId.isBlank() || busy) return
         val jobId = UUID.randomUUID().toString()
         if (!AiAgentExecutionService.reserve(jobId)) {
@@ -726,6 +804,15 @@ fun LauncherAiModEditorScreen(
     val composerHeight = with(LocalDensity.current) { composerHeightPx.toDp() }
     var draft by rememberSaveable { mutableStateOf("") }
     var draftAttachments = remember { mutableStateListOf<AiAttachment>() }
+    var editingInboxId by remember(viewModel.currentSessionId) { mutableStateOf<String?>(null) }
+    var stashedDraft by remember { mutableStateOf("") }
+    var stashedAttachments by remember { mutableStateOf<List<AiAttachment>>(emptyList()) }
+    fun finishInboxEdit() {
+        editingInboxId = null
+        draft = stashedDraft
+        draftAttachments.clear()
+        draftAttachments.addAll(stashedAttachments)
+    }
     var showApplyConfirmation by rememberSaveable { mutableStateOf(false) }
     var showRestoreConfirmation by rememberSaveable { mutableStateOf(false) }
     var rollbackTargetId by rememberSaveable { mutableStateOf<Long?>(null) }
@@ -1079,6 +1166,34 @@ fun LauncherAiModEditorScreen(
             onAttach = { picker.launch(arrayOf("text/*", "application/json", "application/octet-stream", "image/*")) },
             configured = configured && viewModel.storageReady,
             busy = viewModel.busy,
+            inbox = viewModel.inbox,
+            delivery = viewModel.inboxDelivery,
+            onDeliveryChange = { viewModel.inboxDelivery = it },
+            onInboxChange = viewModel::updateInbox,
+            onResumeInbox = viewModel::resumeInbox,
+            editingInboxId = editingInboxId,
+            onEditInbox = { item ->
+                if (editingInboxId == null) {
+                    stashedDraft = draft
+                    stashedAttachments = draftAttachments.toList()
+                }
+                editingInboxId = item.id
+                draft = item.text
+                draftAttachments.clear()
+                draftAttachments.addAll(item.attachments)
+                viewModel.inboxDelivery = item.delivery
+            },
+            onUndoInbox = { item ->
+                viewModel.updateInbox(item.id, remove = true)
+                draft = listOf(draft, item.text).filter { it.isNotBlank() }.joinToString("\n\n")
+                draftAttachments.addAll(item.attachments)
+            },
+            onSteerInbox = { item ->
+                viewModel.updateInbox(item.id, delivery = AiInboxDelivery.STEER)
+                if (!viewModel.busy) viewModel.resumeInbox()
+            },
+            onReorderInbox = viewModel::reorderInbox,
+            onCancelInboxEdit = { finishInboxEdit() },
             modelName = settings.modelName,
             models = settings.models,
             effort = viewModel.reasoningEffort,
@@ -1086,9 +1201,14 @@ fun LauncherAiModEditorScreen(
             onModelSelect = viewModel::selectModel,
             onStop = viewModel::cancelGeneration,
             onSend = {
-                viewModel.send(draft, draftAttachments.toList())
-                draft = ""
-                draftAttachments.clear()
+                val editing = editingInboxId
+                if (editing != null) {
+                    viewModel.saveInboxEdit(editing, draft, draftAttachments.toList()) { finishInboxEdit() }
+                } else {
+                    viewModel.send(draft, draftAttachments.toList())
+                    draft = ""
+                    draftAttachments.clear()
+                }
             },
         )
     }

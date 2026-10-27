@@ -2238,6 +2238,8 @@ class PolicyGatedAgentGateway(
     private val streamingTimeoutMillis: Long = DEFAULT_LLM_REQUEST_TIMEOUT_SECONDS * 1_000L,
     /** When false, images read by tools are described in text instead of sent as image parts. */
     private val supportsImageInput: Boolean = true,
+    /** Called only at complete model/tool boundaries, never between a tool call and its result. */
+    private val receiveInbox: (idle: Boolean) -> Boolean = { false },
     private val onNonStreamingText: (String) -> Unit = {},
 ) {
     private val toolScheduler = AgentToolScheduler(toolRegistry, maxParallelTools, checkCancelled)
@@ -2250,6 +2252,7 @@ class PolicyGatedAgentGateway(
 
         var round = 0
         while (true) {
+            receiveInbox(false)
             var lastResponse: ChatResponse? = null
             var response: ChatResponse? = null
             for (attempt in 0..MAX_EMPTY_RETRIES) {
@@ -2273,6 +2276,7 @@ class PolicyGatedAgentGateway(
             if (text.isNotBlank()) onNonStreamingText(text)
             logAssistantRound(round, text, aiMessage, "non-streaming", completed)
             if (!aiMessage.hasToolExecutionRequests()) {
+                if (receiveInbox(true)) continue
                 return AgentReply(text = text, toolRounds = round, contextTokens = completed.tokenUsage()?.totalTokenCount())
             }
             executeTools(aiMessage, messages)
@@ -2294,6 +2298,7 @@ class PolicyGatedAgentGateway(
 
         var round = 0
         while (true) {
+            receiveInbox(false)
             var lastResult: StreamingResult? = null
             var accepted: StreamingResult? = null
             for (attempt in 0..MAX_EMPTY_RETRIES) {
@@ -2347,6 +2352,7 @@ class PolicyGatedAgentGateway(
             val text = result.text.ifBlank { aiMessage.text().orEmpty() }
             logAssistantRound(round, text, aiMessage, "streaming", result.response)
             if (!aiMessage.hasToolExecutionRequests()) {
+                if (receiveInbox(true)) continue
                 return AgentReply(text = text, toolRounds = round, contextTokens = result.response.tokenUsage()?.totalTokenCount())
             }
             executeTools(aiMessage, messages)

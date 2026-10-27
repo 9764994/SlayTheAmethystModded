@@ -66,6 +66,7 @@ internal class AiModAgentExecutor(
     private val onRetry: (retryNumber: Int, delaySeconds: Long, error: Throwable) -> Unit = { _, _, _ -> },
     private val onContext: (AgentContextState) -> Unit = {},
     private val checkCancelled: () -> Unit = {},
+    private val receiveInbox: (Boolean) -> Pair<AiEditorMessage, Long>? = { null },
 ) {
     private val settingsRepository = io.stamethyst.backend.llm.LlmSettingsRepository(context)
     private val workspaceAccessRoot = RuntimePaths.agentModWorkspaceRoot(
@@ -149,6 +150,24 @@ internal class AiModAgentExecutor(
             checkCancelled = checkCancelled,
             onRetry = onRetry,
             onNonStreamingText = onText,
+            receiveInbox = { idle ->
+                val input = receiveInbox(idle)
+                if (input == null) false else {
+                    val (message, assistantId) = input
+                    manager.appendInput(io.stamethyst.backend.llm.AgentContextMessage(
+                        message.id, "user", message.text,
+                        attachments = message.attachments.map {
+                            io.stamethyst.backend.llm.AgentContextAttachment(
+                                name = it.name,
+                                content = it.content,
+                                mime = it.mime,
+                                data = it.data,
+                            )
+                        },
+                    ), assistantId)
+                    true
+                }
+            },
             streamingTimeoutMillis = config.requestTimeoutSeconds.toLong()
                 .coerceIn(
                     io.stamethyst.backend.llm.MIN_LLM_REQUEST_TIMEOUT_SECONDS.toLong(),
@@ -157,6 +176,22 @@ internal class AiModAgentExecutor(
             supportsImageInput = settings.supportsImageInput,
         )
         val streamingModel = AgentChatModelFactory.createStreaming(config)
+        // A resume-only request has no new user prompt; claim pending work before calling the model.
+        if (session.messages.lastOrNull { it.id != assistantMessageId }?.fromUser == false) {
+            receiveInbox(true)?.let { (message, assistantId) ->
+                manager.appendInput(io.stamethyst.backend.llm.AgentContextMessage(
+                    message.id, "user", message.text,
+                    attachments = message.attachments.map {
+                        io.stamethyst.backend.llm.AgentContextAttachment(
+                            name = it.name,
+                            content = it.content,
+                            mime = it.mime,
+                            data = it.data,
+                        )
+                    },
+                ), assistantId)
+            }
+        }
         return if (streamingModel == null) {
             val reply = gateway.respond(systemPrompt, "")
             AiAgentExecutionResult(reply.text, reply.contextTokens)

@@ -1,0 +1,17 @@
+<resources>
+    <string name="ai_inbox_already_delivered">This message has already been delivered. Your changes remain in the input.</string>
+    <string name="ai_inbox_count">%1$d queued</string>
+    <string name="ai_inbox_attachments">%1$d attachments</string>
+    <string name="ai_inbox_reorder">Hold and drag to reorder</string>
+    <string name="ai_inbox_undo">Restore to draft</string>
+    <string name="ai_inbox_cancel_edit">Cancel edit</string>
+    <string name="ai_inbox_queue">Queue</string>
+    <string name="ai_inbox_steer">Steer</string>
+    <string name="ai_inbox_queue_hint">Run after the current task finishes.</string>
+    <string name="ai_inbox_steer_hint">Adjust the current task at the next model turn; running tools finish first.</string>
+    <string name="ai_inbox_add">Add to inbox</string>
+    <string name="ai_inbox_cancel">Withdraw</string>
+    <string name="ai_inbox_resume">Resume pending messages</string>
+    <string name="ai_inbox_edit">Edit pending message</string>
+    <string name="ai_inbox_save">Save</string>
+</resources>

@@ -1,0 +1,44 @@
+package io.stamethyst.ui.aimod
+
+import org.junit.Assert.*
+import org.junit.Test
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.json.Json
+
+class AiAgentInboxTest {
+    private val queued = AiInboxItem("q", "next task")
+    private val steer = AiInboxItem("s", "change direction", delivery = AiInboxDelivery.STEER)
+
+    @Test fun queueWaitsUntilIdleAndSteerOvertakesQueue() {
+        val session = AiEditorSession("test", inbox = listOf(queued, steer))
+        assertEquals(steer, session.nextInboxItem(false))
+        assertEquals(steer, session.nextInboxItem(true))
+        val remaining = session.copy(inbox = listOf(queued))
+        assertNull(remaining.nextInboxItem(false))
+        assertEquals(queued, remaining.nextInboxItem(true))
+    }
+
+    @Test fun deliveryClosesPreviousOutputAndAppendsUserAndAssistantAtomically() {
+        val attachment = AiAttachment("note.txt", "important")
+        val input = steer.copy(attachments = listOf(attachment))
+        val session = AiEditorSession("test", messages = listOf(
+            AiEditorMessage(1, true, "original"),
+            AiEditorMessage(2, false, "working", streaming = true),
+        ), inbox = listOf(queued, input))
+        val next = session.deliverInbox(input, "model")
+        assertEquals(listOf(queued), next.inbox)
+        assertFalse(next.messages[1].streaming)
+        assertEquals(listOf(attachment), next.messages[2].attachments)
+        assertTrue(next.messages[2].fromUser)
+        assertEquals(4L, next.messages.last().id)
+        assertTrue(next.messages.last().streaming)
+        assertEquals(next, next.deliverInbox(input, "model"))
+    }
+
+    @Test fun inboxRoundTripsAndOldSessionsDefaultToEmpty() {
+        val session = AiEditorSession("test", inbox = listOf(queued, steer))
+        assertEquals(session, Json.decodeFromString<AiEditorSession>(Json.encodeToString(session)))
+        assertTrue(Json.decodeFromString<AiEditorSession>("""{"id":"old"}""").inbox.isEmpty())
+    }
+}

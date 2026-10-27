@@ -248,7 +248,7 @@ class AgentContextManager(
     private val systemPrompt: String,
     private val toolSchema: String,
     val budget: AgentContextBudget,
-    private val sourceMessageId: Long,
+    private var sourceMessageId: Long,
     private val model: ChatModel,
     private val checkpoint: (AgentContextState) -> Unit,
     private val checkCancelled: () -> Unit = {},
@@ -295,6 +295,13 @@ class AgentContextManager(
             else -> error("Only completed assistant/tool messages may be appended")
         }
         state = state.copy(messages = state.messages + record)
+        persist()
+    }
+
+    fun appendInput(message: AgentContextMessage, assistantMessageId: Long) {
+        require(message.role == "user")
+        sourceMessageId = assistantMessageId
+        state = state.copy(messages = state.messages + message)
         persist()
     }
 

@@ -373,6 +373,7 @@ internal class AiConversationStore(root: File) {
             }
             addColumnIfMissing(db, TABLE_MESSAGES, "changed_revision", "INTEGER NOT NULL DEFAULT 0")
             addColumnIfMissing(db, TABLE_CONVERSATION, "context_revision", "INTEGER NOT NULL DEFAULT 0")
+            addColumnIfMissing(db, TABLE_CONVERSATION, "inbox_json", "TEXT NOT NULL DEFAULT '[]'")
             // Images ride along with a message as base64 plus a MIME type; older rows stay text.
             addColumnIfMissing(db, TABLE_ATTACHMENTS, COLUMN_MIME, "TEXT NOT NULL DEFAULT 'text/plain'")
             addColumnIfMissing(db, TABLE_ATTACHMENTS, COLUMN_ATTACHMENT_DATA, "TEXT NOT NULL DEFAULT ''")
@@ -584,6 +585,9 @@ internal class AiConversationStore(root: File) {
             title = metadata.title,
             revision = metadata.revision,
             context = metadata.context,
+            inbox = db.queryWindowSafe(TABLE_CONVERSATION, arrayOf("inbox_json"), null, null, null, null, null, "1").use {
+                if (it.moveToFirst()) json.decodeFromString<List<AiInboxItem>>(it.getString(0)) else emptyList()
+            },
         )
     }
 
@@ -649,6 +653,7 @@ internal class AiConversationStore(root: File) {
         val metadata = ContentValues().apply {
             put(COLUMN_ID, next.id)
             put(COLUMN_TITLE, next.title)
+            put("inbox_json", json.encodeToString(next.inbox))
             put(COLUMN_REVISION, next.revision)
             put("context_revision", if (previous == null || previous.context != next.context) next.revision else
                 db.rawQuery("SELECT context_revision FROM conversation LIMIT 1", null).use { if (it.moveToFirst()) it.getLong(0) else 0L })
@@ -893,7 +898,7 @@ internal class AiConversationStore(root: File) {
     private companion object {
         const val LOG_TAG = "AiModStore"
         /** Bump when [createSchema] changes so existing files are migrated on next open. */
-        const val SCHEMA_VERSION = 4
+        const val SCHEMA_VERSION = 5
         const val DATABASE_EXTENSION = "db"
         const val LEGACY_CONVERSATIONS_FILE = "conversations.json"
         const val LEGACY_JOBS_FILE = "agent_jobs.json"

@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -81,6 +82,17 @@ internal fun AiChatComposer(
     onSend: () -> Unit,
     hazeState: HazeState,
     onComposerHeightChanged: (Int) -> Unit,
+    inbox: List<AiInboxItem> = emptyList(),
+    delivery: AiInboxDelivery = AiInboxDelivery.QUEUE,
+    onDeliveryChange: (AiInboxDelivery) -> Unit = {},
+    onInboxChange: (String, String?, AiInboxDelivery?, Boolean) -> Unit = { _, _, _, _ -> },
+    onResumeInbox: () -> Unit = {},
+    editingInboxId: String? = null,
+    onEditInbox: (AiInboxItem) -> Unit = {},
+    onUndoInbox: (AiInboxItem) -> Unit = {},
+    onSteerInbox: (AiInboxItem) -> Unit = {},
+    onReorderInbox: (String, Int) -> Unit = { _, _ -> },
+    onCancelInboxEdit: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     var modelMenu by remember { mutableStateOf(false) }
@@ -91,14 +103,21 @@ internal fun AiChatComposer(
             .padding(horizontal = 12.dp, vertical = 8.dp),
         contentAlignment = Alignment.Center,
     ) {
+        Column(Modifier.widthIn(max = 760.dp).fillMaxWidth().onSizeChanged { onComposerHeightChanged(it.height) }) {
+        AiInboxPanel(inbox, busy, editingInboxId, onEditInbox, onUndoInbox,
+            { onInboxChange(it.id, null, null, true) }, onSteerInbox, onReorderInbox)
         FrostedGlassChrome(
             modifier = Modifier.widthIn(max = 760.dp).fillMaxWidth()
-                .onSizeChanged { onComposerHeightChanged(it.height) },
+                .then(if (inbox.any { it.delivery == AiInboxDelivery.QUEUE }) Modifier.offset(y = (-6).dp) else Modifier),
             hazeState = hazeState,
             shape = RoundedCornerShape(24.dp),
             shadowElevation = 6.dp,
         ) {
             Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                if (editingInboxId != null) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text(stringResource(R.string.ai_inbox_edit), Modifier.weight(1f), style = MaterialTheme.typography.labelSmall)
+                    TextButton(onClick = onCancelInboxEdit) { Text(stringResource(R.string.ai_inbox_cancel_edit)) }
+                }
                 if (attachments.isNotEmpty()) {
                     Row(
                         modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
@@ -123,7 +142,7 @@ internal fun AiChatComposer(
                                         Icons.Close,
                                         stringResource(R.string.ai_mod_editor_remove_attachment, attachment.name),
                                         { onRemoveAttachment(attachment) },
-                                        enabled = !busy,
+                                        enabled = configured,
                                     )
                                 }
                             }
@@ -148,15 +167,20 @@ internal fun AiChatComposer(
                     },
                 )
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    AiMessageAction(Icons.AttachFile, stringResource(R.string.ai_mod_editor_attach), onAttach, configured && !busy)
+                    AiMessageAction(Icons.AttachFile, stringResource(R.string.ai_mod_editor_attach), onAttach, configured)
                     Box(Modifier.weight(1f)) {
                         AiReasoningEffortPicker(effort, onEffortChange, enabled = !busy, hazeState = hazeState)
                     }
+                    if (busy || editingInboxId != null) AiInboxDeliveryMenu(delivery, onDeliveryChange)
+                    if (busy) AiMessageAction(
+                        icon = ImageVector.vectorResource(R.drawable.ic_stop),
+                        label = stringResource(R.string.ai_mod_editor_stop), onClick = onStop,
+                    )
                     AiMessageAction(
-                        icon = ImageVector.vectorResource(if (busy) R.drawable.ic_stop else R.drawable.ic_arrow_upward),
-                        label = stringResource(if (busy) R.string.ai_mod_editor_stop else R.string.ai_mod_editor_send),
-                        onClick = if (busy) onStop else onSend,
-                        enabled = busy || (configured && (draft.isNotBlank() || attachments.isNotEmpty())),
+                        icon = ImageVector.vectorResource(R.drawable.ic_arrow_upward),
+                        label = stringResource(if (editingInboxId != null) R.string.ai_inbox_save else if (busy) R.string.ai_inbox_add else R.string.ai_mod_editor_send),
+                        onClick = onSend,
+                        enabled = configured && (draft.isNotBlank() || attachments.isNotEmpty()),
                         prominent = true,
                     )
                 }
@@ -209,6 +233,8 @@ internal fun AiChatComposer(
             }
         }
     }
+}
+
 }
 
 private val AGENT_PATCH_ID_PATTERN = Regex("patch-\\d+-[0-9a-f]{8}/?")

@@ -315,6 +315,28 @@ class AiAgentExecutionService : Service() {
                 conversationStore.updateContext(job.conversationId, state)
             },
             checkCancelled = ::checkActive,
+            receiveInbox = { idle ->
+                checkActive()
+                synchronized(streamLock) {
+                    flush(true)
+                    var delivered: Pair<AiEditorMessage, Long>? = null
+                    if (conversationStore.load(job.conversationId)?.nextInboxItem(idle) == null) {
+                        return@synchronized null
+                    }
+                    conversationStore.mutate(job.conversationId) { current ->
+                        val item = current.nextInboxItem(idle) ?: return@mutate current
+                        val next = current.deliverInbox(item, assistant.modelName)
+                        val user = next.messages[next.messages.lastIndex - 1]
+                        activeAssistantMessageId = next.messages.last().id
+                        delivered = user to activeAssistantMessageId
+                        next
+                    }
+                    if (delivered != null) {
+                        jobStore.update(job.jobId) { it.copy(assistantMessageId = activeAssistantMessageId) }
+                    }
+                    delivered
+                }
+            },
         )
 
         try {
@@ -463,11 +485,29 @@ class AiAgentExecutionService : Service() {
     }
 
     private fun finishWorker(jobId: String, startId: Int) {
+        val finishedJob = workerJob
         runningJobs.remove(jobId)
         workerThread = null
         workerJobId = null
         workerModId = null
         workerJob = null
+        // Close the final-check/admission race even when no editor is observing the database.
+        if (!serviceDestroyed && !cancellationRequested && finishedJob != null) {
+            val store = AiAgentJobStore(applicationContext, finishedJob.modId)
+            val conversations = conversationStore(finishedJob.modId)
+            if (store.find(jobId)?.status == AiAgentJobStatus.SUCCEEDED &&
+                conversations.load(finishedJob.conversationId)?.inbox?.isNotEmpty() == true) {
+                val nextId = java.util.UUID.randomUUID().toString()
+                if (runningJobs.reserve(nextId)) {
+                    val next = finishedJob.copy(jobId = nextId,
+                        status = AiAgentJobStatus.RUNNING, updatedAtMillis = System.currentTimeMillis())
+                    store.upsert(next)
+                    android.os.Handler(mainLooper).post { startJob(next.jobId, next.modId, startId) }
+                    return
+                }
+            }
+        }
+        // stopWhenIdle releases the wake lock once the worker is really gone.
         stopWhenIdle(startId)
     }
 
